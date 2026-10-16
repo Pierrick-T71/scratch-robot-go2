@@ -1,0 +1,37 @@
+# Dépendances
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editeurs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Système
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local — ne JAMAIS versionner de secrets
+.env
+.env.local
+*.local
+
+# Divers
+*.log
+npm-debug.log*

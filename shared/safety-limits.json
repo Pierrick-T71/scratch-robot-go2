@@ -1,0 +1,47 @@
+{
+  "$comment": "Source UNIQUE de verite des limites de securite. Lue par le frontend (TypeScript) ET par le robot-service (Python) afin d'empecher toute derive entre les deux. Modifier ce fichier => revalider physiquement le robot avant tout passage en mode reel.",
+  "version": 1,
+
+  "motion": {
+    "$comment": "Valeurs derivees des exemples officiels unitree_sdk2 (Move(0.3,0,0.3) et Move(0,0,0.5)). Vitesse lineaire en m/s, angulaire en rad/s.",
+    "maxLinearSpeed": 0.3,
+    "maxAngularSpeed": 0.5,
+    "maxDistancePerStepCm": 200,
+    "maxAnglePerStepDeg": 180,
+    "minDistancePerStepCm": 5,
+    "minAnglePerStepDeg": 15
+  },
+
+  "timing": {
+    "minWaitSeconds": 0.1,
+    "maxWaitSeconds": 10,
+    "commandTickSeconds": 0.005,
+    "controlPeriodMs": 200,
+    "safetyStopLatencyMs": 300
+  },
+
+  "program": {
+    "maxTotalSteps": 500,
+    "maxRepeatCount": 20,
+    "maxNestedRepeatDepth": 3,
+    "maxProgramSeconds": 120,
+    "maxTotalDistanceCm": 1500,
+    "maxTotalAngleDeg": 3600
+  },
+
+  "safety": {
+    "$comment": "Le SDK expose une consigne de vitesse PERSISTANTE (Move). Si le service s'arrete, le robot peut conserver sa vitesse. Le bail ci-dessous impose au frontend de maintenir la liaison.",
+    "leaseTimeoutMs": 1500,
+    "heartbeatIntervalMs": 500,
+    "frontendPollTimeoutMs": 400,
+    "postStopVerificationMs": 1500,
+    "maxCommandRetries": 2
+  },
+
+  "service": {
+    "host": "127.0.0.1",
+    "port": 8765,
+    "$comment": "Ecoute sur la boucle locale uniquement. Pour un acces depuis un autre poste, voir docs/INSTALLATION.md (regle pare-feu explicite).",
+    "allowedOrigin": ["http://localhost:5173", "http://127.0.0.1:5173"]
+  }
+}
