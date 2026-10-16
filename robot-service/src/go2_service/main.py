@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import logging
 import time
 from dataclasses import dataclass, field
@@ -29,11 +30,20 @@ from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .adapters.base import RobotAdapter, RobotState
 from .adapters.simulated import SimulatedAdapter
-from .config import Limits, load_limits
+from .config import (
+    ADJUSTABLE,
+    HARD_CEILINGS,
+    HARD_FLOORS,
+    Limits,
+    SettingsError,
+    adjustable_settings,
+    apply_settings,
+    load_limits,
+)
 from .execution import (
     FINISH_SAFETY,
     ConcurrentExecutionError,
@@ -62,17 +72,41 @@ class StartRequest(BaseModel):
     mais la seule autorité reste l'état du service (`_real_mode_enabled`).
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     commands: list[dict[str, Any]] = Field(..., max_length=1000)
     adult_authorised: bool = False
 
 
 class HeartbeatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     run_id: str = Field(..., max_length=64)
 
 
 class ModeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     mode: str = Field(..., pattern="^(simulation|real)$")
     adult_authorised: bool = False
+
+
+class SettingsRequest(BaseModel):
+    """Modification des limites pédagogiques.
+
+    Réservée à un adulte, et bornée par les plafonds de `config.HARD_CEILINGS`.
+
+    `extra="forbid"` est volontaire : un client qui envoie `adultAuthorised`
+    (camelCase) au lieu de `adult_authorised` doit être REJETÉ et non
+    silencieusement accepté avec `adult_authorised=False`. C'est exactement le
+    type d'erreur qui a fait perdre une session de développement.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    adult_authorised: bool = False
+    #: Champs omis = inchangés.
+    values: dict[str, float] = Field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------
@@ -121,11 +155,22 @@ class ServiceState:
     def __post_init__(self) -> None:
         self.engine = ExecutionEngine(self.adapter)
         self.watchdog = SafetyWatchdog(self.engine, self.adapter, self.limits)
+        #: Incrémenté à chaque changement de limites, pour que le frontend
+        #: sache que son rapport de vérification est caduc.
+        self.settings_revision = 0
         # La simulation est le mode INITIAL, jamais le mode réel.
         self._mode: str = "simulation"
         self._real_mode_enabled: bool = False
         self._status_task: asyncio.Task[None] | None = None
         self._run_task: asyncio.Task[None] | None = None
+
+    def invalidate_report(self) -> None:
+        """Signale que les limites ont changé depuis la dernière vérification.
+
+        Le frontend compare cet indicateur pour savoir si le rapport de
+        validation qu'il affiche est encore valable.
+        """
+        self.settings_revision += 1
 
     @property
     def mode(self) -> str:
@@ -169,6 +214,7 @@ class ServiceState:
             ),
             "yawRad": status.yaw_rad,
             "batteryPercent": status.battery_percent,
+            "settingsRevision": self.settings_revision,
         }
 
 
@@ -178,8 +224,14 @@ class ServiceState:
 
 
 def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
-    """Construit l'application. Un adaptateur peut être injecté (tests)."""
-    limits = load_limits()
+    """Construit l'application. Un adaptateur peut être injecté (tests).
+
+    `load_limits()` est mis en cache et renvoie donc le MÊME objet à chaque
+    appel. Or `apply_settings()` modifie ces limites en place : sans copie,
+    une application créée dans un test altérerait le service des autres, et
+    l'ordre d'exécution des tests deviendrait significatif. On copie donc.
+    """
+    limits = copy.deepcopy(load_limits())
     if adapter is None:
         adapter = SimulatedAdapter(limits)
 
@@ -241,6 +293,57 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
     @app.get("/api/status")
     async def get_status() -> dict[str, Any]:
         return await state.status_payload()
+
+    @app.get("/api/settings")
+    async def get_settings() -> dict[str, Any]:
+        """Réglages en vigueur + bornes autorisées.
+
+        Les bornes (`floors` / `ceilings`) sont fournies par le service : la
+        interface n'a pas à les connaître et ne peut pas les élargir.
+        """
+        return {
+            "values": adjustable_settings(limits),
+            "bounds": {
+                name: {"min": HARD_FLOORS[name], "max": getattr(HARD_CEILINGS, ceiling_attr)}
+                for name, ceiling_attr in ADJUSTABLE.items()
+            },
+            "editable": state.engine.is_running is False,
+        }
+
+    @app.post("/api/settings")
+    async def post_settings(payload: SettingsRequest) -> dict[str, Any]:
+        """Applique des réglages. Refusé si une exécution est en cours.
+
+        Refuser en cours d'exécution évite qu'un programme soit validé avec
+        d'autres limites que celles qui seront appliquées à son exécution.
+        """
+        from fastapi import HTTPException
+
+        if not payload.adult_authorised:
+            raise HTTPException(
+                status_code=403,
+                detail="Seul un adulte peut modifier les réglages.",
+            )
+        if state.engine.is_running:
+            raise HTTPException(
+                status_code=409,
+                detail="Attends la fin du programme avant de modifier les réglages.",
+            )
+        try:
+            applied = apply_settings(limits, payload.values)
+        except SettingsError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        log.info("Réglages mis à jour par un adulte : %s", applied)
+        # Un changement de limites invalide le rapport précédent.
+        state.invalidate_report()
+        return {
+            "values": applied,
+            "bounds": {
+                name: {"min": HARD_FLOORS[name], "max": getattr(HARD_CEILINGS, ceiling_attr)}
+                for name, ceiling_attr in ADJUSTABLE.items()
+            },
+        }
 
     @app.post("/api/mode")
     async def set_mode(payload: ModeRequest) -> dict[str, Any]:

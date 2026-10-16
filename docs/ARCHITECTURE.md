@@ -177,6 +177,8 @@ Un client modifié reçoit exactement le même refus du service. C'est testé da
 |---|---|
 | `GET /api/status` | état du robot et du service |
 | `POST /api/mode` | bascule simulation / réel |
+| `GET /api/settings` | réglages en vigueur + bornes autorisées |
+| `POST /api/settings` | applique des réglages (adulte, borné par les plafonds) |
 | `POST /api/execution/start` | démarre un programme (renvoie `runId` immédiatement) |
 | `POST /api/execution/stop` | arrêt demandé |
 | `POST /api/execution/heartbeat` | battement de sécurité (`run_id`) |
@@ -271,6 +273,48 @@ comme ayant réussi.
 2. **`assert_speed_within_limits()`** — appelé par chaque adaptateur juste
    avant de publier une consigne. Protection de dernier niveau, indépendante
    de la validation.
+
+### 5.5 bis Réglages d'adulte : plafonds dans le code
+
+L'interface permet de régler 10 limites pédagogiques (vitesse, distance,
+durée…). Ce n'est **pas** un levier de sécurité, et cela repose sur trois
+dispositions :
+
+**Les plafonds vivent dans le code, pas dans les données.**
+
+```python
+@dataclass(frozen=True)
+class HardCeilings:
+    max_linear_speed: float = 0.30
+    max_angular_speed: float = 0.50
+    ...
+```
+
+`config.HARD_CEILINGS` est figé à l'import. `apply_settings()` refuse tout
+champ hors `[plancher, plafond]` **avant** toute écriture : un client modifié
+peut ralentir le robot, jamais l'accélérer au-delà de la valeur livrée.
+
+**Les bornes sont fournies par le service.** `GET /api/settings` renvoie
+`values` et `bounds`. Le frontend ne les calcule pas — il ne pourrait donc pas
+les élargir de son côté.
+
+**`extra="forbid"` sur tous les modèles de requête.**
+
+Ce détail a une histoire. Le frontend envoyait `adultAuthorised` alors que le
+modèle attend `adult_authorised`. Sans `extra="forbid"`, Pydantic ignorait
+silencieusement le champ, `adult_authorised` valait `False`, et le service
+répondait « Seul un adulte peut modifier les réglages » — un message
+trompeur, alors que l'adulte avait bel et bien cliqué. Avec `extra="forbid"`,
+l'erreur est visible immédiatement, et verrouillée par un test.
+
+Le même piège avait déjà coûté une session avec `runId` / `run_id` sur les
+battements de sécurité. D'où la règle : **tout contrat HTTP entre les deux
+tiers est verrouillé par un test de forme de payload.**
+
+À la réception d'un changement de réglage, le service incrémente
+`settingsRevision`. Le frontend compare avec la révision de sa dernière
+vérification : si elles diffèrent, le rapport affiché n'est plus valable et le
+programme doit être revérifié.
 
 ### 5.6 Mode réel
 

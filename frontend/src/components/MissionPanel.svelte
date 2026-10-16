@@ -107,6 +107,8 @@
       <span aria-hidden="true">📄</span> Nouveau programme
     </button>
 
+    
+
     {#if feedback}
       <div class="message message--{feedback.tone}" role="status">
         <span class="message__icon" aria-hidden="true">{feedback.tone === 'ok' ? '✅' : '⛔'}</span>
@@ -196,9 +198,16 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 11px;
-    background: var(--ink-100);
-    border-radius: var(--radius-s);
+    padding: 10px 13px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-m);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .missions__item:hover {
+    border-color: var(--line-strong);
+    box-shadow: var(--shadow-xs);
   }
 
   .missions__name {

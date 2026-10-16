@@ -40,6 +40,43 @@ consignes.
 - **Exécution** avec progression étape par étape, valeur mesurée affichée quand elle existe.
 - **Arrêt immédiat** toujours visible, plus arrêt automatique si l'interface se déconnecte.
 - **Mode simulation** par défaut, jamais confondu avec le pilotage réel.
+- **Panneau Configuration** : réglages du robot (réservés à un adulte) et préférences.
+
+### Configuration depuis l'interface
+
+Bouton **⚙️ Configuration** en haut à droite, ou la carte « Configuration » dans
+la colonne de droite.
+
+**Réglages du robot** (adultes uniquement) — 10 curseurs :
+
+| Réglage | Plage |
+|---|---|
+| Vitesse maximale | 0,10 – 0,30 m/s |
+| Rotation maximale | 0,20 – 0,50 rad/s |
+| Distance par déplacement | 40 – 200 cm |
+| Rotation par déplacement | 45 – 180° |
+| Attente maximale | 3 – 10 s |
+| Durée totale du programme | 30 – 120 s |
+| Distance totale | 300 – 1500 cm |
+| Rotations totales | 900 – 3600° |
+| Nombre de pas | 50 – 500 |
+| Répétitions par bloc | 3 – 20 |
+
+Trois garanties sur ces réglages :
+
+1. **Le service est l'autorité.** Les curseurs ne font que proposer ; c'est le
+   service qui applique, et qui refuse.
+2. **Les plafonds sont écrits dans le code** (`config.HARD_CEILINGS`), pas dans
+   l'interface. Un client modifié ne peut pas s'attribuer des droits
+   supérieurs : `POST /api/settings` renvoie 422 au-delà du plafond.
+3. **Mot de confirmation obligatoire** (« RÉGLAGES ») plus autorisation adulte
+   explicite. La modification est refusée pendant une exécution.
+
+Un changement de réglage invalide le rapport de vérification affiché : le
+programme doit être revérifié avec les nouvelles limites.
+
+**Préférences** — adresse du service robot, thème. Purement locales, sans effet
+sur la sécurité. Seules les URL `http://` et `https://` sont acceptées.
 
 ---
 

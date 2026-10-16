@@ -44,12 +44,54 @@ function outOfRange(value: number, min: number, max: number): boolean {
  * @param commands instructions compilees
  * @param available capacites reellement offertes par l'adaptateur actif
  */
+/**
+ * Limites effectivement en vigueur.
+ *
+ * `overrides` vient du service (réglages d'adulte). Le fichier partagé reste
+ * le plafond de référence : un champ absent utilise la valeur du fichier.
+ */
+function resolveLimits(overrides?: Readonly<Record<string, number>>): {
+  motion: typeof SAFETY.motion;
+  program: typeof SAFETY.program;
+  timing: typeof SAFETY.timing;
+} {
+  const pick = (field: string, fallback: number): number => {
+    const value = overrides?.[field];
+    return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+  };
+
+  return {
+    motion: {
+      ...SAFETY.motion,
+      maxLinearSpeed: pick('max_linear_speed', SAFETY.motion.maxLinearSpeed),
+      maxAngularSpeed: pick('max_angular_speed', SAFETY.motion.maxAngularSpeed),
+      maxDistancePerStepCm: pick(
+        'max_distance_per_step_cm',
+        SAFETY.motion.maxDistancePerStepCm,
+      ),
+      maxAnglePerStepDeg: pick('max_angle_per_step_deg', SAFETY.motion.maxAnglePerStepDeg),
+    },
+    timing: {
+      ...SAFETY.timing,
+      maxWaitSeconds: pick('max_wait_seconds', SAFETY.timing.maxWaitSeconds),
+    },
+    program: {
+      ...SAFETY.program,
+      maxTotalSteps: pick('max_total_steps', SAFETY.program.maxTotalSteps),
+      maxProgramSeconds: pick('max_program_seconds', SAFETY.program.maxProgramSeconds),
+      maxTotalDistanceCm: pick('max_total_distance_cm', SAFETY.program.maxTotalDistanceCm),
+      maxTotalAngleDeg: pick('max_total_angle_deg', SAFETY.program.maxTotalAngleDeg),
+    },
+  };
+}
+
 export function validateCommands(
   commands: readonly RobotCommand[],
   available: readonly Capability[] = ['movement', 'posture', 'wait', 'stop'],
+  overrides?: Readonly<Record<string, number>>,
 ): ValidationReport {
   const issues: ValidationIssue[] = [];
-  const { motion, program } = SAFETY;
+  const { motion, program, timing } = resolveLimits(overrides);
 
   let totalDistanceCm = 0;
   let totalAngleDeg = 0;
@@ -97,9 +139,9 @@ export function validateCommands(
         break;
       }
       case 'wait': {
-        if (outOfRange(command.seconds, SAFETY.timing.minWaitSeconds, SAFETY.timing.maxWaitSeconds)) {
+        if (outOfRange(command.seconds, SAFETY.timing.minWaitSeconds, timing.maxWaitSeconds)) {
           issues.push({
-            message: `Une attente doit faire entre ${SAFETY.timing.minWaitSeconds} et ${SAFETY.timing.maxWaitSeconds} secondes.`,
+            message: `Une attente doit faire entre ${SAFETY.timing.minWaitSeconds} et ${formatNumber(timing.maxWaitSeconds)} secondes.`,
             index,
           });
         }
@@ -129,12 +171,12 @@ export function validateCommands(
 
   if (totalDistanceCm > program.maxTotalDistanceCm) {
     issues.push({
-      message: `Ton programme demande trop de distance (${formatNumber(totalDistanceCm)} cm). Maximum ${program.maxTotalDistanceCm} cm.`,
+      message: `Ton programme demande trop de distance (${formatNumber(totalDistanceCm)} cm). Maximum ${formatNumber(program.maxTotalDistanceCm)} cm.`,
     });
   }
   if (totalAngleDeg > program.maxTotalAngleDeg) {
     issues.push({
-      message: `Ton programme demande trop de rotations (${formatNumber(totalAngleDeg)} degrés). Maximum ${program.maxTotalAngleDeg} degrés.`,
+      message: `Ton programme demande trop de rotations (${formatNumber(totalAngleDeg)} degrés). Maximum ${formatNumber(program.maxTotalAngleDeg)} degrés.`,
     });
   }
   if (estimatedSeconds > program.maxProgramSeconds) {

@@ -7,6 +7,7 @@
 import { api, EventStream, LeaseKeeper, ServiceError, type RobotStatus, type ServiceMode } from '../api/client';
 import type { RobotCommand } from '../robot/commands';
 import { validateCommands, labelOf, type ValidationReport } from '../robot/validate';
+import type { SettingsPayload, SettingsValues } from '../robot/settings';
 import type { ProgramStep } from '../program/types';
 
 export type ExecutionState =
@@ -35,6 +36,7 @@ const OFFLINE_STATUS: RobotStatus = {
   position: null,
   yawRad: null,
   batteryPercent: null,
+  settingsRevision: 0,
 };
 
 class AppState {
@@ -45,14 +47,58 @@ class AppState {
   notice = $state<AppNotice | null>(null);
   /** Action en attente de confirmation (mode reel). */
   pendingStart = $state<RobotCommand[] | null>(null);
+  /** Reglages en vigueur, fournis par le service (bornes incluses). */
+  settings = $state<SettingsPayload | null>(null);
 
   runId: string | null = null;
+  /** Revision des reglages au moment de la derniere verification. */
+  #validatedRevision = 0;
 
   #lease: LeaseKeeper | null = null;
   #stream: EventStream | null = null;
 
   get isBusy(): boolean {
     return this.execution === 'starting' || this.execution === 'running' || this.execution === 'stopping';
+  }
+
+  /**
+   * Vrai si les reglages ont change depuis la derniere verification :
+   * le rapport affiche n'est alors plus valable.
+   */
+  get reportIsStale(): boolean {
+    return this.report !== null && this.status.settingsRevision !== this.#validatedRevision;
+  }
+
+  async refreshSettings(): Promise<void> {
+    try {
+      this.settings = await api.getSettings();
+    } catch {
+      // Le service ne repond pas : on garde les valeurs precedentes.
+      this.settings = null;
+    }
+  }
+
+  /**
+   * Applique des reglages. Cote service, donc reellement contraignants :
+   * l'interface n'est qu'un support d'affichage.
+   */
+  async saveSettings(values: SettingsValues): Promise<boolean> {
+    try {
+      const payload = await api.saveSettings(values);
+      this.settings = payload;
+      await this.refreshStatus();
+      // Le rapport précédent n'a plus de valeur : on le force à recalculer.
+      this.#validatedRevision = -1;
+      this.check(this.currentCommands);
+      this.#setNotice('ok', 'Réglages appliqués.');
+      return true;
+    } catch (error) {
+      this.#setNotice(
+        'error',
+        error instanceof ServiceError ? error.message : 'Réglages refusés par le service.',
+      );
+      return false;
+    }
   }
 
   get modeLabel(): string {
@@ -110,7 +156,10 @@ class AppState {
    */
   check(commands: readonly RobotCommand[]): boolean {
     this.#setExecution('checking');
-    const report = validateCommands(commands, this.status.capabilities);
+
+    // Valider avec les REGLAGES EN VIGUEUR, pas avec le fichier statique :
+    // si un adulte a relevé une limite, l'interface doit l'appliquer aussi.
+    const report = validateCommands(commands, this.status.capabilities, this.settings?.values);
     this.report = report;
     this.steps = commands.map((command, index) => ({
       index,
@@ -118,6 +167,8 @@ class AppState {
       state: 'pending',
       outcome: null,
     }));
+
+    this.#validatedRevision = this.status.settingsRevision;
 
     if (report.valid) {
       this.#setExecution('ready');
@@ -167,7 +218,10 @@ class AppState {
     }));
 
     try {
-      const response = await api.start({ commands: [...commands], adultAuthorised: true });
+      const response = await api.start({
+        commands: [...commands],
+        adult_authorised: true,
+      });
       this.runId = response.runId;
       this.#lease = new LeaseKeeper(response.runId);
       this.#lease.start();

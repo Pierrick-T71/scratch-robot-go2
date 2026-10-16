@@ -13,6 +13,26 @@ Deux parties : un guide pour les **animateurs** et un guide pour les **enfants**
 3. **Commencer toujours en simulation.**
 4. Si le robot réel est utilisé, lire `docs/SAFETY.md` et vérifier la zone.
 
+## Avant la séance : régler le robot
+
+Le panneau **⚙️ Configuration** permet d'adapter les limites à l'âge des enfants
+et à la taille de la salle. C'est le premier réflexe avant une séance réelle.
+
+Par exemple, avec des enfants de 10 ans dans une petite salle, on peut juger
+raisonnable de régler :
+
+| Réglage | Valeur | Pourquoi |
+|---|---|---|
+| Vitesse maximale | 0,15 m/s | marche lente |
+| Distance par déplacement | 80 cm | pas de traversée de la salle |
+| Durée totale | 60 s | pas de programme qui s'éternise |
+
+Ces valeurs restent **sous** les plafonds du code : on ne peut pas accélérer le
+robot au-delà de ce qui a été livré et validé.
+
+Après un changement, **faire vérifier les missions déjà écrites** : elles ont pu
+devenir invalides.
+
 ## Règles d'or
 
 - Un adulte **regarde le robot**, pas l'écran.
@@ -149,6 +169,25 @@ Quand je clique sur Démarrer
 | ⛔ **« Le robot n'est pas connecté. »** | Demande de l'aide à l'adulte |
 | **« mesuré · 45 cm »** | Le robot a **vraiment** mesuré son déplacement |
 | **« temps écoulé »** | Le robot n'a pas réussi à arriver : demande à l'adulte |
+
+---
+
+## Changer les réglages (pour les adultes)
+
+Clique sur **⚙️ Configuration** en haut à droite.
+
+Tu peux y régler ce que le robot a le droit de faire : sa vitesse maximale, la
+distance d’un déplacement, la durée d’une attente, la longueur d’un programme…
+
+**Trois choses à savoir :**
+
+- Il faut écrire **RÉGLAGES** en majuscules pour valider. C’est fait exprès pour
+  qu’un enfant ne modifie pas les réglages sans faire exprès.
+- On ne peut pas dépasser les limites affichées sous chaque curseur.
+- Les réglages ne peuvent pas être changés pendant que le robot bouge.
+
+Si les réglages ont changé, clique à nouveau sur **🔍 Vérifier mon programme**
+avant de relancer.
 
 ---
 

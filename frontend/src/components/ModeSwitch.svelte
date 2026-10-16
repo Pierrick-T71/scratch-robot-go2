@@ -105,10 +105,22 @@
     gap: 10px;
     align-items: flex-start;
     font-size: 14px;
-    padding: 12px;
-    border: 2px solid var(--ink-300);
+    padding: 14px 16px;
+    border: 1.5px solid var(--line-strong);
     border-radius: var(--radius-m);
     cursor: pointer;
+    background: var(--surface-2);
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+
+  .check:hover {
+    border-color: var(--warn-700);
+    background: var(--warn-100);
+  }
+
+  .check:has(input:checked) {
+    border-color: var(--accent-500);
+    background: var(--accent-100);
   }
 
   .check input {

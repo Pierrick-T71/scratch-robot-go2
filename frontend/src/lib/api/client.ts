@@ -13,6 +13,9 @@
  */
 import { SERVICE_URL, SAFETY } from '../robot/limits';
 import type { RobotCommand, Capability } from '../robot/commands';
+import type { SettingsPayload, SettingsValues } from '../robot/settings';
+
+export type { SettingsPayload, SettingsValues, SettingsBounds } from '../robot/settings';
 
 export type ServiceMode = 'simulation' | 'real';
 
@@ -28,12 +31,19 @@ export interface RobotStatus {
   position: { x: number; y: number; z: number } | null;
   yawRad: number | null;
   batteryPercent: number | null;
+  /** Incrémenté par le service à chaque changement de limites. */
+  settingsRevision: number;
 }
 
 export interface StartRequest {
   commands: RobotCommand[];
-  /** Accordee explicitement par un adulte (mode reel uniquement). */
-  adultAuthorised: boolean;
+  /**
+   * Accordee explicitement par un adulte (mode reel uniquement).
+   *
+   * Envoyée sous le nom `adult_authorised` : c'est le nom du modèle
+   * `StartRequest` côté service, qui rejette tout champ inconnu.
+   */
+  adult_authorised: boolean;
 }
 
 export type ExecutionEvent =
@@ -98,6 +108,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   getStatus: (): Promise<RobotStatus> => request<RobotStatus>('/api/status'),
 
+  /**
+   * Démarre un programme. Répond immédiatement avec `runId` : l'exécution
+   * tourne en tâche de fond côté service.
+   */
   start: (payload: StartRequest): Promise<{ accepted: boolean; runId: string }> =>
     request('/api/execution/start', {
       method: 'POST',
@@ -122,10 +136,31 @@ heartbeat: (runId: string): Promise<{ ok: boolean }> =>
       body: JSON.stringify({ run_id: runId }),
     }),
 
+  /**
+   * Bascule de mode. `adultAuthorised` est un paramètre de l'appelant, mais
+   * il est envoyé sous le nom `adult_authorised` attendu par `ModeRequest`.
+   */
   setMode: (mode: ServiceMode, adultAuthorised: boolean): Promise<RobotStatus> =>
     request<RobotStatus>('/api/mode', {
       method: 'POST',
-      body: JSON.stringify({ mode, adultAuthorised }),
+      body: JSON.stringify({ mode, adult_authorised: adultAuthorised }),
+    }),
+
+  /** Réglages en vigueur et bornes autorisées. */
+  getSettings: (): Promise<SettingsPayload> => request<SettingsPayload>('/api/settings'),
+
+  /**
+   * Applique des réglages. Réservé à un adulte, et borné par le service.
+   *
+   * ATTENTION : le service attend `adult_authorised` (nom du modèle
+   * `SettingsRequest`) et rejette tout champ inconnu. Envoyer
+   * `adultAuthorised` serait refusé en 422 — c'est exactement l'erreur
+   * commise en développement. `test_settings.py` verrouille la forme.
+   */
+  saveSettings: (values: SettingsValues): Promise<SettingsPayload> =>
+    request<SettingsPayload>('/api/settings', {
+      method: 'POST',
+      body: JSON.stringify({ adult_authorised: true, values }),
     }),
 };
 

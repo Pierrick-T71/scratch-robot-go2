@@ -1,13 +1,13 @@
 <script lang="ts">
-  /** Barre supérieure : identité, projet, état de connexion, mode, aide. */
+  /** Barre supérieure : identité, état de connexion, mode, aide, réglages. */
   import { app } from '../lib/stores/app.svelte';
 
   interface Props {
-    projectName: string;
     onHelp: () => void;
+    onSettings: () => void;
   }
 
-  let { projectName, onHelp }: Props = $props();
+  let { onHelp, onSettings }: Props = $props();
 
   const connection = $derived(
     app.status.connected
@@ -25,15 +25,10 @@
 <header class="topbar">
   <div class="topbar__brand">
     <span class="topbar__logo" aria-hidden="true">🐕</span>
-    <div>
-      <div class="topbar__name">GO2 Scratch</div>
-      <div class="topbar__tagline">Programme ton robot</div>
+    <div class="topbar__names">
+      <span class="topbar__name">GO2 Scratch</span>
+      <span class="topbar__tagline">Programme ton robot</span>
     </div>
-  </div>
-
-  <div class="topbar__project">
-    <span class="muted">Projet&nbsp;:</span>
-    <strong>{projectName}</strong>
   </div>
 
   <div class="topbar__badges">
@@ -42,62 +37,130 @@
       {mode.text}
     </span>
     <span class="badge badge--{connection.tone}">
-      <span class="badge__dot" aria-hidden="true"></span>
+      <span
+        class="badge__dot"
+        class:badge__dot--live={app.status.connected && app.isBusy}
+        aria-hidden="true"
+      ></span>
       {connection.text}
     </span>
+    {#if app.isBusy}
+      <span class="badge badge--info">
+        <span class="badge__dot badge__dot--live" aria-hidden="true"></span>
+        En cours
+      </span>
+    {/if}
   </div>
 
-  <button type="button" class="btn btn--ghost btn--sm" onclick={onHelp}>
-    <span aria-hidden="true">❓</span> Aide
-  </button>
+  <div class="topbar__actions">
+    <button
+      type="button"
+      class="btn btn--ghost btn--sm"
+      onclick={onSettings}
+      title="Réglages du robot et préférences"
+    >
+      <span aria-hidden="true">⚙️</span> Configuration
+    </button>
+    <button
+      type="button"
+      class="btn btn--ghost btn--sm"
+      onclick={onHelp}
+      title="Guide d'aide"
+    >
+      <span aria-hidden="true">❓</span> Aide
+    </button>
+  </div>
 </header>
 
 <style>
   .topbar {
     display: flex;
     align-items: center;
-    gap: 18px;
-    padding: 10px 18px;
-    background: var(--paper);
-    border-bottom: 1px solid var(--ink-300);
-    box-shadow: var(--shadow-s);
+    gap: 16px;
+    height: var(--topbar-h);
+    padding: 0 var(--gutter);
+    background: rgb(255 255 255 / 85%);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
     flex: none;
+    position: relative;
+    z-index: 10;
+  }
+
+  /* Liseré coloré sous la barre : signature visuelle discrète. */
+  .topbar::after {
+    content: '';
+    position: absolute;
+    inset: auto 0 -1px 0;
+    height: 2px;
+    background: linear-gradient(
+      90deg,
+      var(--brand-500) 0%,
+      var(--brand-400) 35%,
+      var(--accent-500) 100%
+    );
   }
 
   .topbar__brand {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 11px;
+    flex: none;
   }
 
   .topbar__logo {
-    font-size: 30px;
+    font-size: 27px;
     line-height: 1;
+    filter: drop-shadow(0 2px 4px rgb(15 23 41 / 18%));
+  }
+
+  .topbar__names {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.15;
   }
 
   .topbar__name {
-    font-size: 19px;
-    font-weight: 800;
-    color: var(--brand-600);
-    letter-spacing: -0.3px;
+    font-size: 18px;
+    font-weight: 850;
+    letter-spacing: -0.03em;
+    background: linear-gradient(96deg, var(--brand-600), var(--brand-400));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
   }
 
   .topbar__tagline {
-    font-size: 11px;
-    color: var(--ink-500);
-    font-weight: 600;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--ink-400);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-
-  .topbar__project {
-    font-size: 14px;
-    color: var(--ink-700);
+    letter-spacing: 0.09em;
   }
 
   .topbar__badges {
     margin-left: auto;
     display: flex;
+    align-items: center;
     gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .topbar__actions {
+    display: flex;
+    gap: 8px;
+    flex: none;
+  }
+
+  @media (max-width: 900px) {
+    .topbar__tagline {
+      display: none;
+    }
+  }
+
+  @media (max-width: 700px) {
+    .topbar__badges {
+      display: none;
+    }
   }
 </style>

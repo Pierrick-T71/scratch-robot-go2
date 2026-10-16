@@ -52,3 +52,29 @@ tests/                     tests unitaires
 - **Les limites de sécurité** viennent de `../shared/safety-limits.json`, lu
   aussi par le service. Ne pas dupliquer ces valeurs ici.
 - **Les textes de l'interface sont en français** ; le code est en anglais.
+
+### Réglages et siapa plafond
+
+`lib/robot/settings.ts` décrit les réglages pour l'affichage (libellé, unité,
+aide, pas de curseur). Il ne calcule **aucune borne** : celles-ci viennent de
+`GET /api/settings`. C'est volontaire — si le frontend calculait les plafonds,
+un client modifié pourrait les élargir.
+
+Le service (`config.HARD_CEILINGS`) est seul à pouvoir les fixer.
+
+### Contrats HTTP : pièges connus
+
+Le service utilise des modèles Pydantic en `extra="forbid"`. Conséquence :
+**toute divergence de casse sur un nom de champ est un 422, pas un silence.**
+
+| Route | Champ attendu |
+|---|---|
+| `POST /api/execution/start` | `adult_authorised` |
+| `POST /api/mode` | `adult_authorised` |
+| `POST /api/settings` | `adult_authorised` |
+| `POST /api/execution/heartbeat` | `run_id` |
+
+Deux bugs de ce type ont déjà été rencontrés et coûté une session
+(`runId`/`run_id`, `adultAuthorised`/`adult_authorised`). Le premier a fait
+déclencher l'arrêt de sécurité à tort. **Tout nouveau contrat doit être
+verrouillé par un test de forme de payload côté service.**

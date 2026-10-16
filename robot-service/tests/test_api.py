@@ -361,9 +361,20 @@ class TestHeartbeatContract:
                 json={"commands": [{"kind": "wait", "seconds": 10}]},
             )
 
-            time.sleep(limits.safety.lease_timeout_ms / 1000.0 + 0.5)
+            # Le chien de garde scrute au tiers du délai de bail (500 ms), et
+            # ne déclenche qu'une fois l'age STRICTEMENT supérieur au bail.
+            # Une attente fixe serait donc susceptible de tomber juste avant le
+            # tour suivant : on scrute jusqu'à l'observer ou on renonce.
+            deadline = time.monotonic() + 8.0
+            while (
+                service.watchdog.trips == trips_before
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.05)
 
-            assert service.watchdog.trips > trips_before
+            assert service.watchdog.trips > trips_before, (
+                "le chien de garde n'a pas déclenché malgré l'absence de battement"
+            )
             slow.post("/api/execution/stop")
 
 

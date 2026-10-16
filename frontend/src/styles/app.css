@@ -1,53 +1,77 @@
 /* =========================================================================
-   GO2 Scratch — identité visuelle
-   Palette : bleu « technologie » + turquoise « robot », fonds clairs.
-   Adaptée à un écran 1366 x 768 minimum, à la souris.
+   GO2 Scratch — design tokens
+
+   Direction visuelle : surface claire, faible contraste, formes arrondies,
+   ombres douces, un seul accent (bleu) + un vert « sûr ». Tout doit rester
+   lisible pour un enfant sur un écran de 1366 x 768.
    ========================================================================= */
 
 :root {
-  /* Couleurs de marque */
-  --brand-600: #1f4fd8;
-  --brand-500: #3d7bfe;
-  --brand-100: #e5edff;
-  --accent-600: #0d8f6b;
+  color-scheme: light;
+
+  /* -- Couleurs -- */
+  --brand-700: #1b3fb0;
+  --brand-600: #2447c9;
+  --brand-500: #3d6bf5;
+  --brand-400: #6d91ff;
+  --brand-100: #e8efff;
+  --brand-50: #f3f6ff;
+
+  --accent-600: #0c8a66;
   --accent-500: #12a57a;
   --accent-100: #dcf5ec;
 
-  /* Catégories de blocs — doivent rester cohérentes avec blocks.ts */
-  --cat-events: #f2a33c;
-  --cat-movement: #3d7bfe;
-  --cat-actions: #12a57a;
-  --cat-control: #8e53d8;
+  --ok-600: #0a7a54;
+  --ok-100: #dff5ea;
+  --warn-700: #a35a00;
+  --warn-100: #fdf2dd;
+  --danger-700: #b42318;
+  --danger-600: #d92d20;
+  --danger-100: #fdeae8;
 
-  /* Neutres */
-  --ink-900: #12203a;
-  --ink-700: #35496b;
+  /* -- Neutres (bleu-gris, plus doux que du gris pur) -- */
+  --ink-900: #0f1729;
+  --ink-700: #33415c;
   --ink-500: #64748b;
-  --ink-300: #cbd5e1;
-  --ink-100: #eef2f8;
-  --paper: #ffffff;
-  --canvas: #f6f8fc;
+  --ink-400: #94a3b8;
 
-  /* États */
-  --danger: #d92d20;
-  --danger-100: #fde8e6;
-  --warning: #b25e00;
-  --warning-100: #fdf1dc;
-  --ok: #067a53;
-  --ok-100: #d9f2e6;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --canvas: #eef2f8;
+  --line: #e2e8f0;
+  --line-strong: #cbd5e1;
 
-  --radius-s: 8px;
-  --radius-m: 12px;
-  --radius-l: 18px;
+  /* -- Catégories de blocs : doivent rester alignées sur blocks.ts -- */
+  --cat-events: #f59e0b;
+  --cat-movement: #3d6bf5;
+  --cat-actions: #12a57a;
+  --cat-control: #8b5cf6;
 
-  --shadow-s: 0 1px 2px rgb(18 32 58 / 8%);
-  --shadow-m: 0 4px 14px rgb(18 32 58 / 10%);
-  --shadow-l: 0 12px 32px rgb(18 32 58 / 18%);
+  /* -- Rayons : généreux, c'est ce qui donne l'impression moderne -- */
+  --radius-xs: 6px;
+  --radius-s: 10px;
+  --radius-m: 14px;
+  --radius-l: 20px;
+  --radius-xl: 26px;
+  --radius-pill: 999px;
 
-  --font: 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', sans-serif;
+  /* -- Ombres : très douces, jamais de bord dur -- */
+  --shadow-xs: 0 1px 2px rgb(15 23 41 / 6%);
+  --shadow-s: 0 1px 3px rgb(15 23 41 / 8%), 0 1px 2px rgb(15 23 41 / 4%);
+  --shadow-m: 0 6px 20px rgb(15 23 41 / 10%);
+  --shadow-l: 0 24px 60px rgb(15 23 41 / 22%);
+
+  --font: 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, 'Inter',
+    'Helvetica Neue', sans-serif;
+
+  --topbar-h: 62px;
+  --side-w: 384px;
+  --gutter: 14px;
 }
 
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
@@ -60,204 +84,334 @@ body {
 
 body {
   font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.5;
   color: var(--ink-900);
   background: var(--canvas);
-  font-size: 15px;
-  line-height: 1.45;
+  /* Une très légère texture évite l'aplat « vieux gris ». */
+  background-image:
+    radial-gradient(circle at 12% -10%, rgb(61 107 245 / 10%), transparent 45%),
+    radial-gradient(circle at 92% 0%, rgb(18 165 122 / 8%), transparent 40%);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
   overflow: hidden;
 }
 
-/* ---------- Boutons : grands, clairs, avec icône + texte ---------- */
+::selection {
+  background: var(--brand-100);
+  color: var(--brand-700);
+}
+
+/* Barres de défilement discrètes */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border: 3px solid transparent;
+  border-radius: var(--radius-pill);
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-400);
+  background-clip: content-box;
+}
+
+/* =========================================================================
+   Boutons
+   ========================================================================= */
 
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 44px;
+  min-height: 46px;
   padding: 10px 18px;
-  border: 2px solid transparent;
+  border: 1.5px solid transparent;
   border-radius: var(--radius-m);
   font-family: inherit;
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 650;
+  letter-spacing: -0.01em;
   color: #fff;
   background: var(--brand-500);
   cursor: pointer;
+  white-space: nowrap;
   transition:
-    background 0.12s ease,
-    transform 0.06s ease,
-    box-shadow 0.12s ease;
-  box-shadow: var(--shadow-s);
+    background 0.16s ease,
+    transform 0.1s ease,
+    box-shadow 0.16s ease,
+    border-color 0.16s ease;
+  box-shadow:
+    0 1px 2px rgb(15 23 41 / 10%),
+    0 2px 8px rgb(61 107 245 / 24%);
 }
 
 .btn:hover:not(:disabled) {
   background: var(--brand-600);
+  box-shadow:
+    0 2px 4px rgb(15 23 41 / 10%),
+    0 6px 18px rgb(61 107 245 / 30%);
 }
 
 .btn:active:not(:disabled) {
   transform: translateY(1px);
+  box-shadow: 0 1px 2px rgb(15 23 41 / 12%);
 }
 
 .btn:focus-visible {
-  outline: 3px solid var(--brand-100);
+  outline: 3px solid var(--brand-400);
   outline-offset: 2px;
 }
 
 .btn:disabled {
-  opacity: 0.45;
+  opacity: 0.42;
   cursor: not-allowed;
   box-shadow: none;
+  filter: saturate(0.5);
 }
 
 .btn--ghost {
-  background: var(--paper);
+  background: var(--surface);
   color: var(--ink-700);
-  border-color: var(--ink-300);
+  border-color: var(--line);
+  box-shadow: var(--shadow-xs);
 }
 
 .btn--ghost:hover:not(:disabled) {
-  background: var(--ink-100);
+  background: var(--surface-2);
+  color: var(--ink-900);
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-s);
 }
 
 .btn--ok {
   background: var(--accent-500);
+  box-shadow:
+    0 1px 2px rgb(15 23 41 / 10%),
+    0 2px 8px rgb(18 165 122 / 26%);
 }
 
 .btn--ok:hover:not(:disabled) {
   background: var(--accent-600);
+  box-shadow:
+    0 2px 4px rgb(15 23 41 / 10%),
+    0 6px 18px rgb(18 165 122 / 32%);
 }
 
 .btn--danger {
-  background: var(--danger);
+  background: var(--danger-600);
+  box-shadow:
+    0 1px 2px rgb(15 23 41 / 12%),
+    0 2px 10px rgb(217 45 32 / 30%);
 }
 
 .btn--danger:hover:not(:disabled) {
-  background: #b42318;
+  background: var(--danger-700);
+  box-shadow:
+    0 2px 4px rgb(15 23 41 / 12%),
+    0 6px 18px rgb(217 45 32 / 36%);
 }
 
 .btn--sm {
-  min-height: 34px;
-  padding: 5px 12px;
-  font-size: 13px;
+  min-height: 36px;
+  padding: 6px 13px;
+  font-size: 13.5px;
+  border-radius: var(--radius-s);
 }
 
-/* ---------- Badges d'état ---------- */
+.btn--icon {
+  min-width: 36px;
+  padding: 6px 10px;
+}
+
+/* =========================================================================
+   Badges
+   ========================================================================= */
 
 .badge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 11px;
-  border-radius: 999px;
+  gap: 7px;
+  padding: 6px 13px;
+  border-radius: var(--radius-pill);
   font-size: 13px;
   font-weight: 700;
+  letter-spacing: -0.005em;
   white-space: nowrap;
+  border: 1px solid transparent;
 }
 
 .badge--ok {
   background: var(--ok-100);
-  color: var(--ok);
+  color: var(--ok-600);
+  border-color: rgb(10 122 84 / 18%);
 }
 
 .badge--warn {
-  background: var(--warning-100);
-  color: var(--warning);
+  background: var(--warn-100);
+  color: var(--warn-700);
+  border-color: rgb(163 90 0 / 20%);
 }
 
 .badge--danger {
   background: var(--danger-100);
-  color: var(--danger);
+  color: var(--danger-700);
+  border-color: rgb(180 35 24 / 18%);
 }
 
 .badge--neutral {
-  background: var(--ink-100);
+  background: var(--surface-2);
   color: var(--ink-700);
+  border-color: var(--line);
+}
+
+.badge--info {
+  background: var(--brand-100);
+  color: var(--brand-700);
+  border-color: rgb(36 71 201 / 18%);
 }
 
 .badge__dot {
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: currentColor;
   flex: none;
+  position: relative;
 }
 
-/* ---------- Panneaux ---------- */
+/* Point « vivant » : pulse uniquement quand ça bouge vraiment. */
+.badge__dot--live::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.35;
+  animation: pulse 1.8s ease-out infinite;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.45;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+/* =========================================================================
+   Panneaux
+   ========================================================================= */
 
 .panel {
-  background: var(--paper);
-  border: 1px solid var(--ink-300);
+  background: var(--surface);
+  border: 1px solid var(--line);
   border-radius: var(--radius-l);
   box-shadow: var(--shadow-s);
+  overflow: hidden;
 }
 
 .panel__title {
   margin: 0;
-  padding: 12px 16px;
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--ink-700);
-  border-bottom: 1px solid var(--ink-100);
+  padding: 14px 18px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--ink-500);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
 }
 
-/* ---------- Messages ---------- */
+/* =========================================================================
+   Messages
+   ========================================================================= */
 
 .message {
   display: flex;
-  gap: 10px;
+  gap: 11px;
   align-items: flex-start;
-  padding: 11px 14px;
+  padding: 13px 16px;
   border-radius: var(--radius-m);
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 14.5px;
+  font-weight: 550;
+  line-height: 1.45;
   border: 1px solid transparent;
 }
 
 .message--ok {
   background: var(--ok-100);
-  color: var(--ok);
-  border-color: #a8ddc6;
+  color: var(--ok-600);
+  border-color: rgb(10 122 84 / 20%);
 }
 
 .message--error {
   background: var(--danger-100);
-  color: var(--danger);
-  border-color: #f5b5ae;
+  color: var(--danger-700);
+  border-color: rgb(180 35 24 / 20%);
 }
 
 .message--warn {
-  background: var(--warning-100);
-  color: var(--warning);
-  border-color: #e8c68a;
+  background: var(--warn-100);
+  color: var(--warn-700);
+  border-color: rgb(163 90 0 / 22%);
+}
+
+.message--info {
+  background: var(--brand-100);
+  color: var(--brand-700);
+  border-color: rgb(36 71 201 / 18%);
 }
 
 .message__icon {
   flex: none;
   font-size: 17px;
-  line-height: 1.3;
+  line-height: 1.35;
 }
 
-/* ---------- Champs de saisie ---------- */
+/* =========================================================================
+   Champs
+   ========================================================================= */
 
 .input {
   width: 100%;
-  min-height: 40px;
-  padding: 8px 12px;
-  border: 2px solid var(--ink-300);
+  min-height: 42px;
+  padding: 9px 14px;
+  border: 1.5px solid var(--line);
   border-radius: var(--radius-s);
   font-family: inherit;
   font-size: 15px;
   color: var(--ink-900);
-  background: var(--paper);
+  background: var(--surface);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.input::placeholder {
+  color: var(--ink-400);
 }
 
 .input:focus {
   outline: none;
   border-color: var(--brand-500);
+  box-shadow: 0 0 0 3px var(--brand-100);
 }
 
-/* ---------- Listes d'étapes ---------- */
+/* =========================================================================
+   Étapes
+   ========================================================================= */
 
 .steps {
   margin: 0;
@@ -271,119 +425,170 @@ body {
 .steps__item {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 7px 11px;
+  gap: 10px;
+  padding: 9px 13px;
   border-radius: var(--radius-s);
   font-size: 14px;
-  background: var(--ink-100);
+  background: var(--surface-2);
   color: var(--ink-700);
-  border-left: 4px solid var(--ink-300);
+  border-left: 3px solid var(--line-strong);
+  transition: background 0.15s ease;
 }
 
 .steps__item--running {
   background: var(--brand-100);
-  color: var(--brand-600);
+  color: var(--brand-700);
   border-left-color: var(--brand-500);
   font-weight: 700;
 }
 
 .steps__item--done {
   border-left-color: var(--accent-500);
+  color: var(--ink-700);
 }
 
 .steps__item--stopped {
-  border-left-color: var(--warning);
+  border-left-color: var(--warn-700);
 }
 
 .steps__index {
   flex: none;
-  width: 22px;
-  height: 22px;
+  width: 23px;
+  height: 23px;
   border-radius: 50%;
   display: grid;
   place-items: center;
-  font-size: 12px;
-  font-weight: 700;
-  background: rgb(18 32 58 / 8%);
+  font-size: 11.5px;
+  font-weight: 800;
+  background: rgb(15 23 41 / 7%);
+  color: var(--ink-500);
+}
+
+.steps__item--running .steps__index {
+  background: var(--brand-500);
+  color: #fff;
+}
+
+.steps__item--done .steps__index {
+  background: var(--accent-500);
+  color: #fff;
 }
 
 .steps__outcome {
   margin-left: auto;
-  font-size: 12px;
-  font-weight: 600;
-  opacity: 0.8;
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  background: rgb(15 23 41 / 6%);
+  color: var(--ink-500);
   white-space: nowrap;
 }
 
-/* ---------- Barres de progression ---------- */
+/* =========================================================================
+   Progression
+   ========================================================================= */
 
 .progress {
-  height: 10px;
-  border-radius: 999px;
-  background: var(--ink-100);
+  height: 9px;
+  border-radius: var(--radius-pill);
+  background: var(--line);
   overflow: hidden;
 }
 
 .progress__fill {
   height: 100%;
-  background: var(--brand-500);
-  transition: width 0.2s ease;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--brand-400), var(--brand-500));
+  transition: width 0.25s ease;
 }
 
-/* ---------- Fenêtres modales ---------- */
+/* =========================================================================
+   Modales
+   ========================================================================= */
 
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgb(18 32 58 / 55%);
+  z-index: 200;
   display: grid;
   place-items: center;
-  z-index: 100;
   padding: 24px;
+  background: rgb(15 23 41 / 45%);
+  backdrop-filter: blur(3px);
+  animation: fade 0.15s ease;
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .modal {
   width: min(620px, 100%);
-  max-height: 85vh;
-  overflow: auto;
-  background: var(--paper);
-  border-radius: var(--radius-l);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: var(--radius-xl);
   box-shadow: var(--shadow-l);
+  overflow: hidden;
+  animation: pop 0.18s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .modal__header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 18px 22px;
-  border-bottom: 1px solid var(--ink-100);
-  position: sticky;
-  top: 0;
-  background: var(--paper);
+  gap: 14px;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  flex: none;
 }
 
 .modal__title {
   margin: 0;
   font-size: 19px;
   font-weight: 800;
+  letter-spacing: -0.015em;
 }
 
 .modal__body {
-  padding: 20px 22px;
+  padding: 22px 24px 24px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
+  overflow-y: auto;
 }
 
 .modal__footer {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  padding: 16px 22px;
-  border-top: 1px solid var(--ink-100);
+  padding: 16px 24px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-2);
+  flex: none;
 }
 
-/* ---------- Utilitaires ---------- */
+/* =========================================================================
+   Utilitaires
+   ========================================================================= */
 
 .stack {
   display: flex;
@@ -424,7 +629,9 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
     transition: none !important;
     animation: none !important;
   }

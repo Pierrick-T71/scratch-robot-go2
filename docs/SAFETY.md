@@ -111,7 +111,7 @@ Toutes dans `shared/safety-limits.json`.
 
 | Paramètre | Valeur | Origine |
 |---|---|---|
-| Vitesse linéaire | 0,3 m/s | `Move(0.3,0,0.3)` dans l'exemple officiel |
+| Vitesse linéaire | 0,3 m/s (plafond dur) | `Move(0.3,0,0.3)` dans l'exemple officiel |
 | Vitesse angulaire | 0,5 rad/s | `Move(0,0,0.5)` dans l'exemple officiel |
 | Distance par pas | 5 – 200 cm | choix pédagogique |
 | Angle par pas | 15 – 180° | choix pédagogique |
@@ -126,6 +126,24 @@ Toutes dans `shared/safety-limits.json`.
 > ⚠️ Les tolérances et le délai de sécurité sont des **choix d'ingénierie non
 > validés sur robot**. Ils doivent être confirmés (ou révisés) après la campagne
 > physique, avec un adulte responsable présent et vigilant.
+
+### Ces valeurs sont-elles modifiables depuis l'interface ?
+
+Les dix premières valeurs **le sont**, via le panneau Configuration. Trois
+garanties s'y appliquent :
+
+| Garantie | Mécanisme |
+|---|---|
+| Plafond non franchissable | `config.HARD_CEILINGS`, figé dans le code Python |
+| Un adulte doit confirmer | mot « RÉGLAGES » + autorisation explicite |
+| Refus pendant l'exécution | HTTP 409 si un programme tourne |
+
+Un adulte peut donc **ralentir** le robot pour une classe d'âge, jamais
+l'accélérer au-delà de la valeur livrée. Le tableau ci-dessus représente les
+**plafonds**, pas les valeurs par défaut.
+
+> Relever un plafond exige de modifier `config.py` puis de redémarrer le
+> service : un acte visible en revue de code, impossible pendant une séance.
 
 ---
 
