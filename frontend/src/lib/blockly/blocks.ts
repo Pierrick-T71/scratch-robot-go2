@@ -1,11 +1,20 @@
 /**
- * Definition des blocs GO2 Scratch (francais).
+ * Définition des blocs GO2 Scratch (français).
  *
- * Chaque bloc est defini statiquement, sans generation de code. Aucun bloc
- * n'utilise `eval`, `Function`, ni du code arbitraire : le moteur interprete
- * une structure de donnees (`RobotCommand`) produite par le compilateur.
+ * Chaque bloc est défini en JavaScript avec `init()`, pas en JSON.
  *
- * Convention de nommage interne (anglais) / libelle enfant (francais).
+ * Pourquoi ? Le parseur JSON de Blockly 13 n'INSTANCIE PAS d'ombre
+ * (`math_number`) : il accepte la clé `shadow` mais ne la consomme pas, et
+ * `appendShadowInput()` / `setShadowInput()` n'existent pas dans cette
+ * version. Un bloc déclaré en JSON affichait donc « Avancer **de** ␣ cm »,
+ * avec une entrée vide et aucun nombre.
+ *
+ * La solution retenue est un champ numérique éditable placé directement dans
+ * l'entrée du bloc : l'enfant clique sur le nombre et le modifie. C'est aussi
+ * ce que fait le bloc `math_number` de Blockly, et c'est plus clair pour un
+ * enfant de 10 ans qu'une ombre imbriquée.
+ *
+ * Convention de nommage interne (anglais) / libellé enfant (français).
  */
 import * as Blockly from 'blockly/core';
 import { SAFETY } from '../robot/limits';
@@ -15,9 +24,9 @@ const CATEGORY_COLOURS = {
   movement: '#3D7BFE',
   actions: '#12A57A',
   control: '#8E53D8',
-};
+} as const;
 
-/** Nom du bloc de depart du programme. */
+/** Nom du bloc de départ du programme. */
 export const START_BLOCK = 'go2_start';
 export const WAIT_BLOCK = 'go2_wait';
 export const FORWARD_BLOCK = 'go2_move_forward';
@@ -33,25 +42,23 @@ export interface BlockDefinition {
   type: string;
   category: string;
   colour: string;
-  /** Bloc de demarrage :hat / statement (avec bloc suivant) ou statement sans suivant. */
-  kind: 'hat' | 'statement' | 'statementNoNext';
 }
 
-/** Registre des blocs autorises. Toute entree inconnue sera rejetee. */
-export const BLOCK_DEFINITIONS: readonly BlockDefinition[] = [
-  { type: START_BLOCK, category: 'events', colour: CATEGORY_COLOURS.events, kind: 'hat' },
-  { type: WAIT_BLOCK, category: 'events', colour: CATEGORY_COLOURS.events, kind: 'statement' },
-  { type: FORWARD_BLOCK, category: 'movement', colour: CATEGORY_COLOURS.movement, kind: 'statement' },
-  { type: BACKWARD_BLOCK, category: 'movement', colour: CATEGORY_COLOURS.movement, kind: 'statement' },
-  { type: TURN_LEFT_BLOCK, category: 'movement', colour: CATEGORY_COLOURS.movement, kind: 'statement' },
-  { type: TURN_RIGHT_BLOCK, category: 'movement', colour: CATEGORY_COLOURS.movement, kind: 'statement' },
-  { type: STOP_BLOCK, category: 'movement', colour: CATEGORY_COLOURS.movement, kind: 'statement' },
-  { type: STAND_UP_BLOCK, category: 'actions', colour: CATEGORY_COLOURS.actions, kind: 'statement' },
-  { type: SIT_DOWN_BLOCK, category: 'actions', colour: CATEGORY_COLOURS.actions, kind: 'statement' },
-  { type: REPEAT_BLOCK, category: 'control', colour: CATEGORY_COLOURS.control, kind: 'statement' },
-];
+const KNOWN_BLOCKS = new Set<string>();
 
-const KNOWN_BLOCKS = new Set(BLOCK_DEFINITIONS.map((d) => d.type));
+/** Registre des blocs autorisés. Toute entrée inconnue sera rejetée. */
+export const BLOCK_DEFINITIONS: readonly BlockDefinition[] = [
+  { type: START_BLOCK, category: 'events', colour: CATEGORY_COLOURS.events },
+  { type: WAIT_BLOCK, category: 'events', colour: CATEGORY_COLOURS.events },
+  { type: FORWARD_BLOCK, category: 'movement', colour: CATEGORY_COLOURS.movement },
+  { type: BACKWARD_BLOCK, category: 'movement', colour: CATEGORY_COLOURS.movement },
+  { type: TURN_LEFT_BLOCK, category: 'movement', colour: CATEGORY_COLOURS.movement },
+  { type: TURN_RIGHT_BLOCK, category: 'movement', colour: CATEGORY_COLOURS.movement },
+  { type: STOP_BLOCK, category: 'movement', colour: CATEGORY_COLOURS.movement },
+  { type: STAND_UP_BLOCK, category: 'actions', colour: CATEGORY_COLOURS.actions },
+  { type: SIT_DOWN_BLOCK, category: 'actions', colour: CATEGORY_COLOURS.actions },
+  { type: REPEAT_BLOCK, category: 'control', colour: CATEGORY_COLOURS.control },
+];
 
 export function isKnownBlockType(type: string): boolean {
   return KNOWN_BLOCKS.has(type);
@@ -64,172 +71,207 @@ export const CATEGORIES = [
   { name: 'control', label: 'Contrôle', colour: CATEGORY_COLOURS.control },
 ];
 
-/** Ombre `math_number` : donne une valeur par defaut saisie et modifiable. */
-function numberShadow(value: number): Record<string, unknown> {
-  return { type: 'math_number', inputs: { NUM: value } };
+/** Valeurs par défaut affichées dans les blocs. */
+const DEFAULTS = {
+  distance: 50,
+  angle: 90,
+  wait: 2,
+  repeat: 3,
+} as const;
+
+/**
+ * Bornes posées sur les champs.
+ *
+ * Ce sont les **plafonds livrés** (valeurs de `shared/safety-limits.json`),
+ * pas les réglages en vigueur : un curseur de saisie qui laisserait taper
+ * 999999 serait pénible, mais les limites réellement applicables sont
+ * validées par `validate.ts` ET par le service.
+ */
+const FIELD_BOUNDS = {
+  distance: {
+    min: SAFETY.motion.minDistancePerStepCm,
+    max: SAFETY.motion.maxDistancePerStepCm,
+  },
+  angle: {
+    min: SAFETY.motion.minAnglePerStepDeg,
+    max: SAFETY.motion.maxAnglePerStepDeg,
+  },
+  wait: {
+    min: SAFETY.timing.minWaitSeconds,
+    max: SAFETY.timing.maxWaitSeconds,
+  },
+  repeat: { min: 1, max: SAFETY.program.maxRepeatCount },
+} as const;
+
+export { FIELD_BOUNDS };
+
+/**
+ * Ajoute un champ numérique borné dans une entrée, sous un NOM EXPLICITE.
+ *
+ * Le nom est indispensable : `Input.appendField(field)` sans nom donne
+ * `field.name === undefined`, et le champ n'est alors **pas enregistré** dans
+ * le bloc. Conséquence observée : `block.getFieldValue('DISTANCE')` renvoyait
+ * `null` et le compilateur concluait « il manque un nombre » alors que le champ
+ * était affiché à l'écran.
+ *
+ * `setMin()` et `setMax()` renvoient `void` dans Blockly 13 : on ne peut donc
+ * pas les chaîner.
+ */
+function addNumber(
+  input: Blockly.Input,
+  name: string,
+  value: number,
+  min: number,
+  max: number,
+): void {
+  const field = new Blockly.FieldNumber(value);
+  field.setMin(min);
+  field.setMax(max);
+  input.appendField(field, name);
 }
 
 /**
- * Enregistre tous les blocs GO2 sur le namespace Blockly. Idempotent.
+ * Ajoute un texte à un bloc.
  *
- * Les parametres sont des blocs-valeurs (`input_value` type Number) afin de
- * permettre l'imbrication. Les bornes ne sont donc pas posees ici mais
- * centralisees dans `validate.ts`, seule source de verite.
+ * `Block` n'a pas de `appendField()` : le texte passe par une entrée factice
+ * (`dummy`). C'est la forme attendue par l'API JavaScript de Blockly.
  */
+function addText(block: Blockly.Block, text: string): void {
+  block.appendDummyInput().appendField(text);
+}
+
+/** Enregistre tous les blocs GO2 sur le namespace Blockly. Idempotent. */
 export function registerGo2Blocks(): void {
   if (Blockly.Blocks[START_BLOCK] !== undefined) return;
 
-  const dist = SAFETY.motion;
-  const time = SAFETY.timing;
-  const prog = SAFETY.program;
-
   // --- Événements -----------------------------------------------------------
-  Blockly.defineBlocksWithJsonArray([
-    {
-      type: START_BLOCK,
-      // Bloc de départ : simple texte. Un `button` ne ferait qu'ajouter une
-      // dépendance d'affichage pour rien.
-      message0: 'Quand je clique sur Démarrer',
-      colour: CATEGORY_COLOURS.events,
-      nextStatement: null,
-      hat: 'cap',
+
+  Blockly.Blocks[START_BLOCK] = {
+    init(this: Blockly.Block) {
+      this.setStyle('hat_blocks');
+      addText(this, 'Quand je clique sur Démarrer');
+      this.setNextStatement(true);
+      this.setColour(CATEGORY_COLOURS.events);
     },
-    {
-      type: WAIT_BLOCK,
-      message0: 'Attendre %1 secondes',
-      args0: [
-        {
-          type: 'input_value',
-          name: 'DURATION',
-          check: 'Number',
-          shadow: numberShadow(2),
-        },
-      ],
-      colour: CATEGORY_COLOURS.events,
-      previousStatement: null,
-      nextStatement: null,
+  };
+
+  Blockly.Blocks[WAIT_BLOCK] = {
+    init(this: Blockly.Block) {
+      const input = this.appendValueInput('DURATION').setCheck('Number');
+      addNumber(input, 'DURATION', DEFAULTS.wait, FIELD_BOUNDS.wait.min, FIELD_BOUNDS.wait.max);
+      addText(this, ' secondes');
+      this.setInputsInline(false);
+      this.setPreviousStatement(true);
+      this.setNextStatement(true);
+      this.setColour(CATEGORY_COLOURS.events);
     },
-  ]);
+  };
 
   // --- Déplacements ---------------------------------------------------------
-  Blockly.defineBlocksWithJsonArray([
-    {
-      type: FORWARD_BLOCK,
-      message0: 'Avancer de %1 cm',
-      args0: [
-        {
-          type: 'input_value',
-          name: 'DISTANCE',
-          check: 'Number',
-          shadow: numberShadow(50),
-        },
-      ],
-      colour: CATEGORY_COLOURS.movement,
-      previousStatement: null,
-      nextStatement: null,
+
+  Blockly.Blocks[FORWARD_BLOCK] = {
+    init(this: Blockly.Block) {
+      const input = this.appendValueInput('DISTANCE').setCheck('Number');
+      addNumber(
+        input,
+        'DISTANCE',
+        DEFAULTS.distance,
+        FIELD_BOUNDS.distance.min,
+        FIELD_BOUNDS.distance.max,
+      );
+      addText(this, ' cm');
+      this.setInputsInline(false);
+      this.setPreviousStatement(true);
+      this.setNextStatement(true);
+      this.setColour(CATEGORY_COLOURS.movement);
     },
-    {
-      type: BACKWARD_BLOCK,
-      message0: 'Reculer de %1 cm',
-      args0: [
-        {
-          type: 'input_value',
-          name: 'DISTANCE',
-          check: 'Number',
-          shadow: numberShadow(50),
-        },
-      ],
-      colour: CATEGORY_COLOURS.movement,
-      previousStatement: null,
-      nextStatement: null,
+  };
+
+  Blockly.Blocks[BACKWARD_BLOCK] = {
+    init(this: Blockly.Block) {
+      const input = this.appendValueInput('DISTANCE').setCheck('Number');
+      addNumber(
+        input,
+        'DISTANCE',
+        DEFAULTS.distance,
+        FIELD_BOUNDS.distance.min,
+        FIELD_BOUNDS.distance.max,
+      );
+      addText(this, ' cm');
+      this.setInputsInline(false);
+      this.setPreviousStatement(true);
+      this.setNextStatement(true);
+      this.setColour(CATEGORY_COLOURS.movement);
     },
-    {
-      type: TURN_LEFT_BLOCK,
-      message0: 'Tourner à gauche de %1 degrés',
-      args0: [
-        {
-          type: 'input_value',
-          name: 'ANGLE',
-          check: 'Number',
-          shadow: numberShadow(90),
-        },
-      ],
-      colour: CATEGORY_COLOURS.movement,
-      previousStatement: null,
-      nextStatement: null,
+  };
+
+  Blockly.Blocks[TURN_LEFT_BLOCK] = {
+    init(this: Blockly.Block) {
+      const input = this.appendValueInput('ANGLE').setCheck('Number');
+      addNumber(input, 'ANGLE', DEFAULTS.angle, FIELD_BOUNDS.angle.min, FIELD_BOUNDS.angle.max);
+      addText(this, ' degrés');
+      this.setInputsInline(false);
+      this.setPreviousStatement(true);
+      this.setNextStatement(true);
+      this.setColour(CATEGORY_COLOURS.movement);
     },
-    {
-      type: TURN_RIGHT_BLOCK,
-      message0: 'Tourner à droite de %1 degrés',
-      args0: [
-        {
-          type: 'input_value',
-          name: 'ANGLE',
-          check: 'Number',
-          shadow: numberShadow(90),
-        },
-      ],
-      colour: CATEGORY_COLOURS.movement,
-      previousStatement: null,
-      nextStatement: null,
+  };
+
+  Blockly.Blocks[TURN_RIGHT_BLOCK] = {
+    init(this: Blockly.Block) {
+      const input = this.appendValueInput('ANGLE').setCheck('Number');
+      addNumber(input, 'ANGLE', DEFAULTS.angle, FIELD_BOUNDS.angle.min, FIELD_BOUNDS.angle.max);
+      addText(this, ' degrés');
+      this.setInputsInline(false);
+      this.setPreviousStatement(true);
+      this.setNextStatement(true);
+      this.setColour(CATEGORY_COLOURS.movement);
     },
-    {
-      type: STOP_BLOCK,
-      message0: "S'arrêter",
-      colour: CATEGORY_COLOURS.movement,
-      previousStatement: null,
-      nextStatement: null,
+  };
+
+  Blockly.Blocks[STOP_BLOCK] = {
+    init(this: Blockly.Block) {
+      addText(this, "S'arrêter");
+      this.setPreviousStatement(true);
+      this.setNextStatement(true);
+      this.setColour(CATEGORY_COLOURS.movement);
     },
-  ]);
+  };
 
   // --- Actions ---------------------------------------------------------------
-  Blockly.defineBlocksWithJsonArray([
-    {
-      type: STAND_UP_BLOCK,
-      message0: 'Se mettre debout',
-      colour: CATEGORY_COLOURS.actions,
-      previousStatement: null,
-      nextStatement: null,
-    },
-    {
-      type: SIT_DOWN_BLOCK,
-      message0: "S'asseoir",
-      colour: CATEGORY_COLOURS.actions,
-      previousStatement: null,
-      nextStatement: null,
-    },
-  ]);
 
-  // --- Contrôle -------------------------------------------------------------
-  Blockly.defineBlocksWithJsonArray([
-    {
-      type: REPEAT_BLOCK,
-      message0: 'Répéter %1 fois',
-      args0: [
-        {
-          type: 'input_value',
-          name: 'COUNT',
-          check: 'Number',
-          shadow: numberShadow(3),
-        },
-      ],
-      message1: '%1',
-      args1: [{ type: 'input_statement', name: 'DO' }],
-      colour: CATEGORY_COLOURS.control,
-      previousStatement: null,
-      nextStatement: null,
+  Blockly.Blocks[STAND_UP_BLOCK] = {
+    init(this: Blockly.Block) {
+      addText(this, 'Se mettre debout');
+      this.setPreviousStatement(true);
+      this.setNextStatement(true);
+      this.setColour(CATEGORY_COLOURS.actions);
     },
-  ]);
+  };
+
+  Blockly.Blocks[SIT_DOWN_BLOCK] = {
+    init(this: Blockly.Block) {
+      addText(this, "S'asseoir");
+      this.setPreviousStatement(true);
+      this.setNextStatement(true);
+      this.setColour(CATEGORY_COLOURS.actions);
+    },
+  };
+
+  // --- Contrôle --------------------------------------------------------------
+
+  Blockly.Blocks[REPEAT_BLOCK] = {
+    init(this: Blockly.Block) {
+      const input = this.appendValueInput('COUNT').setCheck('Number');
+      addNumber(input, 'COUNT', DEFAULTS.repeat, FIELD_BOUNDS.repeat.min, FIELD_BOUNDS.repeat.max);
+      addText(this, ' fois');
+      this.setInputsInline(false);
+      this.appendStatementInput('DO');
+      this.setPreviousStatement(true);
+      this.setNextStatement(true);
+      this.setColour(CATEGORY_COLOURS.control);
+    },
+  };
+
+  for (const definition of BLOCK_DEFINITIONS) KNOWN_BLOCKS.add(definition.type);
 }
-
-/** Bornes appliquees aux valeurs saisies, issues des limites partagees. */
-export const FIELD_BOUNDS = {
-  minDistance: SAFETY.motion.minDistancePerStepCm,
-  maxDistance: SAFETY.motion.maxDistancePerStepCm,
-  minAngle: SAFETY.motion.minAnglePerStepDeg,
-  maxAngle: SAFETY.motion.maxAnglePerStepDeg,
-  minWait: SAFETY.timing.minWaitSeconds,
-  maxWait: SAFETY.timing.maxWaitSeconds,
-  minRepeat: 1,
-  maxRepeat: SAFETY.program.maxRepeatCount,
-} as const;

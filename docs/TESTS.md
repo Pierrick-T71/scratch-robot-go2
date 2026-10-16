@@ -4,12 +4,12 @@
 
 | Suite | Commande | Résultat |
 |---|---|---|
-| Frontend — unitaires | `cd frontend && npm test` | **46 tests, 4 fichiers, tous passants** |
+| Frontend — unitaires | `cd frontend && npm test` | **79 tests, 6 fichiers, tous passants** |
 | Frontend — types | `cd frontend && npm run check` | **0 erreur, 0 avertissement** |
 | Frontend — build | `cd frontend && npm run build` | **réussi**, aucun avertissement |
 | Service — unitaires + intégration | `cd robot-service && python -m pytest -q` | **165 tests, tous passants** |
 
-**Total : 225 tests automatisés.**
+**Total : 246 tests automatisés.**
 
 > Un `StarletteDeprecationWarning` (concernant `httpx`) peut apparaître dans la
 > sortie pytest. Il provient de la bibliothèque tierce `starlette`, pas du code
@@ -48,7 +48,7 @@ adulte l'autorise. C'est testé (`test_rejects_real_mode_even_with_authorisation
 
 ---
 
-## 3. Tests frontend (60)
+## 3. Tests frontend (79)
 
 ### `tests/commands.test.ts` — modèle de commandes
 - Acceptation de chaque genre de commande
@@ -76,6 +76,21 @@ adulte l'autorise. C'est testé (`test_rejects_real_mode_even_with_authorisation
 - Rotation pure sans vitesse linéaire
 - Vitesses jamais supérieures aux limites
 - Marge de sécurité du délai
+
+### `tests/compiler.test.ts` (19) — traduction blocs → instructions
+Espace de travail Blockly *headless*, sans rendu DOM.
+
+- **Chaque bloc paramétré expose un champ nommé** (`DISTANCE`, `ANGLE`,
+  `DURATION`, `COUNT`) — régression du bug « champs non enregistrés »
+- Valeurs par défaut conformes aux bornes (50 / 90 / 2 / 3)
+- La valeur saisie est lue par le compilateur (137 cm)
+- Les blocs sans paramètre n'ont pas de champ de valeur
+- Chaîne simple traduite dans l'ordre, sans message d'erreur
+- **Répétitions** : 3 par défaut, 5 saisies, **imbrication** (2 × 3 = 6)
+- Répétition non entière et répétition nulle refusées
+- Champ borné : une répétition nulle revient à 1
+- Cycle de blocs : la compilation se termine, sans boucle infinie
+- Programme sans bloc de départ, et bloc non rattaché : signalés
 
 ### `tests/settings.test.ts` (14) — réglages
 - Descripteurs : 10 réglages, tous avec libellé, aide et pas ; aucun doublon
@@ -246,6 +261,32 @@ le délai fixe pouvait tomber juste avant le tour suivant. Il attend désormais
 la survenue effective du déclenchement. Vérifié sur **8 exécutions
 consécutives sans échec**.
 
+### Bugs de blocs — trouvés et corrigés
+
+**5. Les champs numériques n'existaient pas.**
+Signalé : « je ne vois pas les blocs pour choisir les durées ». Dans la
+palette, les blocs affichaient « Avancer de ␣ cm » avec une entrée vide.
+
+Cause : le parseur JSON de Blockly 13 **n'instancie pas** une clé `shadow`.
+Ni `appendShadowInput()` ni `setShadowInput()` n'existent dans cette version.
+La déclaration JSON était donc silencieusement ignorée.
+
+**6. Les champs n'étaient pas enregistrés.**
+En déclarant les blocs en JavaScript, `input.appendField(field)` sans nom
+laisse `field.name === undefined` : le champ est affiché mais **pas enregistré**
+dans le bloc. `getFieldValue('DISTANCE')` renvoyait `null` et le compilateur
+concluait « il manque un nombre ».
+
+Les blocs portent maintenant un champ nommé, éditable directement.
+
+**7. L'état validé était périmé.**
+Vérifier et Démarrer travaillaient sur le dernier état connu de l'éditeur.
+Un changement déposé juste avant le clic n'était pas pris en compte : le robot
+allait exécuter autre chose que ce qui était annoncé. L'éditeur expose
+désormais `refresh()`, appelé au moment même de Vérifier et Démarrer — sans
+dépendance aux événements de changement de Blockly, qui ne se déclenchent pas
+de façon fiable ici.
+
 ### Réglages — vérifié en exécution
 
 | Étape | Résultat |
@@ -259,6 +300,19 @@ consécutives sans échec**.
 | Tentative de dépasser le plafond (99 m/s) | **422 refusé**, valeur inchangée |
 | Réglage refusé en pleine exécution | **409** |
 | Programmes déjà vérifiés | invalidés (nouvelle révision) |
+
+### Blocs — vérifié en exécution
+
+| Étape | Résultat |
+|---|---|
+| Palette « Déplacements » | 4 blocs chiffrés : 50 cm, 50 cm, 90°, 90° |
+| Palette « Quand ça commence » | « Quand je clique sur Démarrer » + « 2 secondes » |
+| Palette « Contrôle » | « 3 fois » |
+| Blocs sans paramètre | aucun champ (normal) |
+| Programme « debout, 120 cm, 45°, 3 s » | 4 étapes correctes |
+| Bloc lâché hors programme | ⛔ « Un bloc est seul, pas attaché au programme. » |
+| Modification d'un nombre puis Vérifier | « Avancer de 150 cm » pris en compte |
+| Ajout d'un bloc libre puis Vérifier | détecté immédiatement |
 
 ---
 

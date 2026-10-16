@@ -115,6 +115,23 @@ Si le robot bouge encore, **préviens l'adulte tout de suite**.
 
 ## Les 3 missions pour commencer
 
+### Modifier un nombre
+
+Chaque bloc qui demande une quantité porte un **nombre** que tu peux changer :
+
+| Bloc | Ce qui est modifiable |
+|---|---|
+| Avancer de **50** cm | la distance |
+| Tourner à gauche de **90** degrés | l'angle |
+| Attendre **2** secondes | la durée |
+| Répéter **3** fois | le nombre de répétitions |
+
+Clique sur le nombre, efface, tape la nouvelle valeur, valide avec **Entrée**.
+
+Le nombre est **borné** : impossible d'écrire 500 cm pour un seul « Avancer »,
+la limite autorisée est plus basse. Si ton programme est refusé, le message te
+dit jusqu'où tu peux aller.
+
 ### Mission 1 — Le tour de table
 
 ```

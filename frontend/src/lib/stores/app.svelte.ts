@@ -62,6 +62,29 @@ class AppState {
   }
 
   /**
+   * Met a jour la liste des etapes sans toucher au verdict.
+   *
+   * Appele a chaque modification du programme. Sans cela, la liste affichait
+   * des valeurs perimees apres un changement de nombre, alors que le robot
+   * executerait, lui, le nouveau programme : l'ecran mentirait.
+   */
+  syncSteps(commands: readonly RobotCommand[]): void {
+    // Tant qu'aucune verification n'a eu lieu, la liste n'a pas de sens a
+    // afficher : on laisse le panneau vide et l'enfant invite a verifier.
+    if (this.report === null) return;
+    this.steps = commands.map((command, index) => {
+      const previous = this.steps.find((s) => s.index === index);
+      return {
+        index,
+        label: describe(command),
+        // Une etape en cours d'execution garde son etatuel.
+        state: previous?.state === 'running' ? 'running' : 'pending',
+        outcome: previous?.state === 'running' ? previous.outcome : null,
+      } satisfies ProgramStep;
+    });
+  }
+
+  /**
    * Vrai si les reglages ont change depuis la derniere verification :
    * le rapport affiche n'est alors plus valable.
    */

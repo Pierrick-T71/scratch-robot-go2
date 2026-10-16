@@ -36,30 +36,50 @@ export interface CompileResult {
 }
 
 /**
- * Lit la valeur numerique d'une entree de bloc.
+ * Lit la valeur numérique d'une entrée de bloc.
  *
- * L'entree est un bloc-valeur (ombre `math_number` par defaut, ou un autre
- * bloc imbrique). On lit le premier champ du bloc connecte.
+ * Deux formes sont acceptées, ce qui rend le lecteur compatible avec les
+ * missions enregistrées avant le passage des ombres aux champs intégrés :
+ *
+ *  1. un bloc est accroché dans l'entrée  -> on lit son premier champ ;
+ *  2. la valeur est un champ du bloc parent -> on lit ce champ.
+ *
+ * Le cas 2 est le cas courant : les blocs GO2 portent un champ numérique
+ * éditable directement (voir le commentaire de `blocks.ts` sur l'absence
+ * d'ombres dans le parseur JSON de Blockly 13).
  */
 function readNumericValue(
   block: Blockly.Block,
   fieldName: string,
   issues: CompileIssue[],
 ): number | null {
-  const input = block.getInput(fieldName);
-  const source = input?.connection?.targetBlock();
-
-  if (!source) {
-    issues.push({ message: 'Il manque un nombre dans un bloc.', blockId: block.id });
-    return null;
-  }
+  const attached = block.getInput(fieldName)?.connection?.targetBlock();
 
   let raw: unknown = null;
-  for (const field of source.getFields()) {
-    if (!field.name) continue;
-    raw = source.getFieldValue(field.name);
-    if (raw !== null && raw !== undefined && raw !== '') break;
-    raw = null;
+
+  if (attached) {
+    // Un bloc est accroché : on prend son premier champ renseigné.
+    for (const field of attached.getFields()) {
+      if (!field.name) continue;
+      raw = attached.getFieldValue(field.name);
+      if (raw !== null && raw !== undefined && raw !== '') break;
+      raw = null;
+    }
+  } else {
+    // Champ intégré au bloc parent (cas nominal des blocs GO2).
+    raw = block.getFieldValue(fieldName);
+    if (raw === null || raw === undefined) {
+      // Repli : premier champ nommé du bloc. Ce chemin sert si un nom de
+      // champ change, et évite un « il manque un nombre » trompeur.
+      for (const field of block.getFields()) {
+        if (!field.name) continue;
+        const candidate = block.getFieldValue(field.name);
+        if (candidate !== null && candidate !== undefined && candidate !== '') {
+          raw = candidate;
+          break;
+        }
+      }
+    }
   }
 
   if (raw === null || raw === undefined || raw === '') {

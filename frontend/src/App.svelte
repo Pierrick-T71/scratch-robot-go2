@@ -25,6 +25,7 @@
     serialize: () => string;
     load: (xml: string) => void;
     clear: () => void;
+    refresh: () => RobotCommand[];
   };
 
   let editor = $state<EditorApi | null>(null);
@@ -49,21 +50,43 @@
     commands = [...next];
     compileIssues = [...issues];
     app.setCommands(next);
+    // La liste des étapes suit immédiatement le programme : afficher
+    // « Avancer de 120 cm » pendant qu'un 75 est prêt à partir, ce serait
+    // mentir. Le verdict, lui, reste à l'initiative de « Vérifier ».
+    app.syncSteps(next);
     if (issues.length > 0 && !app.isBusy) {
       app.notice = { tone: 'error', message: issues[0] ?? 'Programme incomplet.' };
     }
   }
 
+  /**
+ * Recompile avant toute action.
+ *
+ * Vérifier et Démarrer ne doivent jamais travailler sur un état périmé :
+ * l'enfant a pu déposer ou modifier un bloc depuis le dernier rendu.
+ * On interroge donc l'éditeur à l'instant même, sans dépendre des événements
+ * de changement de Blockly.
+ */
+function currentProgram(): { commands: RobotCommand[]; issues: string[] } {
+    if (!editor) {
+      return { commands: [], issues: ['L’éditeur n’est pas prêt. Recharge la page.'] };
+    }
+    const fresh = editor.refresh();
+    return { commands: fresh, issues: compileIssues };
+  }
+
   function runCheck(): void {
-    if (compileIssues.length > 0) {
-      app.notice = { tone: 'error', message: compileIssues[0] ?? 'Programme incomplet.' };
+    const program = currentProgram();
+    commands = program.commands;
+    if (program.issues.length > 0) {
+      app.notice = { tone: 'error', message: program.issues[0] ?? 'Programme incomplet.' };
       return;
     }
     app.check(commands);
   }
 
   function runStart(): void {
-    app.requestStart(commands);
+    app.requestStart(currentProgram().commands);
   }
 </script>
 

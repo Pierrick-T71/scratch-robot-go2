@@ -21,11 +21,19 @@
   interface Props {
     /** Commandes compilees, remises a chaque modification du programme. */
     onChange: (commands: readonly RobotCommand[], issues: readonly string[]) => void;
-    /** Recupere le XML serialise (sauvegarde de mission). */
+    /**
+     * API de l'éditeur.
+     *
+     * `refresh()` RECOMPILE et renvoie l'état courant. Vérifier et Démarrer
+     * l'appellent systématiquement : on ne doit jamais valider un programme à
+     * partir d'un état potentiellement périmé, et cela ne dépend d'aucun
+     * événement de changement Blockly.
+     */
     registerApi: (api: {
       serialize: () => string;
       load: (xml: string) => void;
       clear: () => void;
+      refresh: () => RobotCommand[];
     }) => void;
   }
 
@@ -63,10 +71,16 @@
     publish();
   }
 
-  function publish(): void {
-    if (!workspace) return;
+  /** Recompile et renvoie l'état courant, sans dépendre des événements. */
+  function refresh(): RobotCommand[] {
+    if (!workspace) return [];
     const result = compileWorkspace(Blockly);
     onChange(result.commands, result.issues.map((i) => i.message));
+    return result.commands;
+  }
+
+  function publish(): void {
+    refresh();
   }
 
   /**
@@ -121,7 +135,7 @@
 
     Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(defaultProgramXml()), workspace);
 
-    registerApi({ serialize, load, clear });
+    registerApi({ serialize, load, clear, refresh });
 
     // Point d'accroche pour les tests d'interface et le débogage.
     // Exposé UNIQUEMENT en développement : jamais dans la version livrée.

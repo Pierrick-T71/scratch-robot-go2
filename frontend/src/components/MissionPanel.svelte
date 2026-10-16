@@ -14,7 +14,12 @@
 
   interface Props {
     /** API d'édition exposée par BlocklyEditor. */
-    editor: { serialize: () => string; load: (xml: string) => void; clear: () => void } | null;
+    editor: {
+      serialize: () => string;
+      load: (xml: string) => void;
+      clear: () => void;
+      refresh: () => unknown;
+    } | null;
   }
 
   let { editor }: Props = $props();
