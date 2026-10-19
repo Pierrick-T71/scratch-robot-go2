@@ -86,6 +86,18 @@ export type ExecutionEvent =
   | { type: 'execution_finished'; reason: 'completed' | 'stopped' | 'error' | 'safety' }
   | { type: 'error'; message: string };
 
+/** Rapport du test de branchement d'un robot réel. */
+export interface RobotConnectionReport {
+  robot_ip: string;
+  interface: string;
+  /** `true` SEULEMENT si un message a réellement été reçu du robot. */
+  connecte: boolean;
+  test_lance: boolean;
+  commande_envoyee: string | null;
+  succes: boolean;
+  message: string;
+}
+
 export class ServiceError extends Error {
   constructor(
     message: string,
@@ -186,6 +198,38 @@ heartbeat: (runId: string): Promise<{ ok: boolean }> =>
     request<SettingsPayload>('/api/settings', {
       method: 'POST',
       body: JSON.stringify({ adult_authorised: true, values }),
+    }),
+
+  /**
+   * Branche un robot réel.
+   *
+   * Le canal retenu est celui de l'application mobile du constructeur
+   * (WebRTC, port 9991) : il ne dépend pas d'une interface réseau locale,
+   * seulement de l'adresse du robot. L'ancien champ `network_interface` reste
+   * exigé par le service, mais il est désormais constant.
+   *
+   * `lancerTest` déclenche un geste physique (`Sit()`). C'est un paramètre
+   * explicite, jamais implicite : ouvrir la liaison et bouger le robot sont
+   * deux actes différents, et le second doit être demandé.
+   */
+  connectRobot: (
+    robotIp: string,
+    lancerTest: boolean,
+  ): Promise<RobotConnectionReport> =>
+    request<RobotConnectionReport>('/api/robot/connect', {
+      method: 'POST',
+      body: JSON.stringify({
+        robot_ip: robotIp,
+        network_interface: 'webrtc',
+        lancer_test: lancerTest,
+      }),
+    }),
+
+  /** Revient en simulation et immobilise le robot. */
+  disconnectRobot: (): Promise<{ simulation: boolean }> =>
+    request<{ simulation: boolean }>('/api/robot/disconnect', {
+      method: 'POST',
+      body: JSON.stringify({}),
     }),
 };
 

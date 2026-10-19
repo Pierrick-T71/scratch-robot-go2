@@ -24,9 +24,12 @@ import asyncio
 import contextlib
 import copy
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
+
+from fastapi import HTTPException
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -85,6 +88,38 @@ class StartRequest(BaseModel):
 
     program: dict[str, Any] = Field(...)
     adult_authorised: bool = False
+
+
+#: Nom de la variable d'environnement portant la clé AES-128 du robot.
+#: Le firmware récent (Go2 >= 1.1.15) refuse le handshake sans elle.
+ROBOT_AES_KEY_ENV = "GO2_ROBOT_AES_KEY"
+
+
+def _robot_aes_key() -> str | None:
+    """Clé AES-128 propre au robot, lue dans l'environnement du service.
+
+    Volontairement absente du dépôt : c'est un secret lié à une machine.
+    """
+    valeur = os.environ.get(ROBOT_AES_KEY_ENV, "").strip()
+    return valeur or None
+
+
+class RobotConnectRequest(BaseModel):
+    """Branchement d'un robot réel, déclaré depuis l'interface.
+
+    `extra="forbid"` : un champ mal orthographié doit être REFUSÉ, pas
+    accepté silencieusement en valeur par défaut. Ici, `interface` au lieu de
+    `network_interface` ferait créer un adaptateur sans interface, donc sans
+    joindre le robot — sans le moindre message d'erreur.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    robot_ip: str = Field(..., pattern=r"^(\d{1,3}\.){3}\d{1,3}$", max_length=15)
+    network_interface: str = Field(..., min_length=1, max_length=32)
+    #: `false` = ouvrir le canal et lire l'état. `true` = envoyer aussi la
+    #: posture de test, qui fait BOUGER le robot.
+    lancer_test: bool = False
 
 
 class HeartbeatRequest(BaseModel):
@@ -187,11 +222,69 @@ class ServiceState:
     def mode(self) -> str:
         return self._mode
 
+    async def reject_real_execution(self) -> None:
+        """
+        Empêche toute commande pendant une tentative de branchement.
+
+        Brancher un robot et lancer un programme ne doivent pas pouvoir se
+        chevaucher : le moteur doit être libre, et le robot à l'arrêt, avant
+        qu'un nouvel adaptateur ne prenne la main.
+        """
+        if self.engine.is_running:
+            raise HTTPException(
+                status_code=409,
+                detail="Un programme est déjà en cours : arrêtez-le d’abord.",
+            )
+        await self.watchdog.emergency_stop()
+
+    def adopt_robot_adapter(self, adapter: Any) -> None:
+        """
+        Confie le service au robot, après test réussi.
+
+        Le moteur et le chien de garde sont reconstruits : ils gardent
+        l'ancien adaptateur dans leurs closures, et le robot ne serait pas
+        couvert par le bail de sécurité.
+        """
+        self.adapter = adapter
+        self.engine = ExecutionEngine(self.adapter, limits=self.limits)
+        self.watchdog = SafetyWatchdog(self.engine, self.adapter, self.limits)
+        self._mode = "real"
+        self.last_robot_ip = getattr(adapter, "robot_ip", None)
+
+    async def release_robot_adapter(self) -> None:
+        """
+        Rend le service à la simulation.
+
+        L'arrêt passe par le chien de garde AVANT de fermer la liaison : une
+        consigne de vitesse encore publiée quand le canal se ferme laisserait
+        le robot partir tout seul.
+        """
+        await self.watchdog.emergency_stop()
+        ancien = self.adapter
+        try:
+            await ancien.disconnect()
+        except Exception:
+            pass
+        self.adapter = SimulatedAdapter(self.limits)
+        self.engine = ExecutionEngine(self.adapter, limits=self.limits)
+        self.watchdog = SafetyWatchdog(self.engine, self.adapter, self.limits)
+        self._mode = "simulation"
+
+    def report_robot_failure(self, robot_ip: str, message: str) -> None:
+        """
+        Consigne un échec de branchement.
+
+        Le service reste en simulation : un robot injoignable ne doit jamais
+        laisser croire qu'un programme part vers la machine.
+        """
+        self.last_robot_ip = robot_ip
+        self.last_robot_error = message
+        self._mode = "simulation"
+
     async def set_mode(self, mode: str, adult_authorised: bool) -> None:
         """Bascule de mode. Le mode réel est refusé si non validé."""
         if mode == "simulation":
-            await self.watchdog.emergency_stop()
-            self._mode = "simulation"
+            await self.release_robot_adapter()
             return
 
         # Mode réel.
@@ -419,6 +512,89 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
         state._run_task = task
 
         return {"accepted": True, "runId": run_id}
+
+    @app.post("/api/robot/connect")
+    async def robot_connect(payload: RobotConnectRequest) -> dict[str, Any]:
+        """
+        Branche un robot réel et, sur demande, lance un test physique.
+
+        Le passage en réel est conditionné au SUCCÈS de ce test : le service
+        ne remplace jamais son adaptateur avant que la liaison soit prouvée.
+        Si le robot ne répond pas, la simulation reste active — l'inverse
+        n'est jamais vrai.
+        """
+        from .adapters.webrtc import WebRTCAdapter
+
+        state.reject_real_execution()
+
+        # Un seul canal à la fois : le robot refuse un second client. Sans ce
+        # relâchement, un deuxième essai échouerait alors que le robot est
+        # parfaitement joignable — l'ancienne liaison resterait ouverte.
+        if state.mode == "real":
+            await state.release_robot_adapter()
+
+        try:
+            candidat: WebRTCAdapter = WebRTCAdapter(
+                state.limits,
+                payload.robot_ip,
+                aes_key=_robot_aes_key(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=500,
+                detail=f"Construction de l’adaptateur impossible ({exc}).",
+            ) from exc
+
+        try:
+            # Le verrou de la classe reste fermé : on ouvre CETTE instance,
+            # uniquement parce qu'un adulte a saisi une adresse et demandé
+            # explicitement la connexion.
+            candidat.enable_physical_commands()
+            await candidat.connect()
+        except Exception as exc:
+            await candidat.disconnect()
+            state.report_robot_failure(payload.robot_ip, str(exc))
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"Connexion au robot {payload.robot_ip} impossible : {exc}. "
+                    "L’application reste en simulation."
+                ),
+            ) from exc
+
+        rapport: dict[str, object] = {
+            "robot_ip": payload.robot_ip,
+            "interface": getattr(
+                candidat, "network_interface", payload.network_interface
+            ),
+            "connecte": True,
+            "test_lance": payload.lancer_test,
+            "message": "",
+        }
+
+        if payload.lancer_test:
+            resultat = await candidat.self_test()
+            rapport.update(resultat)
+            if not resultat.get("succes"):
+                rapport["connecte"] = False
+
+        if not rapport.get("connecte"):
+            await candidat.disconnect()
+            state.report_robot_failure(payload.robot_ip, str(rapport.get("message", "")))
+            raise HTTPException(
+                status_code=502,
+                detail=str(rapport.get("message", "Le robot n’a pas répondu.")),
+            )
+
+        # Le robot est là : on lui confie le service, jusqu'au prochain arrêt.
+        state.adopt_robot_adapter(candidat)
+        return rapport
+
+    @app.post("/api/robot/disconnect")
+    async def robot_disconnect() -> dict[str, Any]:
+        """Revient en simulation et immobilise le robot."""
+        state.release_robot_adapter()
+        return {"simulation": True}
 
     @app.post("/api/execution/stop")
     async def stop() -> dict[str, Any]:

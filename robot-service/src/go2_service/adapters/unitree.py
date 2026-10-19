@@ -126,11 +126,28 @@ class UnitreeAdapter:
     """
 
     name = "unitree"
+
+    #: Verrou de la CLASSE : un adaptateur fraichement construit refuse
+    #: toute commande. L'activation passe par `enable_physical_commands()`,
+    #: qui agit sur l'INSTANCE — jamais sur la classe. Un seul test malencontreux
+    #: ne peut donc pas ouvrir le pilotage a tout le service.
     physical_commands_enabled = False
 
-    def __init__(self, limits: Limits, network_interface: str) -> None:
+    def __init__(
+        self,
+        limits: Limits,
+        network_interface: str,
+        robot_ip: str | None = None,
+    ) -> None:
         self._limits = limits
         self._interface = network_interface
+        #: Adresse du robot. Le DDS travaille en multicast et ne s'adresse
+        #: donc PAS au robot par IP : cette valeur sert au controle de
+        #: joignabilite, et a l'affichage pour que l'utilisateur sache quel
+        #: robot il pilote.
+        self._robot_ip = robot_ip
+        #: Verrou d'instance, sur la classe.
+        self.physical_commands_enabled = False
 
         self._client: Any = None
         self._connected = False
@@ -149,6 +166,9 @@ class UnitreeAdapter:
         self._shutdown = threading.Event()
         #: Dernier état reçu via `rt/sportmodestate`, s'il y en a un.
         self._last_state: Any = None
+        #: Abonné d'état, et preuve qu'il a déjà reçu quelque chose.
+        self._state_channel: Any = None
+        self._last_state_ok = False
 
     # -- Journalisation des inconnues -------------------------------------
 
@@ -164,6 +184,72 @@ class UnitreeAdapter:
     )
 
     # -- Cycle de vie ------------------------------------------------------
+
+    @property
+    def robot_ip(self) -> str | None:
+        return self._robot_ip
+
+    @property
+    def network_interface(self) -> str:
+        return self._interface
+
+    def enable_physical_commands(self) -> None:
+        """Ouvre le pilotage physique pour CETTE instance.
+
+        Acte délibéré, jamais appelé implicitement. Le service ne l'appelle
+        qu'après un test de connexion réussi.
+
+        ⚠️ Une fois activé, toute commande reçue part vers le robot. C'est
+        pourquoi l'activation est attachée à l'instance : un adaptateur créé
+        ailleurs dans le service reste verrouillé.
+        """
+        self.physical_commands_enabled = True
+
+    async def self_test(self, timeout_s: float = 8.0) -> dict[str, object]:
+        """Test de connexion : met le robot en position assise.
+
+        CHOIX DE LA POSTURE : `Sit()` est la commande la plus sûre pour une
+        première prise de contact. Elle abaisse le robot et le ramène à un
+        état stable : un robot debout qui tombe fait mal, un robot assis non.
+        Elle prouve en outre que le canal d'ALLER est accepte, pas seulement
+        le canal d'etat.
+
+        Renvoie un rapport exploitable par l'interface. Ne leve pas : un
+        echec doit etre RAPPORTE, pas transformer en 500 opaque.
+        """
+        rapport: dict[str, object] = {
+            "robot_ip": self._robot_ip,
+            "interface": self._interface,
+            "connecte": self._connected,
+            "commande_envoyee": None,
+            "succes": False,
+            "message": "",
+        }
+
+        if not self._connected or self._client is None:
+            rapport["message"] = "Le robot n’est pas connecté."
+            return rapport
+
+        try:
+            # `Sit` existe bien cote Python : verifie par introspection du SDK
+            # installe (voir docs/ROBOT_SETUP.md §12).
+            self._client.Sit()
+            rapport["commande_envoyee"] = "Sit"
+            rapport["succes"] = True
+            self._posture = Posture.SIT
+            rapport["message"] = (
+                "Commande « s’asseoir » acceptée. "
+                "Le robot a bien reçu l’ordre — reste à le voir bouger."
+            )
+        except Exception as exc:
+            rapport["message"] = f"Commande refusée par le robot ({exc})."
+            return rapport
+
+        # Attente courte : on laisse le temps au contrôleur de traiter, sans
+        # prétendre mesurer quoi que ce soit. On ne dit PAS « il s'est assis ».
+        await asyncio.sleep(min(timeout_s, 2.0))
+        rapport["attente_s"] = round(min(timeout_s, 2.0), 1)
+        return rapport
 
     async def connect(self) -> None:
         """Ouvre la liaison DDS. Refuse de s'importer sur un poste non compatible."""
@@ -202,6 +288,115 @@ class UnitreeAdapter:
         self._connected = True
         self._state = RobotState.IDLE
 
+        # Ouverture du canal d'ECOUTE.
+        #
+        # ⚠️ CETTE ETAPE EST LA SEULE VRAIE PREUVE DE CONNEXION.
+        #
+        # `ChannelFactoryInitialize` et `SportClient.Init()` réussissent
+        # localement, sur cette machine, même SANS ROBOT : rien n'attend de
+        # réponse. Un service qui se contenterait de leur succès annoncerait
+        # « connecté » devant un robot absent — le pire des échecs, puisque
+        # l'enfant croirait commander une machine.
+        #
+        # On ouvre donc un abonné sur `rt/sportmodestate` et on attend
+        # réellement qu'un message arrive. Aucun message = pas de robot.
+        self._start_state_listener()
+
+    # -- Écoute de l'état --------------------------------------------------
+
+    #: Délai d'attente d'un premier message avant de conclure à l'absence
+    #: de robot. Court : c'est un test de joignabilité, pas une connexion.
+    STATE_HANDSHAKE_TIMEOUT_S = 4.0
+
+    def _start_state_listener(self) -> None:
+        """
+        Ouvre un abonné sur l'état du robot et attend sa première publication.
+
+        Lève `AdapterError` si rien n'arrive dans le délai : c'est le seul
+        mécanisme qui distingue « robot présent » de « robot absent ».
+        """
+        try:
+            from unitree_sdk2py.core.channel import (  # type: ignore[import-not-found]
+                ChannelFactory,
+            )
+            from unitree_sdk2py.idl.unitree_go.msg.dds_._SportModeState_ import (  # type: ignore[import-not-found]
+                SportModeState_,
+            )
+        except ImportError as exc:
+            # Pas de type d'état dans cette version du SDK : on ne peut pas
+            # prouver la présence du robot, donc on refuse plutôt que de
+            # deviner.
+            raise AdapterError(
+                "Le type SportModeState_ est absent du SDK installé : "
+                "impossible de vérifier que le robot répond.",
+                recoverable=True,
+            ) from exc
+
+        recu = threading.Event()
+
+        def _handler(message: Any) -> None:
+            self._last_state = message
+            self._battery = self._read_battery(message)
+            self._yaw = self._read_yaw(message)
+            self._position = self._read_position(message)
+            recu.set()
+
+        factory = ChannelFactory()
+        self._state_channel = factory.CreateRecvChannel(
+            TOPIC_HIGHSTATE, SportModeState_, _handler, queueLen=8
+        )
+
+        if not recu.wait(timeout=self.STATE_HANDSHAKE_TIMEOUT_S):
+            raise AdapterError(
+                f"Aucun message sur « {TOPIC_HIGHSTATE} » après "
+                f"{self.STATE_HANDSHAKE_TIMEOUT_S:g} s. "
+                "Le robot ne répond pas : vérifiez son adresse, le câble, "
+                "et que le multicast est bien routé.",
+                recoverable=True,
+            )
+
+        self._last_state_ok = True
+
+    @staticmethod
+    def _read_battery(message: Any) -> float | None:
+        """Pourcentage de batterie, ou `None` s'il n'est pas remonté.
+
+        Jamais 0 par défaut : une valeur absente.signale l'absence de donnée,
+        et 0 serait une mesure plausible (« batterie vide »).
+        """
+        for chemin in ("bms.SOC", "bms.soc", "SOC"):
+            objet = message
+            for attribut in chemin.split("."):
+                objet = getattr(objet, attribut, None)
+                if objet is None:
+                    break
+            if isinstance(objet, (int, float)):
+                return float(objet)
+        return None
+
+    @staticmethod
+    def _read_yaw(message: Any) -> float | None:
+        """Cap en radians, lu dans `imu.rpy[2]`, ou `None`."""
+        imu = getattr(message, "imu", None)
+        rpy = getattr(imu, "rpy", None) if imu is not None else None
+        if rpy is None:
+            return None
+        try:
+            return float(rpy[2])
+        except (TypeError, IndexError, ValueError):
+            return None
+
+    @staticmethod
+    def _read_position(message: Any) -> tuple[float, float, float] | None:
+        """Position estimée, ou `None`."""
+        position = getattr(message, "position", None)
+        if position is None:
+            return None
+        try:
+            return (float(position[0]), float(position[1]), float(position[2]))
+        except (TypeError, IndexError, ValueError):
+            return None
+
     async def disconnect(self) -> None:
         # Toujours tenter l'arrêt avant de couper : laisser une consigne de
         # vitesse active serait dangereux.
@@ -210,7 +405,16 @@ class UnitreeAdapter:
         except Exception:
             pass
         self._stop_publisher()
+        # L'abonné d'état est fermé AVANT la liaison : le laisser ouvert
+        # garderait un lecteur DDS actif sur un canal fermé.
+        if self._state_channel is not None:
+            try:
+                self._state_channel.CloseReader()
+            except Exception:
+                pass
+            self._state_channel = None
         self._connected = False
+        self._last_state_ok = False
         self._state = RobotState.DISCONNECTED
         self._client = None
 

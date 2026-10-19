@@ -17,6 +17,7 @@
   import HelpModal from './components/HelpModal.svelte';
   import ModeSwitch from './components/ModeSwitch.svelte';
   import SettingsPanel from './components/SettingsPanel.svelte';
+import RobotConnect from './components/RobotConnect.svelte';
   import { app } from './lib/stores/app.svelte';
   import type { Program } from './lib/robot/program';
   import type { CompileResult } from './lib/blockly/compiler';
@@ -34,6 +35,7 @@
   let showHelp = $state(false);
   let showMode = $state(false);
   let showSettings = $state(false);
+let showRobot = $state(false);
 
   onMount(() => {
     app.connect();
@@ -120,6 +122,18 @@
           </span>
         </button>
 
+        <button type="button" class="quick" onclick={() => (showRobot = true)}>
+          <span class="quick__icon" aria-hidden="true">🔌</span>
+          <span class="quick__text">
+            <span class="quick__label">
+              {app.status.mode === 'simulation' ? 'Brancher le robot' : 'Robot branché'}
+            </span>
+            <span class="quick__hint">
+              {app.status.mode === 'simulation' ? 'Tester la connexion' : 'Voir le branchement'}
+            </span>
+          </span>
+        </button>
+
         <button type="button" class="quick" onclick={() => (showSettings = true)}>
           <span class="quick__icon" aria-hidden="true">⚙️</span>
           <span class="quick__text">
@@ -144,6 +158,14 @@
 
 {#if showSettings}
   <SettingsPanel onClose={() => (showSettings = false)} />
+{/if}
+
+{#if showRobot}
+  <div class="modal-backdrop" role="presentation">
+    <div class="modal modal--etroit" role="dialog" aria-modal="true" aria-label="Robot réel">
+      <RobotConnect onClose={() => (showRobot = false)} />
+    </div>
+  </div>
 {/if}
 
 {#if app.pendingStart}
@@ -218,6 +240,11 @@
     grid-template-columns: 1fr 1fr;
     gap: 10px;
     flex: none;
+  }
+
+  /* Fenêtre de branchement : étroite, elle ne prend pas l'écran des blocs. */
+  .modal--etroit {
+    max-width: 380px;
   }
 
   .quick {
