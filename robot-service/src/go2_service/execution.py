@@ -1,23 +1,35 @@
 """Moteur d'exécution des programmes.
 
 Rôles :
-  - exécuter les instructions une par une, dans l'ordre ;
+  - interpréter le programme (répétitions, conditions) ;
+  - exécuter les instructions physiques une par une, dans l'ordre ;
   - propager l'arrêt demandé à l'instruction en cours ;
   - interdire toute exécution concurrente ;
   - ne jamais déclarer un déplacement « réussi » sans mesure.
 
 Le moteur ne connaît que le contrat `RobotAdapter` : aucune notion de SDK.
+
+## Conditions et état du robot
+
+Les conditions se tranchent au moment de l'exécution, avec l'état réellement
+lu par l'adaptateur. Si une mesure manque, l'exécution s'arrête et le signale
+plutôt que de supposer une valeur favorable.
+
+## L'arrêt est garanti
+
+`_finalize` demande toujours l'arrêt à l'adaptateur, y compris après une
+exception : aucune consigne de mouvement ne survit à la fin du programme.
 """
 
 from __future__ import annotations
 
-import asyncio
 import itertools
 import time
 from dataclasses import dataclass, field
 from typing import AsyncIterator
 
 from .adapters.base import AdapterError, CommandOutcome, RobotAdapter, StopSignal
+from .interpreter import Interpreter, ProgramError, RobotTruth
 from .validation import RobotCommand
 
 #: Raisons de fin d'exécution, exposées telles quelles à l'interface.
@@ -59,13 +71,14 @@ class ConcurrentExecutionError(RuntimeError):
 
 
 class ExecutionEngine:
-    """Exécute un programme sur un adaptateur."""
+    """Interprète puis exécute un programme sur un adaptateur."""
 
-    def __init__(self, adapter: RobotAdapter) -> None:
+    def __init__(self, adapter: RobotAdapter, limits=None) -> None:
         self._adapter = adapter
         self._active: ActiveExecution | None = None
         self._counter = itertools.count(1)
         self._clock = time.monotonic
+        self._limits = limits
 
     @property
     def is_running(self) -> bool:
@@ -74,17 +87,67 @@ class ExecutionEngine:
     def new_run_id(self) -> str:
         return f"run-{next(self._counter)}-{self._clock():.0f}"
 
+    # -- Lecture de l'état --------------------------------------------------
+
+    async def _read_truth(self) -> RobotTruth:
+        """Ce que le service sait réellement de l'instant présent.
+
+        Un champ laissé à `None` signifie « pas mesuré ». On ne le remplace
+        jamais par une valeur favorable : cela ferait passer une condition
+        sans que personne ne puisse l'expliquer ensuite.
+        """
+        try:
+            status = await self._adapter.get_status()
+        except Exception:
+            return RobotTruth()
+
+        posture: str | None = None
+        raw_posture = getattr(status, "posture", None)
+        if raw_posture is not None:
+            posture = getattr(raw_posture, "value", str(raw_posture))
+
+        return RobotTruth(
+            posture=posture,
+            battery_percent=status.battery_percent,
+        )
+
+    # -- Exécution ----------------------------------------------------------
+
+    async def execute_program(self, program, run_id: str) -> AsyncIterator[ExecutionEvent]:
+        """Interprète puis exécute un programme structuré."""
+        if self.is_running:
+            raise ConcurrentExecutionError("Un programme est déjà en cours d’exécution.")
+
+        # L'interprétation a lieu AVANT le moindre mouvement : si elle échoue,
+        # le robot n'a pas bougé.
+        truth = await self._read_truth()
+        try:
+            interpreter = Interpreter(self._limits, truth)
+            commands = interpreter.run(program)
+        except ProgramError as exc:
+            yield ExecutionEvent(type="error", message=str(exc))
+            yield ExecutionEvent(type="execution_finished", reason=FINISH_ERROR)
+            return
+
+        async for event in self._execute(commands, run_id):
+            yield event
+
     async def execute(
         self, commands: list[RobotCommand], run_id: str
     ) -> AsyncIterator[ExecutionEvent]:
-        """Exécute le programme et produit les événements au fil de l'eau.
+        """Exécute une suite d'instructions DÉJÀ interprétées.
 
-        Lever `ConcurrentExecutionError` si une exécution est déjà active.
+        Réservé aux tests. Un programme d'enfant passe par
+        `execute_program`.
         """
+        async for event in self._execute(commands, run_id):
+            yield event
+
+    async def _execute(
+        self, commands: list[RobotCommand], run_id: str
+    ) -> AsyncIterator[ExecutionEvent]:
         if self.is_running:
-            raise ConcurrentExecutionError(
-                "Un programme est déjà en cours d’exécution."
-            )
+            raise ConcurrentExecutionError("Un programme est déjà en cours d’exécution.")
 
         active = ActiveExecution(run_id=run_id, started_at=self._clock())
         self._active = active

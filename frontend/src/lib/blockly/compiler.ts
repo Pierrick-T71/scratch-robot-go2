@@ -1,217 +1,300 @@
 /**
- * Compilateur : espace de travail Blockly -> instruction GO2 interne.
+ * Traduit l'espace de travail Blockly en `Program`.
  *
- * Aucune generation de code. On produit une structure de donnees pure
- * (`RobotCommand`) qui sera validee puis envoyee au service. Le service
- * revalide integralement de son cote : cette validation ici ne sert qu'au
- * retour immediat a l'enfant.
+ * ## Principes
+ *
+ * - Aucun code généré, aucun `eval`. Le produit est une structure de données
+ *   que le service validera puis exécutera.
+ * - Aucune décision d'exécution ici : le compilateur ne peut pas savoir si
+ *   « si la batterie est faible » est vrai. Il transmet, le service tranche.
+ * - Un bloc inconnu est signalé, jamais ignoré en silence.
+ * - Chaque instruction porte le numéro de ligne du bloc d'origine, pour que
+ *   le service puisse situer un problème.
+ *
+ * ## Menus : une valeur refusée vaut un problème signalé
+ *
+ * Un menu ne peut contenir que des choix autorisés. Si la valeur enregistrée
+ * n'y figure plus — programme importé, ancien format — on NE DEVINE PAS : on
+ * signale, et on prend une valeur neutre. Un enfant ne doit pas voir le robot
+ * partir avec une durée que personne n'a choisie.
  */
-import type { Blockly } from './workspace';
+
+import * as Blockly from 'blockly/core';
 import {
+  BALANCE_BLOCK,
+  CONDITIONS,
+  CONDITION_CHOICES,
+  DURATION_CHOICES,
+  IF_BLOCK,
+  IF_ELSE_BLOCK,
+  MOVE_BACKWARD_BLOCK,
+  MOVE_FORWARD_BLOCK,
+  MOVE_LEFT_BLOCK,
+  MOVE_RIGHT_BLOCK,
+  REPEAT_BLOCK,
+  REPEAT_CHOICES,
+  SIT_DOWN_BLOCK,
+  STAND_UP_BLOCK,
   START_BLOCK,
-  WAIT_BLOCK,
-  FORWARD_BLOCK,
-  BACKWARD_BLOCK,
+  STOP_MOVE_BLOCK,
+  STOP_PROGRAM_BLOCK,
+  TURN_CHOICES,
   TURN_LEFT_BLOCK,
   TURN_RIGHT_BLOCK,
-  STOP_BLOCK,
-  STAND_UP_BLOCK,
-  SIT_DOWN_BLOCK,
-  REPEAT_BLOCK,
+  WAIT_BLOCK,
 } from './blocks';
-import type { RobotCommand } from '../robot/commands';
+import type {
+  ConditionKind,
+  MoveDirection,
+  Program,
+  Statement,
+  TurnDirection,
+} from '../robot/program';
 
 export interface CompileIssue {
-  /** Message simple, en francais, destine a l'enfant. */
   message: string;
-  /** Id du bloc fautif si connu. */
+  /** Numéro de ligne fautive, si connu. */
+  line?: number;
   blockId?: string;
 }
 
 export interface CompileResult {
-  commands: RobotCommand[];
+  program: Program;
   issues: CompileIssue[];
-  /** Vrai si le programme contient au moins un bloc de depart. */
   hasStart: boolean;
+  conditions: ConditionKind[];
 }
 
+const ALLOWED_DURATIONS = new Set(DURATION_CHOICES.map(([, value]) => value));
+const ALLOWED_TURNS = new Set(TURN_CHOICES.map(([, value]) => value));
+const ALLOWED_REPEATS = new Set(REPEAT_CHOICES.map(([, value]) => value));
+const ALLOWED_CONDITIONS = new Set<string>(CONDITIONS);
+
 /**
- * Lit la valeur numérique d'une entrée de bloc.
+ * Lit un choix de menu, en refusant toute valeur non autorisée.
  *
- * Deux formes sont acceptées, ce qui rend le lecteur compatible avec les
- * missions enregistrées avant le passage des ombres aux champs intégrés :
- *
- *  1. un bloc est accroché dans l'entrée  -> on lit son premier champ ;
- *  2. la valeur est un champ du bloc parent -> on lit ce champ.
- *
- * Le cas 2 est le cas courant : les blocs GO2 portent un champ numérique
- * éditable directement (voir le commentaire de `blocks.ts` sur l'absence
- * d'ombres dans le parseur JSON de Blockly 13).
+ * C'est le garde-fou central du compilateur : un `FieldDropdown` accepte
+ * n'importe quelle chaîne passée à `setValue`. Sans cette vérification, un
+ * fichier de mission bricolé pourrait envoyer une durée de 10 000 s.
  */
-function readNumericValue(
+function readChoice(
   block: Blockly.Block,
   fieldName: string,
+  allowed: ReadonlySet<string>,
+  fallback: string,
+  label: string,
   issues: CompileIssue[],
-): number | null {
-  const attached = block.getInput(fieldName)?.connection?.targetBlock();
-
-  let raw: unknown = null;
-
-  if (attached) {
-    // Un bloc est accroché : on prend son premier champ renseigné.
-    for (const field of attached.getFields()) {
-      if (!field.name) continue;
-      raw = attached.getFieldValue(field.name);
-      if (raw !== null && raw !== undefined && raw !== '') break;
-      raw = null;
-    }
-  } else {
-    // Champ intégré au bloc parent (cas nominal des blocs GO2).
-    raw = block.getFieldValue(fieldName);
-    if (raw === null || raw === undefined) {
-      // Repli : premier champ nommé du bloc. Ce chemin sert si un nom de
-      // champ change, et évite un « il manque un nombre » trompeur.
-      for (const field of block.getFields()) {
-        if (!field.name) continue;
-        const candidate = block.getFieldValue(field.name);
-        if (candidate !== null && candidate !== undefined && candidate !== '') {
-          raw = candidate;
-          break;
-        }
-      }
-    }
+): number {
+  const raw = String(block.getFieldValue(fieldName) ?? '');
+  if (!allowed.has(raw)) {
+    issues.push({
+      message: `Choix impossible pour « ${label} ».`,
+      line: hashOf(block.id),
+    });
+    return Number(fallback);
   }
-
-  if (raw === null || raw === undefined || raw === '') {
-    issues.push({ message: 'Il manque un nombre dans un bloc.', blockId: block.id });
-    return null;
-  }
-  const value = Number(raw);
-  if (!Number.isFinite(value)) {
-    issues.push({ message: 'Ce nombre n’est pas compris.', blockId: block.id });
-    return null;
-  }
-  return value;
+  return Number(raw);
 }
 
-/** Empilement de blocs pour parcourir une chaine `nextConnection`. */
-function chainOf(first: Blockly.Block | null): Blockly.Block[] {
-  const chain: Blockly.Block[] = [];
-  let current = first;
-  const seen = new Set<string>();
-  while (current) {
-    if (seen.has(current.id)) break; // garde-fou contre un cycle
-    seen.add(current.id);
-    chain.push(current);
-    current = current.getNextBlock();
-  }
-  return chain;
-}
-
-/** Compile une chaine de blocs sequentiels. */
-function compileSequence(
+/** Traduit une suite de blocs statements. */
+function compileStatements(
   first: Blockly.Block | null,
   issues: CompileIssue[],
-  depth: number,
-): RobotCommand[] {
-  const commands: RobotCommand[] = [];
+): Statement[] {
+  const statements: Statement[] = [];
+  const seen = new Set<string>();
+  let current = first;
 
-  for (const block of chainOf(first)) {
-    switch (block.type) {
-      case WAIT_BLOCK: {
-        const seconds = readNumericValue(block, 'DURATION', issues);
-        if (seconds !== null) commands.push({ kind: 'wait', seconds });
-        break;
-      }
-      case FORWARD_BLOCK: {
-        const distanceCm = readNumericValue(block, 'DISTANCE', issues);
-        if (distanceCm !== null) commands.push({ kind: 'move_forward', distanceCm });
-        break;
-      }
-      case BACKWARD_BLOCK: {
-        const distanceCm = readNumericValue(block, 'DISTANCE', issues);
-        if (distanceCm !== null) commands.push({ kind: 'move_backward', distanceCm });
-        break;
-      }
-      case TURN_LEFT_BLOCK: {
-        const angleDeg = readNumericValue(block, 'ANGLE', issues);
-        if (angleDeg !== null) commands.push({ kind: 'turn_left', angleDeg });
-        break;
-      }
-      case TURN_RIGHT_BLOCK: {
-        const angleDeg = readNumericValue(block, 'ANGLE', issues);
-        if (angleDeg !== null) commands.push({ kind: 'turn_right', angleDeg });
-        break;
-      }
-      case STOP_BLOCK:
-        commands.push({ kind: 'stop' });
-        break;
-      case STAND_UP_BLOCK:
-        commands.push({ kind: 'stand_up' });
-        break;
-      case SIT_DOWN_BLOCK:
-        commands.push({ kind: 'sit_down' });
-        break;
-      case REPEAT_BLOCK: {
-        const count = readNumericValue(block, 'COUNT', issues);
-        const body = compileSequence(block.getInputTargetBlock('DO'), issues, depth + 1);
-        if (count === null) break;
-        if (count < 1 || !Number.isInteger(count)) {
-          issues.push({
-            message: 'Le nombre de répétitions doit être un nombre entier plus grand que 0.',
-            blockId: block.id,
-          });
-          break;
-        }
-        // Le corps est aplati ici : le moteur gere l'aplatissement, ce qui evite
-        // toute recursion illimitee et rend les cumuls triviaux a controler.
-        for (let i = 0; i < count; i += 1) commands.push(...body);
-        break;
-      }
-      default:
-        // Bloc inconnu (corruption, autre categorie) : signale, n'execute pas.
-        issues.push({
-          message: 'Un bloc n’est pas reconnu. Supprime-le ou remets-le dans la palette.',
-          blockId: block.id,
-        });
-        break;
-    }
+  while (current) {
+    if (seen.has(current.id)) break; // garde-fou anti-cycle
+    seen.add(current.id);
+    const statement = compileStatement(current, issues);
+    if (statement) statements.push(statement);
+    current = current.getNextBlock();
   }
-  return commands;
+  return statements;
+}
+
+/** Traduit un bloc statement, ou `null` s'il n'en produit aucun. */
+function compileStatement(block: Blockly.Block, issues: CompileIssue[]): Statement | null {
+  const line = hashOf(block.id);
+
+  switch (block.type) {
+    case MOVE_FORWARD_BLOCK:
+      return durationStatement(block, 'forward', line, issues);
+    case MOVE_BACKWARD_BLOCK:
+      return durationStatement(block, 'backward', line, issues);
+    case MOVE_LEFT_BLOCK:
+      return durationStatement(block, 'left', line, issues);
+    case MOVE_RIGHT_BLOCK:
+      return durationStatement(block, 'right', line, issues);
+
+    case TURN_LEFT_BLOCK:
+      return turnStatement(block, 'left', line, issues);
+    case TURN_RIGHT_BLOCK:
+      return turnStatement(block, 'right', line, issues);
+
+    case STOP_MOVE_BLOCK:
+      return { kind: 'stop_move', line };
+
+    case STOP_PROGRAM_BLOCK:
+      return { kind: 'stop_program', line };
+
+    case WAIT_BLOCK:
+      return {
+        kind: 'wait',
+        seconds: readChoice(block, 'SECONDS', ALLOWED_DURATIONS, '2', 'Attendre', issues),
+        line,
+      };
+
+    case STAND_UP_BLOCK:
+      return { kind: 'posture', posture: 'stand', line };
+    case SIT_DOWN_BLOCK:
+      return { kind: 'posture', posture: 'sit', line };
+    case BALANCE_BLOCK:
+      return { kind: 'posture', posture: 'balance', line };
+
+    case REPEAT_BLOCK:
+      return {
+        kind: 'repeat',
+        times: readChoice(block, 'COUNT', ALLOWED_REPEATS, '3', 'Répéter', issues),
+        body: compileStatements(block.getInput('DO')?.connection?.targetBlock() ?? null, issues),
+        line,
+      };
+
+    case IF_BLOCK:
+    case IF_ELSE_BLOCK:
+      return compileIf(block, line, issues);
+
+    default:
+      issues.push({
+        message:
+          'Un bloc n’est pas reconnu. Supprime-le ou remets-le dans la palette.',
+        line,
+      });
+      return null;
+  }
+}
+
+function compileIf(
+  block: Blockly.Block,
+  line: number,
+  issues: CompileIssue[],
+): Statement {
+  const raw = String(block.getFieldValue('CONDITION') ?? '');
+  const condition = (ALLOWED_CONDITIONS.has(raw) ? raw : 'posture_stand') as ConditionKind;
+  if (!ALLOWED_CONDITIONS.has(raw)) {
+    issues.push({ message: 'Cette condition n’est pas proposée.', line });
+  }
+
+  return {
+    kind: 'if',
+    condition,
+    then: compileStatements(block.getInput('DO')?.connection?.targetBlock() ?? null, issues),
+    otherwise:
+      block.type === IF_ELSE_BLOCK
+        ? compileStatements(block.getInput('ELSE')?.connection?.targetBlock() ?? null, issues)
+        : undefined,
+    line,
+  };
+}
+
+function durationStatement(
+  block: Blockly.Block,
+  direction: MoveDirection,
+  line: number,
+  issues: CompileIssue[],
+): Statement {
+  return {
+    kind: 'move',
+    direction,
+    seconds: readChoice(block, 'DURATION', ALLOWED_DURATIONS, '2', 'Déplacement', issues),
+    line,
+  };
+}
+
+function turnStatement(
+  block: Blockly.Block,
+  direction: TurnDirection,
+  line: number,
+  issues: CompileIssue[],
+): Statement {
+  return {
+    kind: 'turn',
+    direction,
+    degrees: readChoice(block, 'ANGLE', ALLOWED_TURNS, '90', 'Rotation', issues),
+    line,
+  };
 }
 
 /**
- * Compile l'ensemble de l'espace de travail.
+ * Numéro de ligne stable, dérivé de l'identifiant du bloc.
  *
- * Regle : un programme DOIT contenir exactement un bloc `go2_start`, et
- * aucun bloc ne doit etre execute avant lui.
+ * Blockly n'a pas de notion de ligne. On en fabrique une à partir de
+ * l'identifiant, pour que le service puisse situer un problème sans que
+ * l'interface ait à inventer un numéro de ligne.
  */
-export function compileWorkspace(blockly: typeof import('./workspace').Blockly): CompileResult {
+function hashOf(id: string): number {
+  let hash = 0;
+  for (let i = 0; i < id.length; i += 1) {
+    hash = (hash * 31 + id.charCodeAt(i)) % 100000;
+  }
+  return hash;
+}
+
+/** Traduit l'ensemble de l'espace de travail. */
+export function compileWorkspace(workspace: Blockly.Workspace): CompileResult {
   const issues: CompileIssue[] = [];
-  const topBlocks = blockly.getMainWorkspace().getTopBlocks(true);
+  const topBlocks = workspace.getTopBlocks(true);
 
-  const startBlock = topBlocks.find((b) => b.type === START_BLOCK);
-
-  // Reperage des blocs flottants qui ne sont pas rattaches au programme.
   for (const block of topBlocks) {
     if (block.type === START_BLOCK) continue;
-    if (!block.isEnabled()) continue;
     if (block.getParent() === null) {
       issues.push({
-        message: 'Un bloc est seul, pas attaché au programme. Supprime-le ou accroche-le.',
-        blockId: block.id,
+        message:
+          'Un bloc est seul, pas attaché au programme. Supprime-le ou accroche-le.',
+        line: hashOf(block.id),
       });
     }
   }
 
+  const startBlock = topBlocks.find((block) => block.type === START_BLOCK);
   if (!startBlock) {
     return {
-      commands: [],
-      issues: [{ message: 'Il manque le bloc de départ « Quand je clique sur Démarrer ».' }],
+      program: { statements: [] },
+      issues: [
+        { message: 'Il manque le bloc de départ « Quand je clique sur Démarrer ».' },
+      ],
       hasStart: false,
+      conditions: [],
     };
   }
 
-  const commands = compileSequence(startBlock.getNextBlock(), issues, 0);
-  return { commands, issues, hasStart: true };
+  const statements = compileStatements(startBlock.getNextBlock(), issues);
+  return {
+    program: { statements },
+    issues,
+    hasStart: true,
+    conditions: collectConditionsFrom(statements),
+  };
 }
+
+function collectConditionsFrom(statements: readonly Statement[]): ConditionKind[] {
+  const found: ConditionKind[] = [];
+  const walk = (list: readonly Statement[]): void => {
+    for (const statement of list) {
+      if (statement.kind === 'if') {
+        found.push(statement.condition);
+        walk(statement.then);
+        walk(statement.otherwise ?? []);
+      } else if (statement.kind === 'repeat') {
+        walk(statement.body);
+      }
+    }
+  };
+  walk(statements);
+  return found;
+}
+
+/** Choix proposés, exposés pour les tests. */
+export { DURATION_CHOICES, TURN_CHOICES, REPEAT_CHOICES, CONDITION_CHOICES };

@@ -50,11 +50,14 @@ from .execution import (
     ExecutionEngine,
 )
 from .safety import SafetyWatchdog
+from .program import (
+    Program as StructuredProgram,
+    parse_program as parse_structured_program,
+    validate_structure,
+)
 from .validation import (
     Capability,
     CommandValidationError,
-    parse_program,
-    validate_program,
 )
 
 log = logging.getLogger(__name__)
@@ -70,11 +73,17 @@ class StartRequest(BaseModel):
 
     `adult_authorised` est exigée pour le mode réel. Elle est enregistrée,
     mais la seule autorité reste l'état du service (`_real_mode_enabled`).
+
+    ⚠️ Le champ est `program`, pas `commands`. Un programme contient des
+    conditions et des variables, dont la valeur n'est connue qu'à l'exécution :
+    l'aplatir avant l'envoi obligerait le frontend à deviner. `extra="forbid"`
+    fait qu'un client qui envoie encore `commands` reçoit un 422 explicite
+    plutôt qu'un programme vide exécuté en silence.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    commands: list[dict[str, Any]] = Field(..., max_length=1000)
+    program: dict[str, Any] = Field(...)
     adult_authorised: bool = False
 
 
@@ -153,7 +162,9 @@ class ServiceState:
     hub: EventHub = field(default_factory=EventHub)
 
     def __post_init__(self) -> None:
-        self.engine = ExecutionEngine(self.adapter)
+        # Les limites sont transmises au moteur : l'interpréteur doit
+        # pouvoir re-borner une valeur calculée à l'exécution.
+        self.engine = ExecutionEngine(self.adapter, limits=self.limits)
         self.watchdog = SafetyWatchdog(self.engine, self.adapter, self.limits)
         #: Incrémenté à chaque changement de limites, pour que le frontend
         #: sache que son rapport de vérification est caduc.
@@ -366,16 +377,16 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
 
         # 1. Validation de la FORME. Une donnée forgée est refusée ici.
         try:
-            commands = parse_program(payload.commands)
+            program = parse_structured_program(payload.program)
         except CommandValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-        # 2. Validation AUTORITATIVE (limites, cumuls, capacités réellement
-        #    offertes par l'adaptateur connecté — pas toutes par défaut).
-        available = frozenset((await adapter.get_status()).capabilities)
-        report = validate_program(commands, state.limits, available)
-        if not report.valid:
-            raise HTTPException(status_code=422, detail=report.first_message())
+        # 2. Validation AUTORITAIRE : durées, angles, imbrication, cumuls.
+        #    C'est la SEULE validation opposable ; celle du frontend n'est
+        #    qu'un confort d'affichage.
+        structure = validate_structure(program, state.limits)
+        if not structure.valid:
+            raise HTTPException(status_code=422, detail=structure.first_message())
 
         # 3. Garde-fou mode réel : autorisation adulte ET robot connecté.
         if state.mode == "real":
@@ -402,7 +413,7 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
         # suite avec l'identifiant. La progression est diffusée sur le
         # WebSocket. Aucun client ne peut ainsi bloquer l'exécution.
         task = asyncio.create_task(
-            _run_and_broadcast(state, commands, run_id),
+            _run_and_broadcast(state, program, run_id),
             name=f"go2-exec-{run_id}",
         )
         state._run_task = task
@@ -451,15 +462,15 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
 
 
 async def _run_and_broadcast(
-    state: "ServiceState", commands: list[Any], run_id: str
+    state: "ServiceState", program: "StructuredProgram", run_id: str
 ) -> None:
-    """Exécute le programme en tâche de fond et diffuse sa progression.
+    """Interprète puis exécute le programme, en tâche de fond.
 
     Toute sortie passe par l'arrêt de l'adaptateur : aucune consigne de
     mouvement ne survit à la fin du programme.
     """
     try:
-        async for event in state.engine.execute(commands, run_id):
+        async for event in state.engine.execute_program(program, run_id):
             if event.type == "execution_finished" and event.reason == FINISH_SAFETY:
                 log.warning("Exécution arrêtée par la sécurité.")
             await state.hub.broadcast(

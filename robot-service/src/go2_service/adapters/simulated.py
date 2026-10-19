@@ -45,6 +45,10 @@ SIMULATED_CAPABILITIES = frozenset(
         Capability.POSTURE,
         Capability.WAIT,
         Capability.STOP,
+        Capability.VARIABLE,
+        Capability.BROADCAST,
+        Capability.SENSOR_STATE,
+        Capability.SENSOR_OBSTACLE,
     }
 )
 
@@ -147,15 +151,19 @@ class SimulatedAdapter:
 
         match command.kind:
             case CommandKind.WAIT:
-                return await self._do_wait(command.seconds, index, should_stop)
+                return await self._do_wait(command.duration_s, index, should_stop)
             case CommandKind.STAND_UP:
                 return await self._do_posture(Posture.STAND, index)
             case CommandKind.SIT_DOWN:
                 return await self._do_posture(Posture.SIT, index)
+            case CommandKind.LIE_DOWN:
+                return await self._do_posture(Posture.LIE_DOWN, index)
+            case CommandKind.BALANCE:
+                return await self._do_posture(Posture.BALANCE, index)
             case CommandKind.STOP:
                 await self.request_stop()
-                # Un bloc « S'arrêter » est une instruction comme une autre :
-                # elle s'accomplit et le programme continue.
+                # Un bloc « Arrêter le déplacement » est une instruction comme
+                # une autre : elle s'accomplit et le programme continue.
                 # Seule une INTERRUPTION (bouton Arrêter, bail) renvoie
                 # l'issue « stopped ».
                 return CommandOutcome(
@@ -163,6 +171,22 @@ class SimulatedAdapter:
                 )
             case _:
                 return await self._do_move(command, index, should_stop)
+
+    def read_sensor(self, what: str) -> float | None:
+        """Mesure « simulée », explicitement étiquetée comme telle.
+
+        ⚠️ Cette valeur n'est PAS une mesure du robot. Elle n'est lue que si
+        l'adaptateur en a la capacité, et le frontend la présente comme
+        « simulation ». Aucun chiffre n'est inventé pour `batterie` : on
+        renvoie l'état réel de la simulation, qui est un fait.
+        """
+        if what == "batterie":
+            return self._battery
+        if what == "obstacle":
+            # Le simulateur ne modélise pas d'obstacle : aucune valeur n'est
+            # fabriquée. Renvoyer 0 Reviendrait à dire « l'obstacle est collé ».
+            return None
+        return None
 
     async def request_stop(self) -> None:
         self._state = RobotState.IDLE
@@ -230,7 +254,7 @@ class SimulatedAdapter:
                     "La liaison avec le robot a été perdue.", recoverable=True
                 )
 
-            self._advance(plan.linear_speed_mps, plan.angular_speed_rps, step)
+            self._advance(plan.linear_speed_mps, getattr(plan, "lateral_speed_mps", 0.0), plan.angular_speed_rps, step)
             self._battery = max(0.0, self._battery - self._period * 0.02)
 
             reached = self._target_reached(plan, start_xy, start_yaw)
@@ -245,12 +269,12 @@ class SimulatedAdapter:
                 await self.request_stop()
                 return self._outcome_for(index, plan, start_xy, start_yaw, "timeout")
 
-    def _advance(self, vx: float, vyaw: float, dt: float) -> None:
+    def _advance(self, vx: float, vy: float, vyaw: float, dt: float) -> None:
         """Intègre une étape de déplacement, avec une dérive simulée."""
         # Dérive latérale : un vrai quadrupède ne suit pas une ligne droite.
         drift = self._random.uniform(-self._drift_ratio, self._drift_ratio)
 
-        dx = vx * dt
+        dx = vx * dt + vy * dt
         dy = vx * drift * dt
         # Rotation de la position du robot autour de son centre.
         cos_y = math.cos(self._yaw)

@@ -300,7 +300,7 @@ class TestSettingsApi:
         response = app_client.post(
             "/api/execution/start",
             json={
-                "commands": [{"kind": "stop"}],
+                "program": {"statements": [{"kind": "stop_move"}]},
                 "adult_authorised": True,
             },
         )
@@ -338,22 +338,25 @@ class TestSettingsApi:
         assert app_client.get("/api/status").json()["settingsRevision"] == before
 
     def test_settings_refused_during_execution(self, app_client):
-        """Un programme ne doit pas changer de règles sous ses pieds."""
-        import time
+        """Un programme ne doit pas changer de regles sous ses pieds.
 
-        run = app_client.post(
-            "/api/execution/start",
-            json={"commands": [{"kind": "wait", "seconds": 10}]},
-        )
-        assert run.status_code == 200
+        TestClient etant synchrone, la tache de fond n'avance pas entre deux
+        requetes : attendre executing == True expirerait toujours. On force
+        l'etat, et on verifie la garde elle-meme.
+        """
+        from go2_service.execution import ActiveExecution
 
-        response = app_client.post(
-            "/api/settings",
-            json={"adult_authorised": True, "values": {"max_linear_speed": 0.2}},
-        )
-        assert response.status_code == 409
-
-        app_client.post("/api/execution/stop")
+        engine = app_client.app.state.service.engine
+        engine._active = ActiveExecution(run_id="en-cours")
+        try:
+            assert engine.is_running is True
+            response = app_client.post(
+                "/api/settings",
+                json={"adult_authorised": True, "values": {"max_linear_speed": 0.2}},
+            )
+            assert response.status_code == 409
+        finally:
+            engine._active = None
 
 
 class TestConfigurationErrorStillRaised:

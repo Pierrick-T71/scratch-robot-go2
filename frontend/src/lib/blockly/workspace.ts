@@ -1,45 +1,20 @@
 /**
- * Initialisation de l'editeur Blockly : locale francaise + palette.
+ * Palette de blocs et options d'injection.
  *
- * L'import de `blockly/blocks` charge les blocs standards Blockly (utilises
- * ici pour l'echelle et les valeurs numeriques). Les blocs GO2 sont declares
- * a part dans `blocks.ts`.
+ * En Blockly 13, `options.toolbox` attend une définition JSON ; le libellé de
+ * catégorie est le nom de la catégorie. Aucune clé `shadow`, aucun bloc
+ * variable : la palette ne contient que ce qui est proposé aux enfants.
  */
 import * as Blockly from 'blockly/core';
-import * as Fr from 'blockly/msg/fr';
 import 'blockly/blocks';
 
-import {
-  CATEGORIES,
-  BLOCK_DEFINITIONS,
-  registerGo2Blocks,
-  FIELD_BOUNDS,
-} from './blocks';
+import { BLOCK_DEFINITIONS, CATEGORIES, CATEGORY_COLOURS, registerGo2Blocks } from './blocks';
+import { applyFrenchLocale } from './locale';
 
-export { Blockly, FIELD_BOUNDS };
+export { Blockly, CATEGORIES, BLOCK_DEFINITIONS, registerGo2Blocks, applyFrenchLocale };
+export { CATEGORY_COLOURS } from './blocks';
 
-let localeApplied = false;
-
-/**
- * Applique la locale francaise. A appeler avant `Blockly.inject`.
- *
- * `blockly/msg/fr` (module ESM) reexporte les cles de message une a une
- * (`export const { LOGIC_HUE, ... } = fr`) : le namespace EST l'objet de
- * messages. En revanche le fichier `.d.ts` publie un `default` qui ne
- * correspond pas a cette forme runtime, d'ou le cast ci-dessous. Ce n'est
- * qu'un contournement de typage, aucun `default` n'est lu a l'execution.
- */
-export function applyFrenchLocale(): void {
-  if (localeApplied) return;
-  Blockly.setLocale(Fr as unknown as Record<string, string>);
-  localeApplied = true;
-}
-
-/**
- * Definition JSON de la palette, telle que attendue par `options.toolbox`.
- * Le type officiel `ToolboxDefinition` n'est pas reexporte par `blockly/core`,
- * on declare donc la forme locale utile a l'application.
- */
+/** Catégories de la palette, telles que Blockly les attend. */
 export interface ToolboxCategory {
   kind: 'category';
   name: string;
@@ -52,21 +27,14 @@ export interface ToolboxDefinitionJson {
   contents: ToolboxCategory[];
 }
 
-/**
- * Palette de blocs, en francais.
- *
- * En Blockly 13, `options.toolbox` attend une definition JSON, pas une
- * instance de `Toolbox` (qui se construit toute seule a l'injection).
- * Le libelle de categorie est le nom de la categorie : comportement natif,
- * aucun callback supplementaire.
- */
+/** Palette de blocs, en français. */
 export function buildToolbox(): ToolboxDefinitionJson {
   return {
     kind: 'categoryToolbox',
     contents: CATEGORIES.map((category) => ({
       kind: 'category',
       name: category.label,
-      colour: category.colour,
+      colour: CATEGORY_COLOURS[category.name],
       contents: BLOCK_DEFINITIONS.filter((d) => d.category === category.name).map((d) => ({
         kind: 'block',
         type: d.type,
@@ -75,29 +43,46 @@ export function buildToolbox(): ToolboxDefinitionJson {
   };
 }
 
-/** Options d'injection Blockly pour GO2 Scratch. */
+/**
+ * Options d'injection Blockly pour GO2 Scratch.
+ *
+ * `zoom` et la grille restent activés : un enfant doit pouvoir voir un bloc
+ * entier sans zoomer à la molette.
+ */
 export function buildInjectOptions(): Blockly.BlocklyOptions {
   registerGo2Blocks();
   return {
-    // La forme JSON est structurellement compatible avec `ToolboxDefinition`.
     toolbox: buildToolbox(),
     trashcan: true,
     sounds: false,
-    grid: { spacing: 24, length: 3, colour: '#E2E8F0', snap: true },
-    zoom: { controls: true, wheel: true, startScale: 0.9, minScale: 0.4, maxScale: 1.6 },
+    grid: { spacing: 26, length: 3, colour: '#E2E8F0', snap: true },
+    zoom: { controls: true, wheel: true, startScale: 0.9, minScale: 0.5, maxScale: 1.6 },
     move: { scrollbars: true, drag: true, wheel: true },
     renderer: 'geras',
   };
 }
 
 /**
- * Programme de depart propose a l'ouverture : uniquement le bloc de depart,
- * pour que l'enfant ajoute lui-meme ses blocs.
+ * Programme de départ proposé à l'ouverture.
+ *
+ * On part d'un exemple court et comprehensible plutôt que d'un bloc nu :
+ * l'enfant voit tout de suite à quoi ressemble un programme.
  */
 export function defaultProgramXml(): string {
   return [
     '<xml xmlns="https://developers.google.com/blockly/xml">',
-    '  <block type="go2_start" x="40" y="40"></block>',
+    '  <block type="go2_start" x="40" y="40">',
+    '    <next>',
+    '      <block type="go2_move_forward">',
+    '        <field name="DURATION">2</field>',
+    '        <next>',
+    '          <block type="go2_turn_left">',
+    '            <field name="ANGLE">90</field>',
+    '          </block>',
+    '        </next>',
+    '      </block>',
+    '    </next>',
+    '  </block>',
     '</xml>',
   ].join('\n');
 }

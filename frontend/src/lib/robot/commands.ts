@@ -57,15 +57,77 @@ export interface InstantCommand {
 
 export type RobotCommand = MoveCommand | TurnCommand | WaitCommand | InstantCommand;
 
-/** Les quatre capacites reelles exposees aux enfants. */
-export type Capability = 'movement' | 'posture' | 'wait' | 'stop';
+/**
+ * Capacites reelles offertes aux enfants.
+ *
+ * Les quatre premieres sont des pilotages. Les suivantes distinguent ce que
+ * le SDK confirme de ce qu'il ne confirme pas :
+ *
+ *  - `variable` et `broadcast` ne touchent pas le robot : la logique du
+ *    programme s'exécute dans le service, toujours disponible.
+ *  - `sensor_state` lit `SportModeState_` (sujet `rt/sportmodestate`), lu et
+ *    vérifié dans les exemples officiels.
+ *  - `sensor_obstacle` n'est PAS confirmée : le simulateur la propose, l'adaptateur
+ *    physique ne la revendique pas. C'est ce qui empêche un bloc capteur de
+ *    Mentir sur un robot réel.
+ */
+export type Capability =
+  | 'movement'
+  | 'posture'
+  | 'wait'
+  | 'stop'
+  | 'variable'
+  | 'broadcast'
+  | 'sensor_state'
+  | 'sensor_obstacle';
 
 export const CAPABILITIES: readonly Capability[] = [
   'movement',
   'posture',
   'wait',
   'stop',
+  'variable',
+  'broadcast',
+  'sensor_state',
+  'sensor_obstacle',
 ];
+
+/**
+ * Capacites que la logique du servicenabile TOUJOURS, robot reel compris.
+ *
+ * Les conditions et les variables ne commandent aucun organe : elles vivent dans
+ * l'interpréteur du service.
+ */
+export const ALWAYS_AVAILABLE: readonly Capability[] = [
+  'movement',
+  'posture',
+  'wait',
+  'stop',
+  'variable',
+  'broadcast',
+];
+
+/** Libelle humain d'une capacite, pour les messages d'interface. */
+export function capabilityLabel(capability: Capability): string {
+  switch (capability) {
+    case 'movement':
+      return 'déplacement';
+    case 'posture':
+      return 'posture';
+    case 'wait':
+      return 'attente';
+    case 'stop':
+      return 'arrêt';
+    case 'variable':
+      return 'variables';
+    case 'broadcast':
+      return 'messages';
+    case 'sensor_state':
+      return 'état du robot';
+    case 'sensor_obstacle':
+      return 'détection d’obstacle';
+  }
+}
 
 /** Correspondance commande -> capacite requise. */
 export function capabilityOf(command: RobotCommand): Capability {

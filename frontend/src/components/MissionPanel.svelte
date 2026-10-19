@@ -54,7 +54,10 @@
   function doOpen(mission: Mission): void {
     if (!editor) return;
     editor.load(mission.xml);
-    app.setCommands([]);
+    // Le rapport précédent ne vaut plus rien : la mission chargée n'a pas été
+    // vérifiée. On remet le programme courant à zéro plutôt que de laisser
+    // afficher un verdict qui concernait l'ancienne mission.
+    app.setProgram({ statements: [] });
     feedback = { tone: 'ok', text: `Mission « ${mission.name} » ouverte.` };
   }
 
@@ -68,7 +71,7 @@
 
   function doNew(): void {
     editor?.clear();
-    app.setCommands([]);
+    app.setProgram({ statements: [] });
     feedback = { tone: 'ok', text: 'Nouveau programme prêt.' };
   }
 

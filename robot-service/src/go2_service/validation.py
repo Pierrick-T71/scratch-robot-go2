@@ -17,52 +17,109 @@ from .config import Limits
 
 
 class Capability(str, Enum):
-    """Les quatre capacités réellement exposées aux enfants."""
+    """Capacités réellement exposées aux enfants.
+
+    Les quatre premières pilotent le robot. Les suivantes distinguent ce que
+    le SDK confirme de ce qu'il ne confirme pas :
+
+    - ``VARIABLE`` et ``BROADCAST`` ne touchent aucun organe : la logique du
+      programme s'exécute dans le service, toujours disponible.
+    - ``SENSOR_STATE`` lit ``SportModeState_`` (sujet ``rt/sportmodestate``),
+      lu dans les exemples officiels.
+    - ``SENSOR_OBSTACLE`` n'est PAS confirmée : le simulateur la propose,
+      l'adaptateur physique ne la revendique pas. C'est ce qui empêche un
+      bloc capteur de mentir sur un robot réel.
+    """
 
     MOVEMENT = "movement"
     POSTURE = "posture"
     WAIT = "wait"
     STOP = "stop"
+    VARIABLE = "variable"
+    BROADCAST = "broadcast"
+    SENSOR_STATE = "sensor_state"
+    SENSOR_OBSTACLE = "sensor_obstacle"
+
+
+#: Capacités dont la logique s'exécute dans le service, robot réel compris.
+ALWAYS_AVAILABLE: frozenset[Capability] = frozenset(
+    {Capability.MOVEMENT, Capability.POSTURE, Capability.WAIT, Capability.STOP,
+     Capability.VARIABLE, Capability.BROADCAST}
+)
 
 
 class CommandKind(str, Enum):
+    """Instructions PHYSIQUES : celles qui atteignent le robot.
+
+    Les instructions purement logiques (variables, conditions, messages) ne
+    sont PAS des commandes : elles sont interprétées par le moteur
+    d'exécution et ne touchent aucun organe.
+    """
+
     MOVE_FORWARD = "move_forward"
     MOVE_BACKWARD = "move_backward"
+    MOVE_LEFT = "move_left"
+    MOVE_RIGHT = "move_right"
     TURN_LEFT = "turn_left"
     TURN_RIGHT = "turn_right"
     WAIT = "wait"
     STAND_UP = "stand_up"
     SIT_DOWN = "sit_down"
+    LIE_DOWN = "lie_down"
+    BALANCE = "balance"
     STOP = "stop"
 
 
 _CAPABILITY_BY_KIND: dict[CommandKind, Capability] = {
     CommandKind.MOVE_FORWARD: Capability.MOVEMENT,
     CommandKind.MOVE_BACKWARD: Capability.MOVEMENT,
+    CommandKind.MOVE_LEFT: Capability.MOVEMENT,
+    CommandKind.MOVE_RIGHT: Capability.MOVEMENT,
     CommandKind.TURN_LEFT: Capability.MOVEMENT,
     CommandKind.TURN_RIGHT: Capability.MOVEMENT,
     CommandKind.WAIT: Capability.WAIT,
     CommandKind.STAND_UP: Capability.POSTURE,
     CommandKind.SIT_DOWN: Capability.POSTURE,
+    CommandKind.LIE_DOWN: Capability.POSTURE,
+    CommandKind.BALANCE: Capability.POSTURE,
     CommandKind.STOP: Capability.STOP,
 }
 
-_DISTANCE_KINDS = {CommandKind.MOVE_FORWARD, CommandKind.MOVE_BACKWARD}
-_ANGLE_KINDS = {CommandKind.TURN_LEFT, CommandKind.TURN_RIGHT}
+#: Translations : `Move(vx, vy, vyaw)` prend des VITESSES, pas des distances.
+#: Le SDK Go2 n'expose aucune commande « avancer de N cm ».
+_MOVE_KINDS = frozenset(
+    {CommandKind.MOVE_FORWARD, CommandKind.MOVE_BACKWARD,
+     CommandKind.MOVE_LEFT, CommandKind.MOVE_RIGHT}
+)
+_TURN_KINDS = frozenset({CommandKind.TURN_LEFT, CommandKind.TURN_RIGHT})
+#: Postures NON vérifiées dans les exemples officiels unitree_sdk2 lus.
+UNVERIFIED_POSTURES = frozenset({CommandKind.LIE_DOWN})
 
 
 @dataclass(frozen=True)
 class RobotCommand:
-    """Une instruction validée et prête à être exécutée.
+    """Une instruction physique validée, prête à être exécutée.
+
+    ⚠️ Les déplacements portent une VITESSE et une DURÉE, jamais une distance.
+    `SportClient.Move(vx, vy, vyaw)` fixe une consigne de vitesse ; aucune
+    commande « avancer de N cm » n'existe dans le SDK lu. Exiger une distance
+    nous ferait convertir en vitesse en inventant une unité de commande.
 
     Les champs non pertinents restent à 0. La construction passe
     exclusivement par `parse_command`, qui refuse tout objet non conforme.
     """
 
     kind: CommandKind
-    distance_cm: float = 0.0
+    #: Vitesse demandée, en m/s (translation) ou rad/s (rotation).
+    speed: float = 0.0
+    #: Durée demandée, en secondes.
+    duration_s: float = 0.0
+    #: Angle demandé pour une rotation, en degrés.
+    #:
+    #: Ce n'est PAS une durée : c'est la CIBLE MESURÉE. Le cap (`yaw`) est une
+    #: donnée réelle de `SportModeState_`, donc « tourner de 90° » est
+    #: vérifiable — contrairement à une distance, qui ne l'est pas.
     angle_deg: float = 0.0
-    seconds: float = 0.0
 
     @property
     def capability(self) -> Capability:
@@ -70,27 +127,44 @@ class RobotCommand:
 
     @property
     def is_motion(self) -> bool:
-        return self.kind in _DISTANCE_KINDS or self.kind in _ANGLE_KINDS
+        return self.kind in _MOVE_KINDS or self.kind in _TURN_KINDS
+
+    @property
+    def is_rotation(self) -> bool:
+        return self.kind in _TURN_KINDS
+
+    @property
+    def verified_for_real_mode(self) -> bool:
+        """`False` si l'action n'a pas été confirmée dans le SDK lu."""
+        return self.kind not in UNVERIFIED_POSTURES
 
     def label(self) -> str:
         """Description courte, en français, utilisée par l'interface."""
         match self.kind:
             case CommandKind.MOVE_FORWARD:
-                return f"Avancer de {self.distance_cm:g} cm"
+                return f"Avancer à {self.speed:g} m/s pendant {self.duration_s:g} s"
             case CommandKind.MOVE_BACKWARD:
-                return f"Reculer de {self.distance_cm:g} cm"
+                return f"Reculer à {self.speed:g} m/s pendant {self.duration_s:g} s"
+            case CommandKind.MOVE_LEFT:
+                return f"Aller à gauche à {self.speed:g} m/s pendant {self.duration_s:g} s"
+            case CommandKind.MOVE_RIGHT:
+                return f"Aller à droite à {self.speed:g} m/s pendant {self.duration_s:g} s"
             case CommandKind.TURN_LEFT:
-                return f"Tourner à gauche de {self.angle_deg:g}°"
+                return f"Tourner à gauche pendant {self.duration_s:g} s"
             case CommandKind.TURN_RIGHT:
-                return f"Tourner à droite de {self.angle_deg:g}°"
+                return f"Tourner à droite pendant {self.duration_s:g} s"
             case CommandKind.WAIT:
-                return f"Attendre {self.seconds:g} s"
+                return f"Attendre {self.duration_s:g} s"
             case CommandKind.STAND_UP:
                 return "Se mettre debout"
             case CommandKind.SIT_DOWN:
                 return "S’asseoir"
+            case CommandKind.LIE_DOWN:
+                return "Se coucher (simulation seulement)"
+            case CommandKind.BALANCE:
+                return "Se stabiliser debout"
             case CommandKind.STOP:
-                return "S’arrêter"
+                return "Arrêter le déplacement"
         return self.kind.value
 
 
@@ -132,26 +206,33 @@ def parse_command(raw: Any) -> RobotCommand:
             f"L’instruction « {kind_value} » n’existe pas."
         ) from exc
 
-    if kind in _DISTANCE_KINDS:
+    if kind in _MOVE_KINDS or kind in _TURN_KINDS or kind is CommandKind.WAIT:
+        speed = 0.0
+        if kind in _MOVE_KINDS:
+            speed = abs(_as_finite_number(raw.get("speed"), "speed", kind))
+        angle = 0.0
+        if kind in _TURN_KINDS:
+            # Cible MESURÉE : le cap est une donnée réelle de `SportModeState_`.
+            # Sans elle, la rotation ne serait qu'une durée sans garantie.
+            raw_angle = raw.get("angleDeg")
+            if raw_angle is not None:
+                angle = abs(_as_finite_number(raw_angle, "angleDeg", kind))
         return RobotCommand(
             kind=kind,
-            distance_cm=abs(_as_finite_number(raw.get("distanceCm"), "distanceCm", kind)),
-        )
-    if kind in _ANGLE_KINDS:
-        return RobotCommand(
-            kind=kind,
-            angle_deg=abs(_as_finite_number(raw.get("angleDeg"), "angleDeg", kind)),
-        )
-    if kind is CommandKind.WAIT:
-        return RobotCommand(
-            kind=kind,
-            seconds=_as_finite_number(raw.get("seconds"), "seconds", kind),
+            speed=speed,
+            duration_s=abs(_as_finite_number(raw.get("durationS"), "durationS", kind)),
+            angle_deg=angle,
         )
     return RobotCommand(kind=kind)
 
 
 def parse_program(raw: Any) -> list[RobotCommand]:
-    """Convertit la liste d'instructions d'un programme."""
+    """Convertit une liste plate d'instructions physiques.
+
+    ⚠️ Cette forme est celle d'un programme DÉJÀ résolu : toutes les
+    conditions y ont été tranchées. Un programme contenant des conditions
+    doit passer par `go2_service.program`, qui les préserve.
+    """
     if not isinstance(raw, list):
         raise CommandValidationError("Le programme doit être une liste d’instructions.")
     return [parse_command(entry) for entry in raw]
@@ -170,8 +251,8 @@ class ValidationReport:
     valid: bool
     issues: list[ValidationIssue]
     estimated_seconds: float
-    total_distance_cm: float
-    total_angle_deg: float
+    #: Vitesse maximale demandée, m/s (rad/s pour une rotation).
+    max_speed_mps: float
 
     def first_message(self) -> str:
         return self.issues[0].message if self.issues else ""
@@ -203,8 +284,7 @@ def validate_program(
         )
 
     estimated = 0.0
-    total_distance = 0.0
-    total_angle = 0.0
+    max_speed = 0.0
 
     for index, command in enumerate(commands):
         # Capacité disponible ?
@@ -217,81 +297,55 @@ def validate_program(
                 )
             )
 
+        # Une action non vérifiée dans le SDK ne doit jamais être exécutée sur
+        # un robot réel, même si un client falsifié la demande.
+        if not command.verified_for_real_mode and Capability.POSTURE in available:
+            issues.append(
+                ValidationIssue(
+                    f"« {command.label()} » n’est pas vérifié sur le robot : "
+                    "cette action est réservée à la simulation.",
+                    index,
+                )
+            )
+
         match command.kind:
-            case k if k in _DISTANCE_KINDS:
-                d = command.distance_cm
-                if not (
-                    limits.motion.min_distance_per_step_cm
-                    <= d
-                    <= limits.motion.max_distance_per_step_cm
-                ):
+            case _ if command.kind in _MOVE_KINDS:
+                speed = command.speed
+                if not (0.0 <= speed <= limits.motion.max_linear_speed):
                     issues.append(
                         ValidationIssue(
-                            f"Un déplacement doit faire entre "
-                            f"{limits.motion.min_distance_per_step_cm:g} et "
-                            f"{limits.motion.max_distance_per_step_cm:g} cm "
-                            f"(reçu {d:g} cm).",
+                            f"Une vitesse doit être entre 0 et "
+                            f"{limits.motion.max_linear_speed:g} m/s "
+                            f"(reçu {speed:g} m/s).",
                             index,
                         )
                     )
-                total_distance += d
-                # Estimation de durée à la vitesse maximale autorisée.
-                estimated += (d / 100.0) / limits.motion.max_linear_speed
+                max_speed = max(max_speed, speed)
 
-            case k if k in _ANGLE_KINDS:
-                a = command.angle_deg
-                if not (
-                    limits.motion.min_angle_per_step_deg
-                    <= a
-                    <= limits.motion.max_angle_per_step_deg
-                ):
-                    issues.append(
-                        ValidationIssue(
-                            f"Une rotation doit faire entre "
-                            f"{limits.motion.min_angle_per_step_deg:g} et "
-                            f"{limits.motion.max_angle_per_step_deg:g} degrés "
-                            f"(reçu {a:g}°).",
-                            index,
-                        )
-                    )
-                total_angle += a
-                import math
-
-                estimated += math.radians(a) / limits.motion.max_angular_speed
-
-            case CommandKind.WAIT:
-                s = command.seconds
-                if not (limits.timing.min_wait_seconds <= s <= limits.timing.max_wait_seconds):
-                    issues.append(
-                        ValidationIssue(
-                            f"Une attente doit faire entre "
-                            f"{limits.timing.min_wait_seconds:g} et "
-                            f"{limits.timing.max_wait_seconds:g} secondes "
-                            f"(reçu {s:g} s).",
-                            index,
-                        )
-                    )
-                estimated += max(0.0, s)
+            case _ if command.kind in _TURN_KINDS:
+                # La rotation est cadencée par la borne angulaire.
+                max_speed = max(max_speed, limits.motion.max_angular_speed)
 
             case _:
                 pass
 
-    if total_distance > limits.program.max_total_distance_cm:
-        issues.append(
-            ValidationIssue(
-                f"Le programme demande {total_distance:g} cm de déplacement, "
-                f"le maximum est {limits.program.max_total_distance_cm:g} cm."
-            )
-        )
-
-    if total_angle > limits.program.max_total_angle_deg:
-        issues.append(
-            ValidationIssue(
-                f"Le programme demande {total_angle:g}° de rotation, "
-                f"le maximum est {limits.program.max_total_angle_deg:g}°."
-            )
-        )
-
+        # La durée est bornée pour TOUTE instruction temporelle.
+        if command.is_motion or command.kind is CommandKind.WAIT:
+            if not (
+                limits.timing.min_wait_seconds
+                <= command.duration_s
+                <= limits.timing.max_wait_seconds
+            ):
+                issues.append(
+                    ValidationIssue(
+                        f"Une durée doit être entre "
+                        f"{limits.timing.min_wait_seconds:g} et "
+                        f"{limits.timing.max_wait_seconds:g} secondes "
+                        f"(reçu {command.duration_s:g} s).",
+                        index,
+                    )
+                )
+            estimated += command.duration_s
     if estimated > limits.program.max_program_seconds:
         issues.append(
             ValidationIssue(
@@ -304,6 +358,5 @@ def validate_program(
         valid=not issues,
         issues=issues,
         estimated_seconds=round(estimated, 1),
-        total_distance_cm=total_distance,
-        total_angle_deg=total_angle,
+        max_speed_mps=round(max_speed, 3),
     )

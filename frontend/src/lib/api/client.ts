@@ -12,7 +12,8 @@
  * protection principale contre la disparition du frontend.
  */
 import { SERVICE_URL, SAFETY } from '../robot/limits';
-import type { RobotCommand, Capability } from '../robot/commands';
+import type { Capability } from '../robot/commands';
+import type { Program } from '../robot/program';
 import type { SettingsPayload, SettingsValues } from '../robot/settings';
 
 export type { SettingsPayload, SettingsValues, SettingsBounds } from '../robot/settings';
@@ -36,7 +37,15 @@ export interface RobotStatus {
 }
 
 export interface StartRequest {
-  commands: RobotCommand[];
+  /**
+   * Programme STRUCTURE, pas une liste de commandes.
+   *
+   * Les conditions et les variables ne peuvent pas être résolues à la
+   * compilation : seul le service, qui détient les valeurs pendant
+   * l'exécution, peut trancher. Lui envoyer une liste aplatie l'obligerait à
+   * deviner, ce que nous refusons.
+   */
+  program: Program;
   /**
    * Accordee explicitement par un adulte (mode reel uniquement).
    *
@@ -44,6 +53,14 @@ export interface StartRequest {
    * `StartRequest` côté service, qui rejette tout champ inconnu.
    */
   adult_authorised: boolean;
+}
+
+/** Valeur d'une variable, telle que le service la calcule réellement. */
+export interface VariableValue {
+  name: string;
+  value: number;
+  /** Le service a-t-il publishé cette valeur de lui-même ? */
+  visible: boolean;
 }
 
 export type ExecutionEvent =
@@ -58,6 +75,14 @@ export type ExecutionEvent =
       outcome: 'exact' | 'timeout';
       measured: { distanceCm?: number; angleDeg?: number } | null;
     }
+  /**
+   * Photographie des variables.
+   *
+   * Les valeurs viennent du service, jamais du frontend : ce sont les siennes
+   * qui font foi. `reset` signale un nouveau départ de programme, où les
+   * variables retomment à zéro.
+   */
+  | { type: 'variables'; values: VariableValue[]; reset?: boolean }
   | { type: 'execution_finished'; reason: 'completed' | 'stopped' | 'error' | 'safety' }
   | { type: 'error'; message: string };
 

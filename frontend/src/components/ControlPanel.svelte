@@ -79,7 +79,7 @@
     <!-- Liste des erreurs de validation -->
     {#if app.report && app.report.issues.length > 0}
       <ul class="issues">
-        {#each app.report.issues as issue (issue.message + String(issue.index ?? ''))}
+        {#each app.report.issues as issue (issue.message + String(issue.line ?? ''))}
           <li class="issues__item">{issue.message}</li>
         {/each}
       </ul>

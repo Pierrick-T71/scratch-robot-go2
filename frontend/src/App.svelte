@@ -2,11 +2,10 @@
   /**
    * GO2 Scratch — écran principal.
    *
-   * Organisation en quatre zones :
+   * Trois zones, et rien d'autre :
    *  1. barre supérieure   (TopBar)
-   *  2. palette de blocs   (rendue par Blockly dans l'éditeur)
-   *  3. espace de saisie   (BlocklyEditor) — occupe TOUTE la place restante
-   *  4. zone de contrôle   (ControlPanel + MissionPanel)
+   *  2. espace de saisie   (BlocklyEditor) — toute la place restante
+   *  3. zone de contrôle   (ControlPanel + MissionPanel)
    *
    * L'interface n'accède JAMAIS au robot : elle passe par lib/api/client.
    */
@@ -19,17 +18,18 @@
   import ModeSwitch from './components/ModeSwitch.svelte';
   import SettingsPanel from './components/SettingsPanel.svelte';
   import { app } from './lib/stores/app.svelte';
-  import type { RobotCommand } from './lib/robot/commands';
+  import type { Program } from './lib/robot/program';
+  import type { CompileResult } from './lib/blockly/compiler';
 
   type EditorApi = {
     serialize: () => string;
     load: (xml: string) => void;
     clear: () => void;
-    refresh: () => RobotCommand[];
+    refresh: () => Program;
   };
 
   let editor = $state<EditorApi | null>(null);
-  let commands = $state<RobotCommand[]>([]);
+  let program = $state<Program>({ statements: [] });
   let compileIssues = $state<string[]>([]);
   let showHelp = $state(false);
   let showMode = $state(false);
@@ -46,47 +46,51 @@
   });
 
   /** Le compilateur a produit un nouveau programme : on le conserve. */
-  function onWorkspaceChange(next: readonly RobotCommand[], issues: readonly string[]): void {
-    commands = [...next];
-    compileIssues = [...issues];
-    app.setCommands(next);
+  function onWorkspaceChange(result: CompileResult): void {
+    program = result.program;
+    compileIssues = result.issues.map((issue) => issue.message);
+    app.setProgram(result.program);
     // La liste des étapes suit immédiatement le programme : afficher
-    // « Avancer de 120 cm » pendant qu'un 75 est prêt à partir, ce serait
-    // mentir. Le verdict, lui, reste à l'initiative de « Vérifier ».
-    app.syncSteps(next);
-    if (issues.length > 0 && !app.isBusy) {
-      app.notice = { tone: 'error', message: issues[0] ?? 'Programme incomplet.' };
+    // « Avancer pendant 2 secondes » pendant qu'une autre durée est prête à
+    // partir, ce serait mentir. Le verdict reste à l'initiative de
+    // « Vérifier ».
+    app.syncSteps(result.program.statements);
+    if (compileIssues.length > 0 && !app.isBusy) {
+      app.notice = { tone: 'error', message: compileIssues[0] ?? 'Programme incomplet.' };
+    } else if (compileIssues.length === 0 && app.notice?.tone === 'error') {
+      // Le message d'erreur ne doit pas rester affiché une fois le problème
+      // corrigé : l'enfant n'a plus rien à faire, et le message le ferait
+      // croire à une panne.
+      app.notice = null;
     }
   }
 
   /**
- * Recompile avant toute action.
- *
- * Vérifier et Démarrer ne doivent jamais travailler sur un état périmé :
- * l'enfant a pu déposer ou modifier un bloc depuis le dernier rendu.
- * On interroge donc l'éditeur à l'instant même, sans dépendre des événements
- * de changement de Blockly.
- */
-function currentProgram(): { commands: RobotCommand[]; issues: string[] } {
+   * Recompile avant toute action.
+   *
+   * Vérifier et Démarrer ne doivent jamais travailler sur un état périmé :
+   * l'enfant a pu déposer ou modifier un bloc depuis le dernier rendu.
+   */
+  function currentProgram(): Program {
     if (!editor) {
-      return { commands: [], issues: ['L’éditeur n’est pas prêt. Recharge la page.'] };
+      app.notice = { tone: 'error', message: 'L’éditeur n’est pas prêt. Recharge la page.' };
+      return { statements: [] };
     }
-    const fresh = editor.refresh();
-    return { commands: fresh, issues: compileIssues };
+    return editor.refresh();
   }
 
   function runCheck(): void {
-    const program = currentProgram();
-    commands = program.commands;
-    if (program.issues.length > 0) {
-      app.notice = { tone: 'error', message: program.issues[0] ?? 'Programme incomplet.' };
+    const fresh = currentProgram();
+    program = fresh;
+    if (compileIssues.length > 0) {
+      app.notice = { tone: 'error', message: compileIssues[0] ?? 'Programme incomplet.' };
       return;
     }
-    app.check(commands);
+    app.check(fresh);
   }
 
   function runStart(): void {
-    app.requestStart(currentProgram().commands);
+    app.requestStart(currentProgram());
   }
 </script>
 

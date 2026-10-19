@@ -5,9 +5,10 @@
  * Aucun acces bas niveau au robot : tout passe par `api` (voir lib/api).
  */
 import { api, EventStream, LeaseKeeper, ServiceError, type RobotStatus, type ServiceMode } from '../api/client';
-import type { RobotCommand } from '../robot/commands';
-import { validateCommands, labelOf, type ValidationReport } from '../robot/validate';
+import { validateProgram, type ValidationReport } from '../robot/validate';
 import type { SettingsPayload, SettingsValues } from '../robot/settings';
+import { describeStatement } from '../robot/describe';
+import { flattenForDisplay, type Program, type Statement } from '../robot/program';
 import type { ProgramStep } from '../program/types';
 
 export type ExecutionState =
@@ -45,8 +46,8 @@ class AppState {
   steps = $state<ProgramStep[]>([]);
   report = $state<ValidationReport | null>(null);
   notice = $state<AppNotice | null>(null);
-  /** Action en attente de confirmation (mode reel). */
-  pendingStart = $state<RobotCommand[] | null>(null);
+  /** Programme en attente de confirmation (mode reel). */
+  pendingStart = $state<Program | null>(null);
   /** Reglages en vigueur, fournis par le service (bornes incluses). */
   settings = $state<SettingsPayload | null>(null);
 
@@ -68,15 +69,16 @@ class AppState {
    * des valeurs perimees apres un changement de nombre, alors que le robot
    * executerait, lui, le nouveau programme : l'ecran mentirait.
    */
-  syncSteps(commands: readonly RobotCommand[]): void {
+  syncSteps(statements: readonly Statement[]): void {
     // Tant qu'aucune verification n'a eu lieu, la liste n'a pas de sens a
     // afficher : on laisse le panneau vide et l'enfant invite a verifier.
     if (this.report === null) return;
-    this.steps = commands.map((command, index) => {
+    const flat = flattenForDisplay(statements);
+    this.steps = flat.map((statement, index) => {
       const previous = this.steps.find((s) => s.index === index);
       return {
         index,
-        label: describe(command),
+        label: describeStatement(statement),
         // Une etape en cours d'execution garde son etatuel.
         state: previous?.state === 'running' ? 'running' : 'pending',
         outcome: previous?.state === 'running' ? previous.outcome : null,
@@ -112,7 +114,7 @@ class AppState {
       await this.refreshStatus();
       // Le rapport précédent n'a plus de valeur : on le force à recalculer.
       this.#validatedRevision = -1;
-      this.check(this.currentCommands);
+      this.check(this.currentProgram);
       this.#setNotice('ok', 'Réglages appliqués.');
       return true;
     } catch (error) {
@@ -177,16 +179,14 @@ class AppState {
    * Verifie le programme compile localement et met a jour l'affichage.
    * Ne declenche AUCUN mouvement.
    */
-  check(commands: readonly RobotCommand[]): boolean {
+  check(program: Program): boolean {
     this.#setExecution('checking');
 
-    // Valider avec les REGLAGES EN VIGUEUR, pas avec le fichier statique :
-    // si un adulte a relevé une limite, l'interface doit l'appliquer aussi.
-    const report = validateCommands(commands, this.status.capabilities, this.settings?.values);
+    const report = validateProgram(program);
     this.report = report;
-    this.steps = commands.map((command, index) => ({
+    this.steps = flattenForDisplay(program.statements).map((statement, index) => ({
       index,
-      label: describe(command),
+      label: describeStatement(statement),
       state: 'pending',
       outcome: null,
     }));
@@ -204,7 +204,7 @@ class AppState {
   }
 
   /** Demande de lancement. En mode reel, passe par une confirmation adulte. */
-  requestStart(commands: readonly RobotCommand[]): void {
+  requestStart(program: Program): void {
     if (this.isBusy) {
       this.#setNotice('warn', 'Un programme est déjà en cours.');
       return;
@@ -215,34 +215,34 @@ class AppState {
     }
     if (this.status.mode === 'real') {
       // Passage par la confirmation adulte : aucune exception.
-      this.pendingStart = [...commands];
+      this.pendingStart = program;
       return;
     }
-    void this.#start(commands);
+    void this.#start(program);
   }
 
   confirmPendingStart(): void {
-    const commands = this.pendingStart;
+    const program = this.pendingStart;
     this.pendingStart = null;
-    if (commands) void this.#start(commands);
+    if (program) void this.#start(program);
   }
 
   cancelPendingStart(): void {
     this.pendingStart = null;
   }
 
-  async #start(commands: readonly RobotCommand[]): Promise<void> {
+  async #start(program: Program): Promise<void> {
     this.#setExecution('starting');
-    this.steps = commands.map((command, index) => ({
+    this.steps = flattenForDisplay(program.statements).map((statement, index) => ({
       index,
-      label: describe(command),
+      label: describeStatement(statement),
       state: 'pending',
       outcome: null,
     }));
 
     try {
       const response = await api.start({
-        commands: [...commands],
+        program,
         adult_authorised: true,
       });
       this.runId = response.runId;
@@ -286,7 +286,7 @@ class AppState {
           ? 'Mode simulation activé. Aucun mouvement réel.'
           : 'Mode robot réel activé. Vérifie que la zone est dégagée.',
       );
-      this.check(this.currentCommands);
+      this.check(this.currentProgram);
     } catch (error) {
       this.#setNotice(
         'error',
@@ -297,10 +297,10 @@ class AppState {
   }
 
   /** Dernier programme compile, pour revalider apres un changement de mode. */
-  currentCommands: RobotCommand[] = [];
+  currentProgram: Program = { statements: [] };
 
-  setCommands(commands: readonly RobotCommand[]): void {
-    this.currentCommands = [...commands];
+  setProgram(program: Program): void {
+    this.currentProgram = program;
   }
 
   #onEvent(event: import('../api/client').ExecutionEvent): void {
@@ -371,29 +371,8 @@ class AppState {
   }
 }
 
-/** Libelle en francais d'une instruction. */
-export function describe(command: RobotCommand): string {
-  switch (command.kind) {
-    case 'move_forward':
-      return `Avancer de ${command.distanceCm} cm`;
-    case 'move_backward':
-      return `Reculer de ${command.distanceCm} cm`;
-    case 'turn_left':
-      return `Tourner à gauche de ${command.angleDeg}°`;
-    case 'turn_right':
-      return `Tourner à droite de ${command.angleDeg}°`;
-    case 'wait':
-      return `Attendre ${command.seconds} s`;
-    case 'stand_up':
-      return 'Se mettre debout';
-    case 'sit_down':
-      return 'S’asseoir';
-    case 'stop':
-      return 'S’arrêter';
-    default:
-      return labelOf((command as { kind: string }).kind);
-  }
-}
+/** Libelle en francais d'une instruction, delegue a `describe.ts`. */
+export { describeStatement as describe } from '../robot/describe';
 
 type Measured = { distanceCm?: number; angleDeg?: number } | null;
 

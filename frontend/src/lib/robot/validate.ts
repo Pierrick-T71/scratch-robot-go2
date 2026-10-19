@@ -1,223 +1,168 @@
 /**
- * Validation des instructions avant envoi au service.
+ * Validation d'un programme avant envoi au service.
  *
- * Cette validation est un confort pour l'enfant (retour immediat, message
- * clair). Elle NE REMPLACE PAS la validation du robot-service, qui reste la
- * seule autorite opposable : un client modifie ne peut pas la contourner.
+ * Cette validation est un **confort pour l'enfant** (retour immédiat, message
+ * clair). Elle ne remplace PAS la validation du service, qui reste la seule
+ * opposable : un client modifié reçoit exactement le même refus.
+ *
+ * Elle porte sur ce qui est vérifiable SANS exécuter : durées, nombre de
+ * répétitions, imbrication, durée totale.
+ *
+ * Elle NE DEVINE JAMAIS une condition : « si la batterie est faible » ne peut
+ * pas être évaluée ici. Le service est seul juge.
  */
-import { SAFETY } from './limits';
-import type { RobotCommand } from './commands';
-import {
-  capabilityOf,
-  type Capability,
-} from './commands';
+import type { Program, Statement } from './program';
+import { countSteps, estimateDuration } from './program';
+import { LOW_BATTERY_PERCENT, MAX_DURATION_S } from '../blockly/blocks';
 
 export interface ValidationIssue {
   message: string;
-  /** Index de l'instruction fautive dans la liste. */
-  index?: number;
+  line?: number;
+}
+
+export interface ProgramSummary {
+  stepCount: number;
+  /** Durée du pire cas, en secondes. */
+  estimatedSeconds: number;
 }
 
 export interface ValidationReport {
   valid: boolean;
   issues: ValidationIssue[];
-  /** Resume lisible du programme. */
   summary: ProgramSummary;
 }
 
-export interface ProgramSummary {
-  stepCount: number;
-  totalDistanceCm: number;
-  totalAngleDeg: number;
-  /** Duree estimee, en secondes. */
-  estimatedSeconds: number;
-  capabilities: Capability[];
+/** Durées réellement proposées dans les menus. */
+const ALLOWED_SECONDS = new Set([1, 2, 3, 5]);
+/** Angles réellement proposés dans les menus. */
+const ALLOWED_DEGREES = new Set([45, 90, 180]);
+/** Nombres de répétitions réellement proposés dans les menus. */
+const ALLOWED_TIMES = new Set([2, 3, 5, 10]);
+
+/** Conditions dont l'état peut changer : durée non bornable. */
+const ALWAYS_CHANGES = new Set(['posture_stand', 'battery_low']);
+
+/** Nombre maximal de répétitions imbriquées. */
+const MAX_DEPTH = 3;
+/** Nombre maximal d'instructions, répétitions développées. */
+const MAX_STEPS = 500;
+/** Durée totale maximale, en secondes. */
+const MAX_SECONDS = 120;
+
+function describe(condition: string): string {
+  switch (condition) {
+    case 'posture_stand':
+      return 'le robot est debout';
+    case 'battery_low':
+      return 'la batterie est faible';
+    default:
+      return condition;
+  }
 }
 
-function outOfRange(value: number, min: number, max: number): boolean {
-  return value < min || value > max;
+function checkStatements(
+  statements: readonly Statement[],
+  issues: ValidationIssue[],
+  depth: number,
+): void {
+  if (depth > MAX_DEPTH) {
+    issues.push({
+      message: `Les répétitions sont imbriquées trop profondément (maximum ${MAX_DEPTH}).`,
+    });
+    return;
+  }
+
+  for (const statement of statements) {
+    const line = statement.line;
+
+    switch (statement.kind) {
+      case 'move':
+        if (!ALLOWED_SECONDS.has(statement.seconds)) {
+          issues.push({
+            message: 'Ce déplacement propose une durée impossible.',
+            line,
+          });
+        }
+        break;
+
+      case 'wait':
+        if (!ALLOWED_SECONDS.has(statement.seconds)) {
+          issues.push({ message: 'Cette attente propose une durée impossible.', line });
+        }
+        break;
+
+      case 'turn':
+        if (!ALLOWED_DEGREES.has(statement.degrees)) {
+          issues.push({
+            message: 'Cette rotation propose un angle impossible.',
+            line,
+          });
+        }
+        break;
+
+      case 'repeat':
+        if (!ALLOWED_TIMES.has(statement.times)) {
+          issues.push({
+            message: 'Ce bloc répète un nombre de fois impossible.',
+            line,
+          });
+        }
+        checkStatements(statement.body, issues, depth + 1);
+        break;
+
+      case 'if':
+        // La condition n'est PAS évaluée ici. On vérifie seulement qu'elle
+        // existe : c'est le service qui dira si elle est vraie.
+        if (!ALWAYS_CHANGES.has(statement.condition)) {
+          issues.push({ message: 'Cette condition n’est pas proposée.', line });
+        }
+        checkStatements(statement.then, issues, depth + 1);
+        checkStatements(statement.otherwise ?? [], issues, depth + 1);
+        break;
+
+      default:
+        break;
+    }
+  }
 }
 
-/**
- * Valide une liste d'instructions.
- *
- * @param commands instructions compilees
- * @param available capacites reellement offertes par l'adaptateur actif
- */
-/**
- * Limites effectivement en vigueur.
- *
- * `overrides` vient du service (réglages d'adulte). Le fichier partagé reste
- * le plafond de référence : un champ absent utilise la valeur du fichier.
- */
-function resolveLimits(overrides?: Readonly<Record<string, number>>): {
-  motion: typeof SAFETY.motion;
-  program: typeof SAFETY.program;
-  timing: typeof SAFETY.timing;
-} {
-  const pick = (field: string, fallback: number): number => {
-    const value = overrides?.[field];
-    return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-  };
-
-  return {
-    motion: {
-      ...SAFETY.motion,
-      maxLinearSpeed: pick('max_linear_speed', SAFETY.motion.maxLinearSpeed),
-      maxAngularSpeed: pick('max_angular_speed', SAFETY.motion.maxAngularSpeed),
-      maxDistancePerStepCm: pick(
-        'max_distance_per_step_cm',
-        SAFETY.motion.maxDistancePerStepCm,
-      ),
-      maxAnglePerStepDeg: pick('max_angle_per_step_deg', SAFETY.motion.maxAnglePerStepDeg),
-    },
-    timing: {
-      ...SAFETY.timing,
-      maxWaitSeconds: pick('max_wait_seconds', SAFETY.timing.maxWaitSeconds),
-    },
-    program: {
-      ...SAFETY.program,
-      maxTotalSteps: pick('max_total_steps', SAFETY.program.maxTotalSteps),
-      maxProgramSeconds: pick('max_program_seconds', SAFETY.program.maxProgramSeconds),
-      maxTotalDistanceCm: pick('max_total_distance_cm', SAFETY.program.maxTotalDistanceCm),
-      maxTotalAngleDeg: pick('max_total_angle_deg', SAFETY.program.maxTotalAngleDeg),
-    },
-  };
-}
-
-export function validateCommands(
-  commands: readonly RobotCommand[],
-  available: readonly Capability[] = ['movement', 'posture', 'wait', 'stop'],
-  overrides?: Readonly<Record<string, number>>,
-): ValidationReport {
+/** Valide un programme complet. */
+export function validateProgram(program: Program): ValidationReport {
   const issues: ValidationIssue[] = [];
-  const { motion, program, timing } = resolveLimits(overrides);
+  const statements = program.statements;
 
-  let totalDistanceCm = 0;
-  let totalAngleDeg = 0;
-  let estimatedSeconds = 0;
-  const capabilities = new Set<Capability>();
-
-  if (commands.length === 0) {
-    issues.push({ message: 'Ton programme ne fait rien. Ajoute un bloc sous le bloc de départ.' });
-  }
-
-  if (commands.length > program.maxTotalSteps) {
+  if (statements.length === 0) {
     issues.push({
-      message: `Ton programme est trop long (${commands.length} pas). Maximum ${program.maxTotalSteps} pas.`,
+      message: 'Ton programme ne fait rien. Accroche un bloc sous le bloc de départ.',
     });
   }
 
-  commands.forEach((command, index) => {
-    capabilities.add(capabilityOf(command));
+  checkStatements(statements, issues, 0);
 
-    switch (command.kind) {
-      case 'move_forward':
-      case 'move_backward': {
-        const d = Math.abs(command.distanceCm);
-        if (outOfRange(d, motion.minDistancePerStepCm, motion.maxDistancePerStepCm)) {
-          issues.push({
-            message: `Un déplacement doit faire entre ${motion.minDistancePerStepCm} et ${motion.maxDistancePerStepCm} cm. Ici : ${formatNumber(d)} cm.`,
-            index,
-          });
-        }
-        totalDistanceCm += d;
-        estimatedSeconds += d / 100 / motion.maxLinearSpeed;
-        break;
-      }
-      case 'turn_left':
-      case 'turn_right': {
-        const a = Math.abs(command.angleDeg);
-        if (outOfRange(a, motion.minAnglePerStepDeg, motion.maxAnglePerStepDeg)) {
-          issues.push({
-            message: `Un tour doit faire entre ${motion.minAnglePerStepDeg} et ${motion.maxAnglePerStepDeg} degrés. Ici : ${formatNumber(a)} degrés.`,
-            index,
-          });
-        }
-        totalAngleDeg += a;
-        estimatedSeconds += a / ((motion.maxAngularSpeed * 180) / Math.PI);
-        break;
-      }
-      case 'wait': {
-        if (outOfRange(command.seconds, SAFETY.timing.minWaitSeconds, timing.maxWaitSeconds)) {
-          issues.push({
-            message: `Une attente doit faire entre ${SAFETY.timing.minWaitSeconds} et ${formatNumber(timing.maxWaitSeconds)} secondes.`,
-            index,
-          });
-        }
-        estimatedSeconds += Math.max(0, command.seconds);
-        break;
-      }
-      case 'stand_up':
-      case 'sit_down':
-      case 'stop':
-        break;
-      default: {
-        const exhaustive: never = command;
-        issues.push({
-          message: `Instruction non reconnue : ${JSON.stringify(exhaustive)}`,
-          index,
-        });
-      }
-    }
+  const stepCount = countSteps(statements);
+  const seconds = estimateDuration(statements);
 
-    if (!available.includes(capabilityOf(command))) {
-      issues.push({
-        message: `L’action « ${labelOf(command.kind)} » n’est pas disponible dans ce mode.`,
-        index,
-      });
-    }
-  });
-
-  if (totalDistanceCm > program.maxTotalDistanceCm) {
+  if (stepCount > MAX_STEPS) {
     issues.push({
-      message: `Ton programme demande trop de distance (${formatNumber(totalDistanceCm)} cm). Maximum ${formatNumber(program.maxTotalDistanceCm)} cm.`,
+      message: `Ton programme est trop long (${stepCount} pas). Maximum ${MAX_STEPS}.`,
     });
   }
-  if (totalAngleDeg > program.maxTotalAngleDeg) {
+  if (seconds > MAX_SECONDS) {
     issues.push({
-      message: `Ton programme demande trop de rotations (${formatNumber(totalAngleDeg)} degrés). Maximum ${formatNumber(program.maxTotalAngleDeg)} degrés.`,
+      message: `Ton programme dure trop longtemps (environ ${Math.round(
+        seconds,
+      )} s). Maximum ${MAX_SECONDS} s.`,
     });
-  }
-  if (estimatedSeconds > program.maxProgramSeconds) {
-    issues.push({
-      message: `Ton programme dure trop longtemps (environ ${Math.round(estimatedSeconds)} s). Maximum ${program.maxProgramSeconds} s.`,
-    });
-  }
-
-  // Une commande au-dela du domaine de temps n'est pas estimable : on signale.
-  if (Number.isFinite(estimatedSeconds) === false) {
-    issues.push({ message: 'On ne peut pas calculer la durée de ce programme.' });
   }
 
   return {
     valid: issues.length === 0,
     issues,
     summary: {
-      stepCount: commands.length,
-      totalDistanceCm,
-      totalAngleDeg,
-      estimatedSeconds: Math.round(estimatedSeconds * 10) / 10,
-      capabilities: [...capabilities],
+      stepCount,
+      estimatedSeconds: Math.round(seconds * 10) / 10,
     },
   };
 }
 
-function formatNumber(value: number): string {
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
-}
-
-const KIND_LABELS: Record<string, string> = {
-  move_forward: 'Avancer',
-  move_backward: 'Reculer',
-  turn_left: 'Tourner à gauche',
-  turn_right: 'Tourner à droite',
-  wait: 'Attendre',
-  stand_up: 'Se mettre debout',
-  sit_down: 'S’asseoir',
-  stop: 'S’arrêter',
-};
-
-export function labelOf(kind: string): string {
-  return KIND_LABELS[kind] ?? kind;
-}
+export { LOW_BATTERY_PERCENT, MAX_DURATION_S, describe as describeCondition };

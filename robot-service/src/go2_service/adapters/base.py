@@ -30,10 +30,12 @@ class AdapterError(RuntimeError):
 
 
 class Posture(str, Enum):
-    """Postures exposées aux enfants. Uniquement celles vérifiées."""
+    """Postures exposées aux enfants."""
 
     STAND = "stand"
     SIT = "sit"
+    LIE_DOWN = "lie_down"
+    BALANCE = "balance"
 
 
 class RobotState(str, Enum):
@@ -97,6 +99,9 @@ class MotionPlan:
     angular_speed_rps: float
     nominal_duration_s: float
     timeout_s: float
+    #: Vitesse latérale (`vy` de `Move(vx, vy, vyaw)`). 0 pour un déplacement
+    #: avant/arrière, et pour une rotation.
+    lateral_speed_mps: float = 0.0
     distance_cm: float = 0.0
     angle_deg: float = 0.0
 

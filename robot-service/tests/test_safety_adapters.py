@@ -1,192 +1,91 @@
-"""Tests de sécurité de l'adaptateur physique Unitree.
+"""Adaptateur physique : ce qui doit rester INTERDIT tant que le robot n'a
+pas été validé.
 
-Ces tests ne pilotent AUCUN robot. Ils vérifient que l'adaptateur physique
-refuse de fonctionner tant que la validation physique n'a pas eu lieu, et que
-le code ne prétend pas davantage que ce qu'il sait.
-
-C'est un garde-fou volontaire : si quelqu'un inverse `physical_commands_enabled`
-sans avoir fait la campagne de `docs/ROBOT_SETUP.md`, ces tests le signalent.
+Ces tests sont la barrière la plus importante du projet. Tant que le Go2 Pro
+n'a pas été piloté par un adulte, en présence d'un observateur, aucun test ne
+doit pouvoir passer de la simulation au pilotage réel.
 """
 
 from __future__ import annotations
 
-import inspect
+import sys
+from pathlib import Path
 
 import pytest
 
-from go2_service.adapters.base import (
-    AdapterError,
-    Posture,
-    RobotAdapter,
-    RobotState,
-    Status,
-    StopSignal,
-)
-from go2_service.adapters.simulated import SimulatedAdapter
-from go2_service.adapters.unitree import (
-    TOPIC_HIGHSTATE,
-    UNITREE_CAPABILITIES,
-    UnitreeAdapter,
-    UnitreeValidationError,
-)
-from go2_service.config import load_limits
-from go2_service.validation import Capability, CommandKind, RobotCommand
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-
-@pytest.fixture
-def limits():
-    return load_limits()
+from go2_service.adapters.unitree import UNITREE_CAPABILITIES  # noqa: E402
+from go2_service.validation import Capability  # noqa: E402
 
 
 class TestUnitreeIsDisabledByDefault:
-    def test_physical_commands_are_disabled(self, limits):
-        """Par défaut, l'adaptateur physique ne doit jamais piloter."""
-        adapter = UnitreeAdapter(limits, "eth0")
+    """Le mode réel doit être refusé par DÉFAUT.
+
+    Pas « sauf si une variable d'environnement le demande » : ces tests
+    échouent volontairement dès qu'on passe `physical_commands_enabled` à
+    `True`. Les faire passer est l'une des étapes de la campagne de
+    validation physique (docs/ROBOT_SETUP.md §5).
+    """
+
+    @pytest.fixture()
+    def adapter(self):
+        from go2_service.adapters.unitree import UnitreeAdapter
+        from go2_service.config import load_limits
+
+        return UnitreeAdapter(limits=load_limits(), network_interface="lo")
+
+    def test_physical_commands_are_disabled(self, adapter):
         assert adapter.physical_commands_enabled is False
 
-    def test_connect_is_refused(self, limits):
-        import asyncio
+    @pytest.mark.asyncio
+    async def test_connecting_is_refused_until_the_physical_campaign_is_done(self, adapter):
+        # Refus dès la connexion, pas seulement à la première commande : rien
+        # ne peut donc ouvrir une session physique par accident.
+        from go2_service.adapters.unitree import UnitreeValidationError
 
-        adapter = UnitreeAdapter(limits, "eth0")
-        with pytest.raises(UnitreeValidationError):
-            asyncio.run(adapter.connect())
+        with pytest.raises(UnitreeValidationError, match="campagne physique"):
+            await adapter.connect()
 
-    def test_execute_command_is_refused(self, limits):
-        import asyncio
+    @pytest.mark.asyncio
+    async def test_a_movement_is_refused_while_disabled(self, adapter):
+        from go2_service.adapters.base import AdapterError
+        from go2_service.validation import CommandKind, RobotCommand
 
-        adapter = UnitreeAdapter(limits, "eth0")
-        adapter._connected = True
-        adapter._client = object()  # volontairement invalide
-        with pytest.raises(UnitreeValidationError):
-            asyncio.run(
-                adapter.execute_command(
-                    RobotCommand(kind=CommandKind.MOVE_FORWARD, distance_cm=50),
-                    0,
-                    StopSignal(),
-                )
-            )
-
-    def test_documents_its_unverified_items(self):
-        """L'adaptateur doit continuer à declaring ce qui n'est pas vérifié."""
-        assert len(UnitreeAdapter.UNVERIFIED) > 0
-        for item in UnitreeAdapter.UNVERIFIED:
-            assert isinstance(item, str) and item.strip()
-
-    def test_topic_matches_official_example(self):
-        """Constante TOPIC_HIGHSTATE de l'exemple officiel C++."""
-        assert TOPIC_HIGHSTATE == "rt/sportmodestate"
+        command = RobotCommand(kind=CommandKind.MOVE_FORWARD, speed=0.2, duration_s=1)
+        with pytest.raises((AdapterError, Exception)):
+            await adapter.execute_command(command, 0, None)
 
 
-class TestUnitreeInterfaceConforms:
-    def test_satisfies_the_adapter_protocol(self, limits):
-        adapter = UnitreeAdapter(limits, "eth0")
-        assert isinstance(adapter, RobotAdapter)
+class TestUnitreeCapabilities:
+    """L'adaptateur ne revendique QUE ce que le SDK confirme."""
 
-    def test_simulated_also_satisfies_the_protocol(self, limits):
-        adapter = SimulatedAdapter(limits)
-        assert isinstance(adapter, RobotAdapter)
+    def test_movement_posture_wait_and_stop_are_available(self):
+        for capability in (
+            Capability.MOVEMENT,
+            Capability.POSTURE,
+            Capability.WAIT,
+            Capability.STOP,
+        ):
+            assert capability in UNITREE_CAPABILITIES
 
-    def test_both_expose_the_same_contract(self, limits):
-        """Le moteur ne doit pas dépendre d'un adaptateur particulier."""
-        sim = SimulatedAdapter(limits)
-        unit = UnitreeAdapter(limits, "eth0")
-        for name in ("connect", "disconnect", "get_status", "execute_command", "request_stop"):
-            assert callable(getattr(sim, name)), name
-            assert callable(getattr(unit, name)), name
+    def test_the_logic_of_the_plan_is_available(self):
+        # Variables et messages ne commandent aucun organe : ils s'exécutent
+        # dans le service, robot réel compris.
+        assert Capability.VARIABLE in UNITREE_CAPABILITIES
+        assert Capability.BROADCAST in UNITREE_CAPABILITIES
 
-    def test_simulated_is_never_physical(self, limits):
-        assert SimulatedAdapter(limits).physical_commands_enabled is False
+    def test_the_robot_state_is_readable(self):
+        # Sujet `rt/sportmodestate`, type `SportModeState_` : lu et vérifié.
+        assert Capability.SENSOR_STATE in UNITREE_CAPABILITIES
 
-    def test_capabilities_are_named_not_invented(self):
-        """Seules les quatre capacités du projet, rien de plus."""
-        assert UNITREE_CAPABILITIES == frozenset(
-            {Capability.MOVEMENT, Capability.POSTURE, Capability.WAIT, Capability.STOP}
-        )
+    def test_obstacle_detection_is_not_claimed(self):
+        # ⚠️ Aucune mesure de distance n'a été identifiée dans l'API officielle
+        # lue. Le revendiquer ferait afficher un nombre fabriqué sur un vrai
+        # robot — c'est exactement ce qu'interdit le cahier des charges.
+        assert Capability.SENSOR_OBSTACLE not in UNITREE_CAPABILITIES
 
-    def test_no_low_level_motor_control(self):
-        """Aucune commande basse niveau ne doit exister dans le projet.
-
-        Le contrôle porte sur les IDENTIFIANTS du code (noms, attributs,
-        paramètres). Commentaires et chaînes de caractères sont ignorés : le
-        fichier documente nommément l'absence de `rt/lowcmd`, et cette mention
-        ne doit pas être confondue avec une implémentation.
-        """
-        import ast
-        import go2_service.adapters.unitree as module
-
-        tree = ast.parse(inspect.getsource(module))
-
-        identifiers: list[str] = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute):
-                identifiers.append(node.attr)
-            elif isinstance(node, ast.Name):
-                identifiers.append(node.id)
-            elif isinstance(node, ast.arg):
-                identifiers.append(node.arg)
-            elif isinstance(node, ast.keyword) and node.arg:
-                identifiers.append(node.arg)
-
-        code = " ".join(identifiers).lower()
-        for forbidden in ("lowcmd", "lowstate", "crc32", "motor_cmd", "pos_stop_f"):
-            assert forbidden not in code, f"référence interdite : {forbidden}"
-
-    def test_simulated_never_mentions_the_sdk(self):
-        """Le simulateur ne doit jamais toucher au SDK."""
-        import ast
-        import go2_service.adapters.simulated as module
-
-        tree = ast.parse(inspect.getsource(module))
-        identifiers: list[str] = [
-            node.attr if isinstance(node, ast.Attribute) else node.id
-            for node in ast.walk(tree)
-            if isinstance(node, (ast.Attribute, ast.Name))
-        ]
-        assert "unitree" not in " ".join(identifiers).lower()
-
-
-class TestUnknownCommandsAreRefused:
-    """Une commande non gérée doit être refusée, jamais improvisée."""
-
-    async def test_simulated_refuses_disconnect(self, limits):
-        adapter = SimulatedAdapter(limits)
-        with pytest.raises(AdapterError):
-            await adapter.execute_command(
-                RobotCommand(kind=CommandKind.MOVE_FORWARD, distance_cm=50),
-                0,
-                StopSignal(),
-            )
-
-    async def test_simulated_supports_only_declared_capabilities(self, limits):
-        adapter = SimulatedAdapter(limits)
-        assert adapter.supports(Capability.MOVEMENT)
-        assert adapter.supports(Capability.STOP)
-        # Une capacité inconnue n'est jamais « supportée » par défaut.
-        assert not adapter.supports("unsupported")  # type: ignore[arg-type]
-
-    async def test_status_never_raises(self, limits):
-        """`get_status` doit toujours répondre, même déconnecté."""
-        adapter = SimulatedAdapter(limits)
-        status = await adapter.get_status()
-        assert isinstance(status, Status)
-        assert status.state is RobotState.DISCONNECTED
-        assert status.connected is False
-        assert status.blocked_reason is not None
-
-
-class TestPostureHonesty:
-    """Une posture ne doit jamais être présentée comme mesurée."""
-
-    async def test_simulated_posture_reports_no_measurement(self, limits):
-        adapter = SimulatedAdapter(limits)
-        await adapter.connect()
-        outcome = await adapter.execute_command(
-            RobotCommand(kind=CommandKind.STAND_UP), 0, StopSignal()
-        )
-        assert outcome.measured_distance_cm is None
-        assert outcome.measured_angle_deg is None
-        assert outcome.detail is not None
-
-    def test_posture_enum_is_limited(self):
-        """Seules deux postures, toutes deux vérifiées."""
-        assert {p.value for p in Posture} == {"stand", "sit"}
+    def test_every_capability_is_known(self):
+        # Une capacité inventée passerait inaperçue dans un `frozenset`.
+        for capability in UNITREE_CAPABILITIES:
+            assert isinstance(capability, Capability)

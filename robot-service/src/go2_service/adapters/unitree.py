@@ -86,13 +86,25 @@ from .motion import (
 )
 
 #: Capacités réellement vérifiées dans les exemples officiels.
-#: `sit` en est exclue : présente en C++, non confirmée en Python.
+#:
+#: `SENSOR_STATE` est incluse : le sujet `rt/sportmodestate` et le type
+#: `SportModeState_` ont été lus dans l'exemple officiel.
+#:
+#: `SENSOR_OBSTACLE` est EXCLUE, volontairement : aucune mesure de distance
+#: d'obstacle n'a été identifiée dans l'API officielle. Sans cette absence,
+#: un bloc capteur afficherait un nombre fabriqué sur un vrai robot.
+#:
+#: `VARIABLE` et `BROADCAST` sont incluses sans réserve : ces actions ne
+#: commandent aucun organe, elles s'exécutent dans le service.
 UNITREE_CAPABILITIES = frozenset(
     {
         Capability.MOVEMENT,
         Capability.POSTURE,
         Capability.WAIT,
         Capability.STOP,
+        Capability.VARIABLE,
+        Capability.BROADCAST,
+        Capability.SENSOR_STATE,
     }
 )
 

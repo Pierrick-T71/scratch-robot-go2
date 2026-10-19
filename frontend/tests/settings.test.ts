@@ -5,7 +5,6 @@ import {
   DEFAULT_PREFERENCES,
   SETTING_DESCRIPTORS,
 } from '../src/lib/robot/settings';
-import { validateCommands } from '../src/lib/robot/validate';
 
 class MemoryStorage {
   private data = new Map<string, string>();
@@ -97,47 +96,6 @@ describe('réglages — préférences locales', () => {
   });
 });
 
-describe('réglages — effet sur la validation', () => {
-  it('applique la vitesse abaissée du service', () => {
-    // 50 cm à 0.1 m/s : la durée change, donc la limite est bien lue.
-    const fast = validateCommands([{ kind: 'move_forward', distanceCm: 50 }]);
-    const slow = validateCommands([{ kind: 'move_forward', distanceCm: 50 }], undefined, {
-      max_linear_speed: 0.1,
-    });
-    expect(fast.summary.estimatedSeconds).toBeLessThan(slow.summary.estimatedSeconds);
-  });
-
-  it('refuse un programme dépassant la nouvelle limite de pas', () => {
-    const steps = Array.from({ length: 60 }, () => ({ kind: 'stop' as const }));
-    // 60 pas < 500 par défaut : accepté.
-    expect(validateCommands(steps).valid).toBe(true);
-    // Avec le service réglé à 50 pas maximum : refusé.
-    expect(validateCommands(steps, undefined, { max_total_steps: 50 }).valid).toBe(false);
-  });
-
-  it('refuse une distance dépassant la limite abaissée', () => {
-    const program = [{ kind: 'move_forward', distanceCm: 150 }];
-    expect(validateCommands(program).valid).toBe(true);
-    // Service réglé à 100 cm par déplacement.
-    expect(
-      validateCommands(program, undefined, { max_distance_per_step_cm: 100 }).valid,
-    ).toBe(false);
-  });
-
-  it('ignore une valeur de réglage aberrante', () => {
-    // Le service ne devrait jamais envoyer ça, mais on ne doit pas planter.
-    const program = [{ kind: 'move_forward', distanceCm: 50 }];
-    expect(
-      validateCommands(program, undefined, { max_distance_per_step_cm: NaN }).valid,
-    ).toBe(true);
-    expect(
-      validateCommands(program, undefined, { max_distance_per_step_cm: Infinity }).valid,
-    ).toBe(true);
-  });
-
-  it('utilise le fichier partagé pour les champs non transmis', () => {
-    const program = [{ kind: 'wait', seconds: 2 }];
-    // Seul un réglage transmis est appliqué, pas tous.
-    expect(validateCommands(program, undefined, { max_linear_speed: 0.1 }).valid).toBe(true);
-  });
-});
+// L'effet des reglages sur la VALIDATION est verifie dans
+// tests/validate.test.ts : il concerne le modele de programme, pas les
+// reglages eux-memes.
