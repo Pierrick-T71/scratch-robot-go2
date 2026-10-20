@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import random
 import time
 from typing import Any
@@ -59,6 +60,9 @@ from .motion import (
     travelled_distance_cm,
 )
 from .unitree import UNITREE_CAPABILITIES
+
+
+log = logging.getLogger(__name__)
 
 
 class WebRTCAdapter:
@@ -88,6 +92,37 @@ class WebRTCAdapter:
     #: Au-dela de ce silence, l'etat est declare perdu.
     STATE_STALE_S = 2.0
 
+    #: Variation de hauteur (m) sous laquelle le robot est considere immobile.
+    STABLE_HEIGHT_M = 0.003
+
+    #: Periode d'echantillonnage de la hauteur, en secondes.
+    STABLE_SAMPLE_S = 0.2
+
+    #: Nombre d'echantillons consecutifs stables pour valider l'immobilite.
+    STABLE_SAMPLES = 5
+
+    #: Attente maximale de la stabilisation (transition de posture).
+    STABLE_TIMEOUT_S = 6.0
+
+    #: En dessous de cette fraction de la hauteur debout, le robot est assis.
+    #: Un Go2 debout fait ~0,32 m, assis ~0,22 m.
+    SITUE_RATIO = 0.85
+
+    #: Code d'etat publie par le robot quand il est PRET a marcher.
+    #: Mesure sur la machine : 100 = debout, au repos ou en marche.
+    ETAT_PRET = 100
+
+    #: Code d'etat publie pendant une TRANSITION de posture. Le robot
+    #: ignore alors les consignes de mouvement — et les lui envoyer
+    #: l'empeche meme de finir sa transition.
+    ETAT_TRANSITION = 1002
+
+    #: Code d'etat publie quand le robot est ASSIS.
+    ETAT_ASSIS = 1007
+
+    #: Attente maximale du retour a l'etat "pret".
+    PRET_TIMEOUT_S = 12.0
+
     def __init__(
         self,
         limits: Limits,
@@ -114,6 +149,11 @@ class WebRTCAdapter:
         self._velocity: tuple[float, float, float] = (0.0, 0.0, 0.0)
         self._mode: int | None = None
         self._last_state_at: float | None = None
+        #: Code d'etat publie par le robot (100 = pret, 1002 = transition).
+        self._code_etat: int | None = None
+        #: Plus haute hauteur vue depuis la connexion : sert de reference
+        #: pour savoir si le robot est actuellement assis.
+        self._hauteur_max: float | None = None
 
         self._premier_etat: asyncio.Event | None = None
 
@@ -260,6 +300,10 @@ class WebRTCAdapter:
                     float(position[1]),
                     float(position[2]),
                 )
+                # Reference de la hauteur debout : le robot assis est plus bas.
+                hauteur = float(position[2])
+                if self._hauteur_max is None or hauteur > self._hauteur_max:
+                    self._hauteur_max = hauteur
 
             imu = donnees.get("imu_state") or {}
             rpy = imu.get("rpy") or []
@@ -277,6 +321,10 @@ class WebRTCAdapter:
             mode = donnees.get("mode")
             if isinstance(mode, (int, float)):
                 self._mode = int(mode)
+
+            code_etat = donnees.get("error_code")
+            if isinstance(code_etat, (int, float)):
+                self._code_etat = int(code_etat)
 
             self._last_state_at = time.monotonic()
         except (TypeError, ValueError, AttributeError):
@@ -352,6 +400,10 @@ class WebRTCAdapter:
         connexion = self._connexion
         if connexion is None:
             return
+        if nom != "Move":
+            # Journal des ordres de posture et d'arret : c'est ce qui permet
+            # de relire, apres coup, ce que le robot a recu.
+            log.info("Commande envoyee au robot : %s", nom)
         connexion.datachannel.pub_sub.publish_without_callback(
             topic=self._rtc["SPORT_MOD"],
             data=self._enveloppe(nom, parametre),
@@ -371,6 +423,7 @@ class WebRTCAdapter:
         if connexion is None:
             raise AdapterError("Le robot n’est pas connecté.", recoverable=True)
 
+        log.info("Commande envoyee au robot : %s", nom)
         demande = {"api_id": self._sport_cmd[nom]}
         if parametre != "":
             demande["parameter"] = parametre
@@ -390,6 +443,147 @@ class WebRTCAdapter:
         statut = ((reponse or {}).get("data") or {}).get("header", {}).get("status", {})
         code = statut.get("code")
         return int(code) if isinstance(code, (int, float)) else None
+
+    # -- Préparation du programme -------------------------------------------
+
+    def _prendre_la_main(self) -> None:
+        """Reprend la main sur la vitesse du robot.
+
+        Après un `StandUp`, le robot reste en « transition » (code d'état
+        `1002`) : il attend que le client lui envoie une consigne de vitesse,
+        même NULLE. Mesuré le 20/10/2026 : sans cette consigne, toutes les
+        consignes de mouvement suivantes sont ignorées, et le robot reste
+        planté en transition pendant des dizaines de secondes.
+
+        La consigne nulle ne fait pas bouger le robot : elle lui dit
+        simplement « c'est moi qui décide de la vitesse, et pour l'instant
+        c'est zéro ».
+        """
+        self._envoyer_move(0.0, 0.0, 0.0)
+        self._envoyer_sans_reponse("StopMove")
+
+    async def _relever(self) -> bool:
+        """Met le robot sur ses quatre pattes (usage interne).
+
+        Renvoie `True` si la posture est acquittée ET tenue. Ne lève jamais :
+        un refus ne doit pas empêcher le reste du programme.
+        """
+        try:
+            resultat = await self._appliquer_posture("StandUp", Posture.STAND)
+        except AdapterError as exc:
+            log.warning("Relèvement refusé : %s", exc)
+            return False
+        if resultat.outcome != "exact":
+            log.warning("Relèvement non obtenu : %s", resultat.detail)
+            return False
+        return True
+
+    def _est_assis(self) -> bool:
+        """Le robot est-il assis ?
+
+        Trois sources, dans cet ordre :
+
+        1. le CODE D'ETAT publie par le robot (`1007` = assis) ;
+        2. la MESURE : la hauteur lue dans l'état du robot. Un Go2 debout
+           fait ~0,32 m, assis ~0,22 m. On compare à la plus haute hauteur
+           vue depuis la connexion ;
+        3. notre DERNIER ordre de posture, quand la mesure manque.
+
+        On ne suppose jamais « debout » : une posture qu'on ne peut pas
+        vérifier est traitée comme « à remettre debout ».
+        """
+        if self._code_etat == self.ETAT_ASSIS:
+            return True
+        hauteur = self._position[2] if self._position else None
+        reference = self._hauteur_max
+        if hauteur is not None and reference is not None:
+            return hauteur < reference * self.SITUE_RATIO
+        if self._posture is Posture.SIT:
+            return True
+        return self._posture is None
+
+    async def _attendre_pret(self, timeout_s: float | None = None) -> bool:
+        """Attend que le robot soit capable de marcher.
+
+        Le SDK publie un `error_code` dans l'etat du robot. Mesure faite sur
+        la machine le 20/10/2026 :
+
+        - `100` : debout, au repos ou en marche — le robot suit les consignes ;
+        - `1002` : **transition de posture en cours** (il se relève) — le
+          robot IGNORE les consignes de mouvement, et les lui envoyer
+          l'empeche meme de terminer sa transition ;
+        - `1007` : assis.
+
+        C'est ce code, et non la seule stabilite de la hauteur, qui dit si le
+        robot peut bouger : un robot dont la hauteur est stable peut encore
+        etre en train de se relever.
+
+        Sans code d'etat publie, on ne peut rien attendre de mesurable : on
+        rend la main, et la stabilisation de la hauteur prend le relais.
+        """
+        limite = time.monotonic() + (
+            timeout_s if timeout_s is not None else self.PRET_TIMEOUT_S
+        )
+        while time.monotonic() < limite:
+            code = self._code_etat
+            if code is None:
+                return False
+            if code == self.ETAT_PRET:
+                return True
+            await asyncio.sleep(self.STABLE_SAMPLE_S)
+        return False
+
+    async def _attendre_stable(self, timeout_s: float | None = None) -> bool:
+        """Attend que le robot cesse de changer de hauteur.
+
+        Une transition de posture dure plusieurs secondes. Toute commande
+        envoyée pendant la transition est REFUSÉE par le robot : c'est
+        ainsi qu'un « s'asseoir » demandé juste après un « se relever »
+        se faisait silencieusement ignorer.
+
+        La hauteur est lue dans l'état publié par le SDK. Sans mesure, on
+        ne peut rien attendre de mesurable : on rend la main aussitôt.
+        """
+        limite = time.monotonic() + (
+            timeout_s if timeout_s is not None else self.STABLE_TIMEOUT_S
+        )
+        precedent = self._position[2] if self._position else None
+        stable = 0
+        while time.monotonic() < limite:
+            await asyncio.sleep(self.STABLE_SAMPLE_S)
+            actuel = self._position[2] if self._position else None
+            if actuel is None or precedent is None:
+                return False
+            if abs(actuel - precedent) < self.STABLE_HEIGHT_M:
+                stable += 1
+                if stable >= self.STABLE_SAMPLES:
+                    return True
+            else:
+                stable = 0
+            precedent = actuel
+        return False
+
+    async def prepare_run(self) -> None:
+        """Met le robot sur ses quatre pattes AVANT le premier ordre.
+
+        Pourquoi : le SDK relève de lui-même un robot assis quand il reçoit
+        une consigne `Move`. C'est une commodité, pas une garantie : on le
+        fait donc explicitement, et on le laisse écrire dans le journal.
+
+        Le programme de l'enfant peut donc commencer par « avancer » sans
+        qu'on doive expliquer pourquoi le robot se relevait tout seul.
+        """
+        if not self._connected or self._connexion is None:
+            return
+        if not self._est_assis():
+            # Déjà sur ses pattes : rien à demander.
+            return
+        log.info(
+            "Robot non debout (posture %s, hauteur %s) : remise sur quatre pattes.",
+            self._posture,
+            self._position[2] if self._position else None,
+        )
+        await self._relever()
 
     # -- Execution ---------------------------------------------------------
 
@@ -429,28 +623,106 @@ class WebRTCAdapter:
             restant -= 0.05
         return CommandOutcome(index=index, outcome="exact")
 
+    def _posture_tenue(self, posture: Posture) -> bool:
+        """La posture demandée est-elle réellement tenue ?
+
+        Le SDK ne publie pas la posture : on la déduit de la HAUTEUR lue dans
+        l'état. Un Go2 debout fait ~0,32 m, assis ~0,22 m.
+
+        Sans mesure, on ne peut pas trancher : on ne retire jamais au robot
+        une posture qu'il a acquittée.
+        """
+        hauteur = self._position[2] if self._position else None
+        reference = self._hauteur_max
+        if hauteur is None or reference is None:
+            return True
+        if posture is Posture.SIT:
+            return hauteur < reference * self.SITUE_RATIO
+        return hauteur >= reference * self.SITUE_RATIO
+
+    async def _appliquer_posture(
+        self, nom: str, posture: Posture
+    ) -> CommandOutcome:
+        """Demande une posture, et vérifie qu'elle est TENUE.
+
+        Le robot peut acquitter la commande et se relever aussitôt (il
+        l'a fait après une rotation). On vérifie donc la hauteur après la
+        stabilisation, et on recommence une fois si la posture n'a pas tenu.
+
+        Après un « se relever », on reprend la main sur la vitesse : c'est
+        la consigne NULLE qui fait sortir le robot de sa transition, sans
+        laquelle il ignorerait tous les mouvements du programme.
+        """
+        dernier_code: int | None = None
+        for essai in range(2):
+            code = await self._commander(nom)
+            if code is None:
+                # Pas de reponse : on ne peut rien affirmer.
+                return CommandOutcome(
+                    index=0,
+                    outcome="timeout",
+                    detail="Le robot n’a pas acquitté la commande de posture.",
+                )
+            if code != 0:
+                # Le robot refuse une posture pendant une transition.
+                # On attend qu'il soit immobile, puis on réessaie.
+                log.info(
+                    "Posture %s refusee (code %s) : on attend la stabilisation.",
+                    nom,
+                    code,
+                )
+                dernier_code = code
+                if await self._attendre_stable():
+                    continue
+                return CommandOutcome(
+                    index=0,
+                    outcome="failed",
+                    detail=f"Le robot a refusé la posture (code {code}).",
+                )
+
+            self._posture = posture
+            # On attend la fin de la transition : une commande envoyée
+            # pendant que le robot se pose serait refusée.
+            await self._attendre_stable()
+
+            if not self._posture_tenue(posture):
+                log.info(
+                    "Le robot n'a pas tenu la posture %s : on recommence.",
+                    posture.value,
+                )
+                continue
+
+            if posture is Posture.STAND:
+                self._prendre_la_main()
+                if not await self._attendre_pret():
+                    log.info("Le robot ne signale pas son retour a l'etat pret.")
+
+            return CommandOutcome(
+                index=0,
+                outcome="exact",
+                detail="Commande acquittée par le robot ; posture non mesurée.",
+            )
+
+        if dernier_code is not None:
+            return CommandOutcome(
+                index=0,
+                outcome="failed",
+                detail=f"Le robot a refusé la posture (code {dernier_code}).",
+            )
+        return CommandOutcome(
+            index=0,
+            outcome="failed",
+            detail="Le robot n’a pas tenu la posture demandée.",
+        )
+
     async def _do_posture(
         self, nom: str, posture: Posture, index: int
     ) -> CommandOutcome:
-        code = await self._commander(nom)
-        if code is None:
-            # Pas de reponse : on ne peut rien affirmer.
-            return CommandOutcome(
-                index=index,
-                outcome="timeout",
-                detail="Le robot n’a pas acquitté la commande de posture.",
-            )
-        if code != 0:
-            return CommandOutcome(
-                index=index,
-                outcome="failed",
-                detail=f"Le robot a refusé la posture (code {code}).",
-            )
-        self._posture = posture
+        resultat = await self._appliquer_posture(nom, posture)
         return CommandOutcome(
             index=index,
-            outcome="exact",
-            detail="Commande acquittée par le robot ; posture non mesurée.",
+            outcome=resultat.outcome,
+            detail=resultat.detail,
         )
 
     async def _do_move(
@@ -459,6 +731,37 @@ class WebRTCAdapter:
         plan = plan_command(command, self._limits)
         if plan is None:
             raise AdapterError(f"Commande non gérée : {command.kind.value}")
+
+        # Un déplacement suppose le robot debout. Le SDK le relèverait de
+        # lui-même ; on le fait explicite, pour ne pas laisser le mouvement
+        # dépendre d'un effet de bord.
+        if self._posture == Posture.SIT:
+            await self._relever()
+
+        # Le robot n'accepte les consignes de mouvement que dans l'état
+        # « prêt ». Pendant une transition de posture, il les IGNORE — et
+        # les lui envoyer empêche même la transition de se terminer. On
+        # attend donc, on n'envoie rien.
+        if self._code_etat is not None and self._code_etat != self.ETAT_PRET:
+            if self._code_etat == self.ETAT_ASSIS:
+                await self._relever()
+            else:
+                log.info(
+                    "Robot en etat %s : on attend qu'il soit pret a bouger.",
+                    self._code_etat,
+                )
+                # Transition en cours : on attend la fin du redressement,
+                # puis on reprend la main sur la vitesse. Sans cette
+                # consigne nulle, le robot resterait en transition et
+                # ignorerait le mouvement.
+                await self._attendre_stable()
+                self._prendre_la_main()
+            if not await self._attendre_pret():
+                raise AdapterError(
+                    "Le robot n’est pas prêt à bouger : il est encore en "
+                    "transition de posture.",
+                    recoverable=True,
+                )
 
         # Dernier point de controle avant que la valeur n'atteigne le canal.
         assert_speed_within_limits(plan, self._limits)
@@ -470,6 +773,14 @@ class WebRTCAdapter:
             else None
         )
         depart_yaw = depart.yaw_rad
+
+        log.info(
+            "Deplacement %s : vitesse %.2f m/s, duree nominale %.1f s, delai d'arret %.1f s",
+            command.kind.value,
+            plan.linear_speed_mps,
+            plan.nominal_duration_s,
+            plan.timeout_s,
+        )
 
         self._state = RobotState.MOVING
         boucle = asyncio.get_running_loop()
@@ -485,6 +796,13 @@ class WebRTCAdapter:
 
                 maintenant = boucle.time()
                 if maintenant - dernier_envoi >= self.MOVE_REFRESH_S:
+                    if dernier_envoi == 0.0:
+                        log.info(
+                            " Premiere consigne Move : x=%.2f y=%.2f z=%.2f m/s",
+                            plan.linear_speed_mps,
+                            plan.lateral_speed_mps,
+                            plan.angular_speed_rps,
+                        )
                     self._envoyer_move(
                         plan.linear_speed_mps,
                         plan.lateral_speed_mps,
@@ -576,9 +894,20 @@ class WebRTCAdapter:
         Ordre retenu : consigne nulle, puis `StopMove`. Les deux envois sont
         sans attente de reponse — un arret qui depend du reseau n'est pas un
         arret.
+
+        ⚠️ EXCEPTION : si le robot est ASSIS, on n'envoie RIEN.
+
+        Sur un Go2, une commande `Move` releve le robot, et `StopMove` le
+        releve aussi : la fin d'un programme termine par « s'asseoir » le
+        remettrait debout aussitot, sans que l'ait demande. Un robot assis
+        ne se deplace pas : il n'y a donc aucune consigne de mouvement a
+        annuler, et le silence est la seule reponse honnete.
         """
         self._state = RobotState.IDLE
         if self._connexion is None:
+            return
+        if self._est_assis():
+            log.info("Robot assis : aucune consigne d'arret envoyee.")
             return
         try:
             self._envoyer_move(0.0, 0.0, 0.0)

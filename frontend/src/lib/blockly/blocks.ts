@@ -147,7 +147,9 @@ export const CONDITION_CHOICES: ReadonlyArray<[string, string]> = [
 ];
 
 //: En dessous de ce pourcentage, la batterie est considérée faible.
-export const LOW_BATTERY_PERCENT = 30;
+//  La valeur vit dans `robot/bounds` : la validation enfant l'importe sans
+//  embarquer Blockly.
+export { LOW_BATTERY_PERCENT } from '../robot/bounds';
 
 // --------------------------------------------------------------------------
 // Métadonnées
@@ -555,5 +557,5 @@ export const POSTURES = ['stand', 'sit', 'balance'] as const;
 /** Conditions réellement implémentées. */
 export const CONDITIONS = ['posture_stand', 'battery_low'] as const;
 
-/** Borne de durée partagée avec la validation. */
-export const MAX_DURATION_S = SAFETY.timing.maxWaitSeconds;
+/** Borne de durée partagée avec la validation (voir `robot/bounds`). */
+export { MAX_DURATION_S } from '../robot/bounds';

@@ -59,6 +59,22 @@ export interface SafetyConfig {
 
 export const SAFETY: SafetyConfig = raw as SafetyConfig;
 
-/** Base URL du robot-service. Injectee a la compilation, sinon valeur locale. */
-export const SERVICE_URL: string =
-  (import.meta.env['VITE_SERVICE_URL'] as string | undefined) ?? `http://127.0.0.1:8765`;
+/**
+ * Base URL du robot-service.
+ *
+ * Injectée à la compilation (`VITE_SERVICE_URL`) — c'est la voie normale en
+ * production. À défaut, on vise le même hôte que la page, port 8765 : ouvrir
+ * l'interface depuis une autre machine du réseau doit fonctionner sans
+ * reconstruire le bundle (sinon `127.0.0.1` désignerait le poste du visiteur,
+ * pas le robot).
+ */
+function defaultServiceUrl(): string {
+  const injected = import.meta.env['VITE_SERVICE_URL'] as string | undefined;
+  if (injected) return injected;
+  if (typeof location !== 'undefined' && location.hostname) {
+    return `http://${location.hostname}:8765`;
+  }
+  return 'http://127.0.0.1:8765';
+}
+
+export const SERVICE_URL: string = defaultServiceUrl();

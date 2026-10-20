@@ -54,6 +54,7 @@ class FakeAdapter:
     def __init__(self, *, posture=Posture.STAND, battery=80.0) -> None:
         self.executed: list[RobotCommand] = []
         self.stop_calls = 0
+        self.prepare_calls = 0
         self.fail_on: RobotCommand | None = None
         self.outcome = "exact"
         self.connected = True
@@ -64,6 +65,10 @@ class FakeAdapter:
     async def connect(self) -> None: ...
 
     async def disconnect(self) -> None: ...
+
+    async def prepare_run(self) -> None:
+        self.prepare_calls += 1
+        self._posture = Posture.STAND
 
     async def get_status(self) -> Status:
         return Status(
@@ -136,6 +141,14 @@ class TestSimplePlan:
         engine = ExecutionEngine(adapter, LIMITS)
         run(engine, parse_program(SIMPLE_PLAN))
         assert adapter.stop_calls >= 1
+
+    def test_the_robot_is_put_on_its_legs_before_the_first_order(self):
+        # Le robot doit être sur ses quatre pattes avant le premier ordre :
+        # s'il est resté assis, il se relève tout seul.
+        adapter = FakeAdapter(posture=Posture.SIT)
+        engine = ExecutionEngine(adapter, LIMITS)
+        run(engine, parse_program(SIMPLE_PLAN))
+        assert adapter.prepare_calls == 1
 
     def test_the_speed_is_chosen_by_the_service(self):
         # L'enfant ne saisit pas de vitesse : c'est une limite de sécurité,

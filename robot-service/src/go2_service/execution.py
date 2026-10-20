@@ -24,6 +24,7 @@ exception : aucune consigne de mouvement ne survit à la fin du programme.
 from __future__ import annotations
 
 import itertools
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import AsyncIterator
@@ -31,6 +32,8 @@ from typing import AsyncIterator
 from .adapters.base import AdapterError, CommandOutcome, RobotAdapter, StopSignal
 from .interpreter import Interpreter, ProgramError, RobotTruth
 from .validation import RobotCommand
+
+log = logging.getLogger(__name__)
 
 #: Raisons de fin d'exécution, exposées telles quelles à l'interface.
 FinishReason = str
@@ -171,9 +174,26 @@ class ExecutionEngine:
         if self._active is active:
             self._active = None
 
+    async def _prepare_run(self) -> None:
+        """Met le robot en position de marche avant le premier ordre.
+
+        Un échec ici n'interrompt PAS le programme : le SDK sait relever un
+        robot avant de bouger, et l'enfant ne doit pas voir une erreur pour
+        une posture déjà acquise.
+        """
+        try:
+            await self._adapter.prepare_run()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Préparation du robot impossible : %s", exc)
+
     async def _run(
         self, commands: list[RobotCommand], active: ActiveExecution
     ) -> AsyncIterator[ExecutionEvent]:
+        # Le robot doit être sur ses quatre pattes avant le premier ordre.
+        # S'il est resté assis (fin de programme précédente, test de liaison),
+        # il se relève tout seul : l'enfant n'a rien à demander.
+        await self._prepare_run()
+
         for index, command in enumerate(commands):
             if active.stop_signal.requested:
                 yield ExecutionEvent(

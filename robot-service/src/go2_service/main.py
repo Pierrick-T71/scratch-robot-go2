@@ -266,6 +266,13 @@ class ServiceState:
         except Exception:
             pass
         self.adapter = SimulatedAdapter(self.limits)
+        # Le simulateur doit être BRANCHÉ : sans cela, le service revient en
+        # simulation en annonçant « non connecté », et l'interface croirait
+        # que le robot est hors ligne.
+        try:
+            await self.adapter.connect()
+        except Exception:  # noqa: BLE001
+            pass
         self.engine = ExecutionEngine(self.adapter, limits=self.limits)
         self.watchdog = SafetyWatchdog(self.engine, self.adapter, self.limits)
         self._mode = "simulation"
@@ -318,6 +325,9 @@ class ServiceState:
             ),
             "yawRad": status.yaw_rad,
             "batteryPercent": status.battery_percent,
+            # Dernière posture DEMANDÉE au robot. Ce n'est pas une mesure :
+            # le SDK ne publie pas la posture réelle. `null` = inconnue.
+            "posture": status.posture.value if status.posture else None,
             "settingsRevision": self.settings_revision,
         }
 

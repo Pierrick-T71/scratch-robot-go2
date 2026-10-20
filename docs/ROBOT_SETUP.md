@@ -71,6 +71,87 @@ persistante**.
 
 C'est la raison d'être du bail de sécurité (`docs/SAFETY.md`).
 
+### Une consigne de mouvement relève le robot (mesuré)
+
+Constat fait sur le robot réel, via le canal WebRTC : **une commande `Move`
+envoyée à un robot assis le remet debout.** Le robot passe en mode « sport »
+dès qu'il reçoit une consigne de vitesse, même nulle.
+
+Pire : **`StopMove` le relève aussi.** Une mesure faite le 20/10/2026, en
+lisant la hauteur du robot dans l'état publié par le SDK (0,32 m debout,
+0,22 m assis) :
+
+| Phase | Hauteur observée | Lecture |
+|---|---|---|
+| robot assis, 30 s sans aucune commande | 0,222 m, stable | le robot **reste** assis tout seul |
+| programme « s'asseoir », robot déjà assis | 0,222 → 0,308 → 0,328 m | il se relève, mais **la posture demandée est refusée** : il reste debout |
+
+Le refus venait de l'ordre des commandes : le robot recevait « se relever »
+puis « s'asseoir » 0,6 s plus tard, **pendant** sa transition de posture. Le
+Go2 met 2 à 3 secondes à se relever et refuse toute commande envoyée
+pendant ce temps.
+
+Règles retenues dans l'adaptateur (`adapters/webrtc.py`) :
+
+- `prepare_run()` : avant le premier ordre d'un programme, on **vérifie** que
+  le robot est debout — d'après la **hauteur mesurée** (comparée à la plus
+  haute hauteur vue depuis la connexion), et d'après le dernier ordre de
+  posture quand la mesure manque. S'il ne l'est pas, `StandUp` ;
+- après un `StandUp` ou un `Sit`, on **attend que la hauteur cesse de
+  changer** avant la commande suivante (`_attendre_stable()`) ;
+- une posture **refusée** est réessayée **une fois**, après stabilisation ;
+- une posture **acquittée mais pas tenue** (le robot s'est relevé) est
+  réessayée elle aussi ;
+- `request_stop()` : si le robot est assis, **rien** n'est envoyé. `Move` et
+  `StopMove` le relèvent tous les deux ; un robot assis ne se déplace pas,
+  il n'y a donc aucune consigne à annuler ;
+- `_do_move()` : un déplacement demandé alors que le robot est assis commence
+  par un `StandUp` explicite.
+
+### Le code d'état du robot : 100, 1002, 1006, 1007
+
+Le SDK publie un `error_code` dans l'état du robot. Relevé sur la machine le
+20/10/2026 :
+
+| Code | Signification observée |
+|---|---|
+| `100` | debout, au repos ou en marche : le robot **suit** les consignes |
+| `1002` | **transition de posture** (il se relève) |
+| `1006` | début de transition (vers la position assise) |
+| `1007` | assis, stable |
+| `2005` | position assise en cours, puis retour debout |
+
+Deux conséquences, chacune mesurée :
+
+1. **Pendant une transition, le robot ignore les consignes `Move`.** Et les
+   lui envoyer empêche *même* la transition de se terminer : le robot peut
+   rester planté en `1002` pendant des dizaines de secondes. Il ne suffit
+   donc pas d'attendre : il ne faut rien envoyer.
+2. **Pour sortir de la transition, il faut reprendre la main sur la
+   vitesse.** Une consigne de vitesse **nulle** (`Move(0, 0, 0)` suivie de
+   `StopMove`) fait passer le robot de `1002` à `100` en une seconde environ.
+   Sans elle, toutes les consignes de mouvement du programme restent
+   ignorées.
+
+D'où la règle : après un `StandUp`, on attend la fin du redressement, on
+envoie la consigne **nulle**, et on n'envoie plus rien tant que le robot ne
+publie pas `100`.
+
+Journal des commandes réellement envoyées (pour relecture après coup) :
+
+```
+2026-10-20 08:32:15,330  Robot non debout (posture Posture.SIT, hauteur 0.222704) : remise sur quatre pattes.
+2026-10-20 08:32:15,330  Commande envoyee au robot : StandUp
+2026-10-20 08:32:17,178  Commande envoyee au robot : Sit
+```
+
+Aucune commande ensuite : le robot reste assis. La hauteur est repassée de
+0,308 m (debout) à 0,223 m (assis), et y est restée.
+
+Et le même programme, cette fois avec « avancer » : le robot se relève, la
+consigne nulle part, le code d'état repasse à `100`, et le robot parcourt
+**58 cm** pour 2 s demandées à 0,3 m/s (60 cm attendues).
+
 ---
 
 ## 3. À VÉRIFIER AVANT TOUT (inconnues assumées)

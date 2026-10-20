@@ -32,9 +32,19 @@ export interface RobotStatus {
   position: { x: number; y: number; z: number } | null;
   yawRad: number | null;
   batteryPercent: number | null;
+  /**
+   * Dernière posture DEMANDÉE au robot (`stand`, `sit`, `balance`).
+   *
+   * Ce n'est pas une mesure : le SDK ne publie pas la posture réelle.
+   * `null` signifie « inconnue » — jamais « debout » par défaut.
+   */
+  posture: RobotPosture | null;
   /** Incrémenté par le service à chaque changement de limites. */
   settingsRevision: number;
 }
+
+/** Postures que le service sait demander au robot. */
+export type RobotPosture = 'stand' | 'sit' | 'balance' | 'lie_down';
 
 export interface StartRequest {
   /**

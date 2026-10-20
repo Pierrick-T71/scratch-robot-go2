@@ -37,6 +37,7 @@ const OFFLINE_STATUS: RobotStatus = {
   position: null,
   yawRad: null,
   batteryPercent: null,
+  posture: null,
   settingsRevision: 0,
 };
 
@@ -245,6 +246,18 @@ class AppState {
         program,
         adult_authorised: true,
       });
+
+      // ⚠️ Le programme peut être DÉJÀ terminé quand la réponse arrive.
+      // En simulation, un programme d'une seule posture (« s'asseoir »)
+      // finit en quelques millisecondes : les événements de fin passent
+      // AVANT la réponse HTTP. Repasser en « running » ici rouvrirait une
+      // exécution morte : l'interface resterait bloquée sur un programme
+      // arrêté, bouton « Lancer » désactivé pour toujours.
+      if (this.execution !== 'starting') {
+        this.runId = null;
+        return;
+      }
+
       this.runId = response.runId;
       this.#lease = new LeaseKeeper(response.runId);
       this.#lease.start();
@@ -265,6 +278,16 @@ class AppState {
     this.#setNotice('warn', 'Arrêt demandé…');
     try {
       await api.stop();
+      // Si aucun événement de fin ne suit (le programme était déjà arrêté,
+      // ou le service n'en a rien à dire), on ne reste pas bloqué sur
+      // « arrêt en cours » : l'arrêt a bien été demandé.
+      if (this.execution === 'stopping') {
+        this.#setExecution('stopped');
+        this.#setNotice(
+          'warn',
+          'Le programme a été arrêté. Vérifie que le robot est immobile avant de continuer.',
+        );
+      }
     } catch {
       // Le chien de garde du service reste le garant de l'arrêt.
       this.#setNotice(

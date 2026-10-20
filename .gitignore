@@ -35,5 +35,8 @@ desktop.ini
 # Divers
 *.log
 npm-debug.log*
+
+# Archives de deploiement (generees localement, jamais versionnees)
+*.tgz
 # Racine du depot : le projet n'est pas un package npm.
 /package-lock.json

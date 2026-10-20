@@ -139,6 +139,15 @@ class SimulatedAdapter:
 
     # -- Exécution ---------------------------------------------------------
 
+    async def prepare_run(self) -> None:
+        """Le robot simulé se met sur ses quatre pattes avant de bouger.
+
+        Même contrat que l'adaptateur physique : la posture de départ d'un
+        programme est toujours « debout ».
+        """
+        if self._posture == Posture.SIT:
+            self._posture = Posture.STAND
+
     async def execute_command(
         self, command: RobotCommand, index: int, should_stop: StopSignal
     ) -> CommandOutcome:

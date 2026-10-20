@@ -1,53 +1,61 @@
 /* =========================================================================
-   GO2 Scratch — design tokens
+   Go2 Play — jetons de design
 
-   Direction visuelle : surface claire, faible contraste, formes arrondies,
-   ombres douces, un seul accent (bleu) + un vert « sûr ». Tout doit rester
-   lisible pour un enfant sur un écran de 1366 x 768.
+   Direction visuelle : nuit bleutée, panneaux en relief léger, blocs pastel
+   très colorés. Le contraste est réservé à ce qui compte : les blocs, les
+   boutons d'action et l'état du robot. Le reste s'efface.
+
+   Les variables servent aussi aux fenêtres (branchement, réglages, aide) :
+   elles suivent le thème sans retouche.
    ========================================================================= */
 
 :root {
-  color-scheme: light;
+  color-scheme: dark;
 
-  /* -- Couleurs -- */
-  --brand-700: #1b3fb0;
-  --brand-600: #2447c9;
-  --brand-500: #3d6bf5;
-  --brand-400: #6d91ff;
-  --brand-100: #e8efff;
-  --brand-50: #f3f6ff;
+  /* -- Couleurs de marque -- */
+  --brand-700: #a8c8f5;
+  --brand-600: #7fb0ec;
+  --brand-500: #3f7fd0;
+  --brand-400: #6fa6e8;
+  --brand-100: #1e2c42;
+  --brand-50: #1a2233;
 
-  --accent-600: #0c8a66;
-  --accent-500: #12a57a;
-  --accent-100: #dcf5ec;
+  --accent-600: #3fb46d;
+  --accent-500: #2f9d5c;
+  --accent-100: #17331f;
 
-  --ok-600: #0a7a54;
-  --ok-100: #dff5ea;
-  --warn-700: #a35a00;
-  --warn-100: #fdf2dd;
-  --danger-700: #b42318;
-  --danger-600: #d92d20;
-  --danger-100: #fdeae8;
+  --ok-600: #2f9d5c;
+  --ok-100: #16301f;
+  --ok-text: #8fe0a8;
 
-  /* -- Neutres (bleu-gris, plus doux que du gris pur) -- */
-  --ink-900: #0f1729;
-  --ink-700: #33415c;
-  --ink-500: #64748b;
-  --ink-400: #94a3b8;
+  --warn-700: #b9801f;
+  --warn-100: #33280f;
+  --warn-text: #f3c96b;
 
-  --surface: #ffffff;
-  --surface-2: #f8fafc;
-  --canvas: #eef2f8;
-  --line: #e2e8f0;
-  --line-strong: #cbd5e1;
+  --danger-600: #cf4553;
+  --danger-700: #b83b48;
+  --danger-100: #3a1a1f;
+  --danger-text: #f3a3ac;
 
-  /* -- Catégories de blocs : doivent rester alignées sur blocks.ts -- */
-  --cat-events: #f59e0b;
-  --cat-movement: #3d6bf5;
-  --cat-actions: #12a57a;
-  --cat-control: #8b5cf6;
+  /* -- Neutres (bleu-gris) -- */
+  --ink-900: #f2f5fa;
+  --ink-700: #d3d9e5;
+  --ink-500: #98a1b3;
+  --ink-400: #7b8497;
 
-  /* -- Rayons : généreux, c'est ce qui donne l'impression moderne -- */
+  --surface: #242731;
+  --surface-2: #2a2e39;
+  --canvas: #191b22;
+  --line: #2f3441;
+  --line-strong: #3f4657;
+
+  /* -- Catégories de blocs -- */
+  --cat-events: #f0b34a;
+  --cat-movement: #a9c9ee;
+  --cat-actions: #f5c3a6;
+  --cat-control: #c3a4f2;
+
+  /* -- Rayons -- */
   --radius-xs: 6px;
   --radius-s: 10px;
   --radius-m: 14px;
@@ -55,18 +63,18 @@
   --radius-xl: 26px;
   --radius-pill: 999px;
 
-  /* -- Ombres : très douces, jamais de bord dur -- */
-  --shadow-xs: 0 1px 2px rgb(15 23 41 / 6%);
-  --shadow-s: 0 1px 3px rgb(15 23 41 / 8%), 0 1px 2px rgb(15 23 41 / 4%);
-  --shadow-m: 0 6px 20px rgb(15 23 41 / 10%);
-  --shadow-l: 0 24px 60px rgb(15 23 41 / 22%);
+  /* -- Ombres : relief doux sur fond sombre -- */
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 28%);
+  --shadow-s: 0 2px 8px rgb(0 0 0 / 26%);
+  --shadow-m: 0 10px 26px rgb(0 0 0 / 34%);
+  --shadow-l: 0 30px 70px rgb(0 0 0 / 58%);
 
   --font: 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, 'Inter',
     'Helvetica Neue', sans-serif;
 
-  --topbar-h: 62px;
-  --side-w: 384px;
-  --gutter: 14px;
+  --topbar-h: 78px;
+  --side-w: 400px;
+  --gutter: 16px;
 }
 
 *,
@@ -88,18 +96,19 @@ body {
   line-height: 1.5;
   color: var(--ink-900);
   background: var(--canvas);
-  /* Une très légère texture évite l'aplat « vieux gris ». */
   background-image:
-    radial-gradient(circle at 12% -10%, rgb(61 107 245 / 10%), transparent 45%),
-    radial-gradient(circle at 92% 0%, rgb(18 165 122 / 8%), transparent 40%);
+    radial-gradient(circle at 8% -12%, rgb(70 112 196 / 16%), transparent 46%),
+    radial-gradient(circle at 96% -6%, rgb(139 92 246 / 12%), transparent 42%),
+    radial-gradient(circle at 50% 118%, rgb(47 157 92 / 8%), transparent 50%);
+  background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  overflow: hidden;
+  overflow-x: hidden;
 }
 
 ::selection {
-  background: var(--brand-100);
-  color: var(--brand-700);
+  background: #2f4a70;
+  color: #eaf1fb;
 }
 
 /* Barres de défilement discrètes */
@@ -152,20 +161,20 @@ body {
     box-shadow 0.16s ease,
     border-color 0.16s ease;
   box-shadow:
-    0 1px 2px rgb(15 23 41 / 10%),
-    0 2px 8px rgb(61 107 245 / 24%);
+    inset 0 1px 0 rgb(255 255 255 / 16%),
+    0 2px 10px rgb(0 0 0 / 32%);
 }
 
 .btn:hover:not(:disabled) {
-  background: var(--brand-600);
+  background: #4c8ede;
   box-shadow:
-    0 2px 4px rgb(15 23 41 / 10%),
-    0 6px 18px rgb(61 107 245 / 30%);
+    inset 0 1px 0 rgb(255 255 255 / 18%),
+    0 8px 20px rgb(0 0 0 / 36%);
 }
 
 .btn:active:not(:disabled) {
   transform: translateY(1px);
-  box-shadow: 0 1px 2px rgb(15 23 41 / 12%);
+  box-shadow: inset 0 2px 6px rgb(0 0 0 / 25%);
 }
 
 .btn:focus-visible {
@@ -181,45 +190,39 @@ body {
 }
 
 .btn--ghost {
-  background: var(--surface);
+  background: var(--surface-2);
   color: var(--ink-700);
-  border-color: var(--line);
+  border-color: var(--line-strong);
   box-shadow: var(--shadow-xs);
 }
 
 .btn--ghost:hover:not(:disabled) {
-  background: var(--surface-2);
+  background: #333846;
   color: var(--ink-900);
-  border-color: var(--line-strong);
+  border-color: #4b5364;
   box-shadow: var(--shadow-s);
 }
 
 .btn--ok {
   background: var(--accent-500);
   box-shadow:
-    0 1px 2px rgb(15 23 41 / 10%),
-    0 2px 8px rgb(18 165 122 / 26%);
+    inset 0 1px 0 rgb(255 255 255 / 16%),
+    0 2px 10px rgb(0 0 0 / 32%);
 }
 
 .btn--ok:hover:not(:disabled) {
   background: var(--accent-600);
-  box-shadow:
-    0 2px 4px rgb(15 23 41 / 10%),
-    0 6px 18px rgb(18 165 122 / 32%);
 }
 
 .btn--danger {
   background: var(--danger-600);
   box-shadow:
-    0 1px 2px rgb(15 23 41 / 12%),
-    0 2px 10px rgb(217 45 32 / 30%);
+    inset 0 1px 0 rgb(255 255 255 / 16%),
+    0 2px 10px rgb(0 0 0 / 34%);
 }
 
 .btn--danger:hover:not(:disabled) {
   background: var(--danger-700);
-  box-shadow:
-    0 2px 4px rgb(15 23 41 / 12%),
-    0 6px 18px rgb(217 45 32 / 36%);
 }
 
 .btn--sm {
@@ -253,32 +256,32 @@ body {
 
 .badge--ok {
   background: var(--ok-100);
-  color: var(--ok-600);
-  border-color: rgb(10 122 84 / 18%);
+  color: var(--ok-text);
+  border-color: #2c5b3b;
 }
 
 .badge--warn {
   background: var(--warn-100);
-  color: var(--warn-700);
-  border-color: rgb(163 90 0 / 20%);
+  color: var(--warn-text);
+  border-color: #5c4a1d;
 }
 
 .badge--danger {
   background: var(--danger-100);
-  color: var(--danger-700);
-  border-color: rgb(180 35 24 / 18%);
+  color: var(--danger-text);
+  border-color: #6b3038;
 }
 
 .badge--neutral {
   background: var(--surface-2);
   color: var(--ink-700);
-  border-color: var(--line);
+  border-color: var(--line-strong);
 }
 
 .badge--info {
   background: var(--brand-100);
   color: var(--brand-700);
-  border-color: rgb(36 71 201 / 18%);
+  border-color: #2f4a70;
 }
 
 .badge__dot {
@@ -354,26 +357,26 @@ body {
 
 .message--ok {
   background: var(--ok-100);
-  color: var(--ok-600);
-  border-color: rgb(10 122 84 / 20%);
+  color: var(--ok-text);
+  border-color: #2c5b3b;
 }
 
 .message--error {
   background: var(--danger-100);
-  color: var(--danger-700);
-  border-color: rgb(180 35 24 / 20%);
+  color: var(--danger-text);
+  border-color: #6b3038;
 }
 
 .message--warn {
   background: var(--warn-100);
-  color: var(--warn-700);
-  border-color: rgb(163 90 0 / 22%);
+  color: var(--warn-text);
+  border-color: #5c4a1d;
 }
 
 .message--info {
   background: var(--brand-100);
   color: var(--brand-700);
-  border-color: rgb(36 71 201 / 18%);
+  border-color: #2f4a70;
 }
 
 .message__icon {
@@ -390,13 +393,15 @@ body {
   width: 100%;
   min-height: 42px;
   padding: 9px 14px;
-  border: 1.5px solid var(--line);
+  border: 1.5px solid var(--line-strong);
   border-radius: var(--radius-s);
   font-family: inherit;
   font-size: 15px;
   color: var(--ink-900);
-  background: var(--surface);
-  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+  background: #1e222b;
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease;
 }
 
 .input::placeholder {
@@ -405,8 +410,8 @@ body {
 
 .input:focus {
   outline: none;
-  border-color: var(--brand-500);
-  box-shadow: 0 0 0 3px var(--brand-100);
+  border-color: var(--brand-400);
+  box-shadow: 0 0 0 3px rgb(111 166 232 / 22%);
 }
 
 /* =========================================================================
@@ -438,7 +443,7 @@ body {
 .steps__item--running {
   background: var(--brand-100);
   color: var(--brand-700);
-  border-left-color: var(--brand-500);
+  border-left-color: var(--brand-400);
   font-weight: 700;
 }
 
@@ -460,7 +465,7 @@ body {
   place-items: center;
   font-size: 11.5px;
   font-weight: 800;
-  background: rgb(15 23 41 / 7%);
+  background: rgb(255 255 255 / 8%);
   color: var(--ink-500);
 }
 
@@ -480,7 +485,7 @@ body {
   font-weight: 700;
   padding: 3px 8px;
   border-radius: var(--radius-pill);
-  background: rgb(15 23 41 / 6%);
+  background: rgb(255 255 255 / 8%);
   color: var(--ink-500);
   white-space: nowrap;
 }
@@ -514,8 +519,8 @@ body {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgb(15 23 41 / 45%);
-  backdrop-filter: blur(3px);
+  background: rgb(8 10 14 / 66%);
+  backdrop-filter: blur(4px);
   animation: fade 0.15s ease;
 }
 
@@ -534,6 +539,7 @@ body {
   display: flex;
   flex-direction: column;
   background: var(--surface);
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-l);
   overflow: hidden;
@@ -566,6 +572,12 @@ body {
   font-size: 19px;
   font-weight: 800;
   letter-spacing: -0.015em;
+}
+
+.modal__subtitle {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--ink-500);
 }
 
 .modal__body {

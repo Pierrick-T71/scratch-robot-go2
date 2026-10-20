@@ -61,6 +61,7 @@ ni pilotage moteur. Hors périmètre pédagogique.
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import threading
 from typing import Any
@@ -84,6 +85,8 @@ from .motion import (
     shortest_angular_difference_deg,
     travelled_distance_cm,
 )
+
+log = logging.getLogger(__name__)
 
 #: Capacités réellement vérifiées dans les exemples officiels.
 #:
@@ -546,6 +549,25 @@ class UnitreeAdapter:
             self._yaw = None
 
     # -- Exécution ---------------------------------------------------------
+
+    async def prepare_run(self) -> None:
+        """Relève le robot s'il est assis, avant le premier ordre.
+
+        Même contrat que l'adaptateur WebRTC : un déplacement suppose le
+        robot debout.
+        """
+        if not self.physical_commands_enabled:
+            return
+        if not self._connected or self._client is None:
+            return
+        if self._posture in (Posture.STAND, Posture.BALANCE):
+            return
+        try:
+            self._client.StandUp()
+            self._posture = Posture.STAND
+        except Exception as exc:  # noqa: BLE001
+            # Un refus de relèvement n'empêche pas d'exécuter le programme.
+            log.warning("Relèvement refusé : %s", exc)
 
     async def execute_command(
         self, command: RobotCommand, index: int, should_stop: StopSignal

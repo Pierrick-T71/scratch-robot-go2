@@ -13,7 +13,7 @@
  */
 import type { Program, Statement } from './program';
 import { countSteps, estimateDuration } from './program';
-import { LOW_BATTERY_PERCENT, MAX_DURATION_S } from '../blockly/blocks';
+import { LOW_BATTERY_PERCENT, MAX_DURATION_S } from './bounds';
 
 export interface ValidationIssue {
   message: string;

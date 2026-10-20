@@ -142,6 +142,19 @@ class RobotAdapter(Protocol):
         """Arrêt immédiat. Doit être appelé même si une motion est en cours."""
         ...
 
+    async def prepare_run(self) -> None:
+        """Préparation avant le PREMIER ordre d'un programme.
+
+        Le robot doit être sur ses quatre pattes pour se déplacer. Si sa
+        posture est connue comme assise, l'adaptateur la relève explicitement
+        avant le premier ordre, plutôt que de laisser le SDK le faire par
+        effet de bord.
+
+        Ne doit jamais lever : un refus de relèvement n'empêche pas
+        d'exécuter le programme.
+        """
+        ...
+
     def supports(self, capability: Capability) -> bool:
         """Indique si une capacité est réellement disponible."""
         ...
