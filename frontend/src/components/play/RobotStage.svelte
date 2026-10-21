@@ -2,26 +2,79 @@
   /**
    * Vue « robot » : la scène, l'état réel et les raccourcis.
    *
-   * La scène est une illustration : le robot n'envoie pas de flux vidéo dans
-   * cette version. Les valeurs affichées (batterie, position) viennent, elles,
-   * du service — et restent « — » quand aucune mesure n'existe.
-   *
-   * Le dessin est composé en portrait : la colonne de droite est haute et
-   * étroite. Un cadrage paysage y perdrait le chien ; ici, un recadrage
-   * moderé retire des arbres, jamais le robot.
+   * La scène reprend celle du lidar : le Go2 au milieu d'une grille sombre.
+   * Sans la carte, elle sert de vue du robot ; le bouton lidar ajoute les
+   * cubes du capteur. Le robot marche quand un déplacement est en cours.
+   * Les valeurs affichées (batterie, position) viennent du service — et
+   * restent « — » quand aucune mesure n'existe.
    */
   import Icon from './Icon.svelte';
-  import type { RobotStatus } from '../../lib/api/client';
+  import LidarScene from './LidarScene.svelte';
+  import type { LidarVolume, RobotStatus } from '../../lib/api/client';
+  import { api } from '../../lib/api/client';
+  import { SERVICE_URL } from '../../lib/robot/limits';
 
   interface Props {
     status: RobotStatus;
-    onRefresh: () => void;
+    /** Un bloc de déplacement tourne : les pattes doivent marcher. */
+    walking?: boolean;
     onOpenRobot: () => void;
   }
 
-  let { status, onRefresh, onOpenRobot }: Props = $props();
+  let { status, walking = false, onOpenRobot }: Props = $props();
 
-  let sceneEl = $state<HTMLDivElement | undefined>();
+  /** La caméra du robot est-elle à l'écran ? */
+  let camera = $state(false);
+  /** Le flux a-t-il échoué (robot non branché, pas de caméra) ? */
+  let cameraFailed = $state(false);
+  /** La vue du capteur lidar est-elle à l'écran ? */
+  let lidar = $state(false);
+  /** Cases occupées de la carte du lidar, en mètres autour du robot. */
+  let cases = $state<[number, number][]>([]);
+  /** Le volume de voxels, pour la vue en 3D. */
+  let volume = $state<LidarVolume | null>(null);
+
+  /**
+   * Adresse du flux MJPEG.
+   *
+   * Le service relaie les images du robot : la clé de chiffrement ne quitte
+   * jamais la machine qui parle au robot.
+   */
+  const cameraUrl = `${SERVICE_URL}/api/robot/camera`;
+
+  /**
+   * La carte du lidar, rafraîchie tant que la vue est ouverte.
+   *
+   * Le lidar ne publie sa carte que lorsque le robot est DEBOUT : on le
+   * dit plutôt que d'afficher une carte vide sans explication.
+   */
+  $effect(() => {
+    if (!lidar) {
+      cases = [];
+      volume = null;
+      return;
+    }
+    let vivant = true;
+    const boucle = async (): Promise<void> => {
+      while (vivant) {
+        try {
+          const resultat = await api.getLidar();
+          if (!vivant) return;
+          cases = resultat.points;
+          volume = resultat.volume;
+        } catch {
+          if (!vivant) return;
+          cases = [];
+          volume = null;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      }
+    };
+    void boucle();
+    return () => {
+      vivant = false;
+    };
+  });
 
   const battery = $derived(
     status.batteryPercent === null
@@ -47,189 +100,83 @@
             : null,
   );
 
-  async function toggleFullscreen(): Promise<void> {
-    if (!sceneEl) return;
-    try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await sceneEl.requestFullscreen();
-    } catch {
-      // Le navigateur peut refuser (iframe, politique locale) : on n'insiste pas.
-    }
+  /** Bascule entre le robot 3D et la caméra du robot. */
+  function toggleCamera(): void {
+    camera = !camera;
+    cameraFailed = false;
+    lidar = false;
+  }
+
+  /** Bascule entre le robot 3D et la vue du capteur lidar. */
+  function toggleLidar(): void {
+    lidar = !lidar;
+    camera = false;
+    cameraFailed = false;
   }
 </script>
 
 <aside class="robot" aria-label="État du robot">
-  <div class="scene" bind:this={sceneEl}>
-    <svg
-      class="scene__art"
-      viewBox="0 0 440 620"
-      preserveAspectRatio="xMidYMid slice"
-      role="img"
-      aria-label="Illustration du robot Go2 dans un parc"
-    >
-      <defs>
-        <linearGradient id="ciel" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#cfe9f7" />
-          <stop offset="100%" stop-color="#eaf6e3" />
-        </linearGradient>
-        <linearGradient id="herbe" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#8ac868" />
-          <stop offset="100%" stop-color="#4f9139" />
-        </linearGradient>
-        <linearGradient id="corps" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#5a6170" />
-          <stop offset="55%" stop-color="#3d4350" />
-          <stop offset="100%" stop-color="#2b303a" />
-        </linearGradient>
-        <radialGradient id="ombre" cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stop-color="#2f5c2a" stop-opacity="0.45" />
-          <stop offset="100%" stop-color="#2f5c2a" stop-opacity="0" />
-        </radialGradient>
-      </defs>
+  <div class="scene">
+    <div class="scene__robot">
+      <LidarScene volume={lidar ? volume : null} {walking} interactive={lidar} />
+    </div>
 
-      <rect width="440" height="620" fill="url(#ciel)" />
-      <path d="M0 168 Q 110 132 220 158 T 440 150 V620 H0 Z" fill="url(#herbe)" />
-
-      <!-- Arbres -->
-      <g>
-        <rect x="34" y="150" width="13" height="86" rx="6" fill="#8a5a35" />
-        <circle cx="40" cy="138" r="44" fill="#4f9a4a" />
-        <circle cx="10" cy="162" r="27" fill="#5fae57" />
-        <circle cx="72" cy="164" r="29" fill="#6cbb62" />
-      </g>
-      <g>
-        <rect x="392" y="158" width="12" height="76" rx="6" fill="#8a5a35" />
-        <circle cx="398" cy="148" r="36" fill="#4f9a4a" />
-        <circle cx="428" cy="170" r="25" fill="#6cbb62" />
-        <circle cx="370" cy="172" r="23" fill="#5fae57" />
-      </g>
-
-      <!-- Barrière -->
-      <g stroke="#b9814c" stroke-linecap="round">
-        <path d="M14 250 H 426" stroke-width="9" />
-        <path d="M14 286 H 426" stroke-width="9" />
-        <g stroke="#a06b3c" stroke-width="11">
-          <path d="M54 230 V 320" />
-          <path d="M146 230 V 320" />
-          <path d="M238 230 V 320" />
-          <path d="M330 230 V 320" />
-          <path d="M410 230 V 320" />
-        </g>
-      </g>
-
-      <ellipse cx="250" cy="512" rx="152" ry="24" fill="url(#ombre)" />
-
-      <g class="dog">
-        <!-- Pattes -->
-        <g
-          fill="none"
-          stroke="#343945"
-          stroke-width="11"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M178 398 L166 454 L171 500" />
-          <path d="M212 398 L224 454 L220 500" />
-          <path d="M302 398 L314 454 L310 500" />
-          <path d="M336 398 L350 452 L346 500" />
-        </g>
-        <g fill="#4d5464">
-          <circle cx="166" cy="454" r="6.5" />
-          <circle cx="224" cy="454" r="6.5" />
-          <circle cx="314" cy="454" r="6.5" />
-          <circle cx="350" cy="452" r="6.5" />
-        </g>
-        <g fill="#23262f">
-          <rect x="162" y="494" width="17" height="13" rx="5" />
-          <rect x="212" y="494" width="17" height="13" rx="5" />
-          <rect x="302" y="494" width="17" height="13" rx="5" />
-          <rect x="338" y="494" width="17" height="13" rx="5" />
-        </g>
-
-        <!-- Corps -->
-        <rect
-          x="140"
-          y="338"
-          width="222"
-          height="72"
-          rx="33"
-          fill="url(#corps)"
-          stroke="#20242c"
-          stroke-width="2"
+    {#if camera}
+      {#if cameraFailed}
+        <div class="scene__absent">
+          <Icon name="camera" size={30} />
+          <p>La caméra n’est pas disponible pour le moment.</p>
+        </div>
+      {:else}
+        <!-- Le flux vient du service, qui relaie les images du robot. -->
+        <img
+          class="scene__camera"
+          src={cameraUrl}
+          alt="Vue de la caméra du robot"
+          onerror={() => (cameraFailed = true)}
         />
-        <rect x="164" y="352" width="176" height="9" rx="4.5" fill="#767f92" opacity="0.5" />
-        <path
-          d="M168 392 H 336"
-          stroke="#5fd0ff"
-          stroke-width="4"
-          stroke-linecap="round"
-          opacity="0.9"
-        />
-        <rect x="226" y="362" width="50" height="17" rx="8.5" fill="#2f74b8" opacity="0.9" />
-        <circle cx="251" cy="370.5" r="3.8" fill="#8fe4ff" />
+      {/if}
+    {/if}
 
-        <!-- Tête -->
-        <rect
-          x="104"
-          y="344"
-          width="98"
-          height="62"
-          rx="25"
-          fill="url(#corps)"
-          stroke="#20242c"
-          stroke-width="2"
-        />
-        <rect x="88" y="370" width="42" height="32" rx="15" fill="#2f343e" />
-        <rect x="100" y="382" width="17" height="7" rx="3.5" fill="#14171d" />
-        <rect
-          x="128"
-          y="322"
-          width="25"
-          height="27"
-          rx="10.5"
-          fill="#2f343e"
-          transform="rotate(-10 140 335)"
-        />
-        <rect
-          x="170"
-          y="322"
-          width="25"
-          height="27"
-          rx="10.5"
-          fill="#2f343e"
-          transform="rotate(12 182 335)"
-        />
-        <circle cx="129" cy="362" r="7.5" fill="#7ce7ff" />
-        <circle cx="129" cy="362" r="2.8" fill="#eaffff" />
-        <circle cx="196" cy="360" r="3.6" fill="#5fd0ff" opacity="0.8" />
-      </g>
-    </svg>
-
-    <div class="scene__glow" aria-hidden="true"></div>
+    {#if lidar && cases.length === 0 && !volume}
+      <p class="scene__note">
+        Le capteur n’envoie rien : le robot doit être debout.
+      </p>
+    {/if}
 
     <button
       type="button"
       class="scene__btn scene__btn--left"
-      aria-label="Actualiser l’état du robot"
-      title="Actualiser l’état"
-      onclick={onRefresh}
+      class:scene__btn--on={lidar}
+      aria-label={lidar ? 'Revenir au robot 3D' : 'Voir le capteur lidar'}
+      title={lidar ? 'Robot 3D' : 'Capteur lidar'}
+      aria-pressed={lidar}
+      onclick={toggleLidar}
     >
-      <Icon name="refresh" size={18} />
+      <Icon name="radar" size={18} />
     </button>
 
     <button
       type="button"
       class="scene__btn scene__btn--right"
-      aria-label="Afficher la scène en plein écran"
-      title="Plein écran"
-      onclick={toggleFullscreen}
+      class:scene__btn--on={camera}
+      aria-label={camera ? 'Revenir au robot 3D' : 'Voir la caméra du robot'}
+      title={camera ? 'Robot 3D' : 'Caméra du robot'}
+      aria-pressed={camera}
+      onclick={toggleCamera}
     >
-      <Icon name="expand" size={18} />
+      <Icon name="camera" size={18} />
     </button>
 
     <span class="scene__badge" class:scene__badge--on={status.connected}>
       <span class="scene__dot" aria-hidden="true"></span>
-      {status.mode === 'real' ? 'Robot réel' : 'Simulation'}
+      {camera
+        ? 'Caméra du robot'
+        : lidar
+          ? 'Capteur lidar'
+          : status.mode === 'real'
+            ? 'Robot réel'
+            : 'Simulation'}
     </span>
   </div>
 
@@ -285,7 +232,7 @@
     min-height: 260px;
     border-radius: 16px;
     overflow: hidden;
-    background: #6cae55;
+    background: #0d1016;
     box-shadow: inset 0 0 0 1px rgb(0 0 0 / 20%);
   }
 
@@ -293,24 +240,66 @@
     border-radius: 0;
   }
 
-  .scene__art {
+  /* La scène lidar reste montée : le modèle n'est chargé qu'une fois, et
+     les cubes apparaissent quand le bouton lidar est actif. */
+  .scene__robot {
+    position: absolute;
+    inset: 0;
+  }
+
+  .scene__camera {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
     display: block;
     width: 100%;
     height: 100%;
+    object-fit: cover;
+    background: #10131a;
   }
 
-  .scene__glow {
+  .scene__absent {
     position: absolute;
     inset: 0;
-    pointer-events: none;
-    background:
-      linear-gradient(180deg, rgb(255 255 255 / 10%) 0%, transparent 35%),
-      radial-gradient(120% 80% at 50% 120%, rgb(20 60 20 / 35%) 0%, transparent 60%);
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 24px;
+    text-align: center;
+    color: #9aa3b5;
+    background: #1b1f28;
+  }
+
+  .scene__absent p {
+    margin: 0;
+    font-size: 14px;
+    max-width: 24ch;
+  }
+
+  .scene__note {
+    position: absolute;
+    left: 14px;
+    right: 14px;
+    bottom: 56px;
+    z-index: 2;
+    margin: 0;
+    padding: 10px 14px;
+    border-radius: 12px;
+    background: rgb(22 26 33 / 78%);
+    border: 1px solid rgb(255 255 255 / 12%);
+    color: #e9eef7;
+    font-size: 13px;
+    text-align: center;
+    backdrop-filter: blur(8px);
   }
 
   .scene__btn {
     position: absolute;
     top: 14px;
+    z-index: 3;
     display: grid;
     place-items: center;
     width: 42px;
@@ -344,10 +333,18 @@
     right: 14px;
   }
 
+  /* Bouton actif : la caméra ou le lidar est à l'écran. */
+  .scene__btn--on {
+    background: rgb(63 191 114 / 80%);
+    border-color: rgb(143 228 168 / 60%);
+    color: #06210f;
+  }
+
   .scene__badge {
     position: absolute;
     left: 14px;
     bottom: 14px;
+    z-index: 3;
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -468,23 +465,7 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .dog {
-    transform-origin: 50% 100%;
-    animation: idle 3.6s ease-in-out infinite;
-  }
-
-  @keyframes idle {
-    0%,
-    100% {
-      transform: translateY(0);
-    }
-    50% {
-      transform: translateY(-3px);
-    }
-  }
-
   @media (prefers-reduced-motion: reduce) {
-    .dog,
     .robot__dot--on {
       animation: none;
     }

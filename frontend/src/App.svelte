@@ -8,7 +8,7 @@
    *  3. la vue du robot      (RobotStage), à droite, sur toute la hauteur.
    *
    * L'interface n'accède jamais au robot : tout passe par `app` (lib/stores),
-   * qui parle au service. Les six blocs sont traduits en `Program` par
+   * qui parle au service. Les douze blocs sont traduits en `Program` par
    * `lib/play/blocks` — la même structure que le service connaît déjà.
    */
   import { onMount, untrack } from 'svelte';
@@ -47,6 +47,20 @@
   /** Index du bloc en cours d'exécution (null hors exécution). */
   const runningIndex = $derived(
     app.steps.find((step) => step.state === 'running')?.index ?? null,
+  );
+
+  /** Le bloc en cours est-il un déplacement ? Alors le robot marche. */
+  const runningKind = $derived(
+    runningIndex === null ? null : (blocks[runningIndex]?.kind ?? null),
+  );
+
+  const walking = $derived(
+    app.autonome ||
+      (app.execution === 'running' &&
+        (runningKind === 'forward' ||
+          runningKind === 'backward' ||
+          runningKind === 'turn_left' ||
+          runningKind === 'turn_right')),
   );
 
   $effect(() => {
@@ -168,10 +182,12 @@
     status={app.status}
     busy={app.isBusy}
     blockCount={blocks.length}
+    autonome={app.autonome}
     onStart={start}
     onStop={stop}
     onSave={save}
     onOpenRobot={() => (showRobot = true)}
+    onToggleAutonome={() => void app.toggleAutonome()}
   />
 
   <main class="app__main">
@@ -202,7 +218,7 @@
     <div class="app__robot">
       <RobotStage
         status={app.status}
-        onRefresh={() => void app.refreshStatus()}
+        {walking}
         onOpenRobot={() => (showRobot = true)}
       />
     </div>

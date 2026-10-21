@@ -1,9 +1,10 @@
 /**
- * « Go2 Play » — les sept blocs offerts à l'enfant.
+ * « Go2 Play » — les douze blocs offerts à l'enfant.
  *
  * Volontairement réduit : quatre déplacements (avancer, reculer, tourner à
- * gauche, tourner à droite) et trois postures (s'asseoir, se mettre debout, se
- * stabiliser). Aucune variable, aucune expression, aucun capteur.
+ * gauche, tourner à droite), quatre postures (s'asseoir, se mettre debout, se
+ * stabiliser, se coucher) et quatre gestes (faire un cœur, faire un saut,
+ * saluer, s'étirer). Aucune variable, aucune expression, aucun capteur.
  *
  * ## Durées et angles, pas de centimètres
  *
@@ -29,12 +30,17 @@ export type PlayBlockKind =
   | 'turn_right'
   | 'sit'
   | 'stand'
-  | 'balance';
+  | 'balance'
+  | 'lie_down'
+  | 'heart'
+  | 'jump'
+  | 'salute'
+  | 'stretch';
 
 export type PlayCategory = 'movement' | 'actions';
 
 /** Tonalité pastel du bloc, alignée sur la charte graphique. */
-export type BlockTone = 'blue' | 'violet' | 'peach' | 'mint';
+export type BlockTone = 'blue' | 'violet' | 'peach' | 'mint' | 'rose' | 'sky' | 'sun';
 
 /** Champ que l'enfant peut régler dans le bloc. */
 export type EditableField = 'seconds' | 'degrees';
@@ -134,6 +140,46 @@ export const BLOCKS: readonly BlockSpec[] = [
     tone: 'mint',
     icon: 'balance',
     hint: 'Le robot se stabilise sur ses quatre pattes',
+  },
+  {
+    kind: 'lie_down',
+    label: 'Se coucher',
+    category: 'actions',
+    tone: 'sky',
+    icon: 'moon',
+    hint: 'Le robot s’allonge par terre',
+  },
+  {
+    kind: 'heart',
+    label: 'Faire un cœur',
+    category: 'actions',
+    tone: 'rose',
+    icon: 'heart',
+    hint: 'Le robot fait un cœur avec ses pattes',
+  },
+  {
+    kind: 'jump',
+    label: 'Faire un saut',
+    category: 'actions',
+    tone: 'sun',
+    icon: 'arrow-up',
+    hint: 'Le robot saute',
+  },
+  {
+    kind: 'salute',
+    label: 'Saluer',
+    category: 'actions',
+    tone: 'sky',
+    icon: 'wave',
+    hint: 'Le robot salue',
+  },
+  {
+    kind: 'stretch',
+    label: 'S’étirer',
+    category: 'actions',
+    tone: 'mint',
+    icon: 'stretch',
+    hint: 'Le robot s’étire',
   },
 ];
 
@@ -247,6 +293,16 @@ export function toProgram(blocks: readonly PlayBlock[]): Program {
         return { kind: 'posture', posture: 'stand', line };
       case 'balance':
         return { kind: 'posture', posture: 'balance', line };
+      case 'lie_down':
+        return { kind: 'posture', posture: 'lie_down', line };
+      case 'heart':
+        return { kind: 'gesture', gesture: 'heart', line };
+      case 'jump':
+        return { kind: 'gesture', gesture: 'jump', line };
+      case 'salute':
+        return { kind: 'gesture', gesture: 'salute', line };
+      case 'stretch':
+        return { kind: 'gesture', gesture: 'stretch', line };
     }
   });
 

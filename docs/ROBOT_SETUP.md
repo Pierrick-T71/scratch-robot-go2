@@ -52,6 +52,7 @@ client.Init()
 | `StopMove()` | C++ et Python | ✅ arrêt |
 | `StandUp()` | C++ et Python | ✅ se lever |
 | `StandDown()` | C++ et Python | ✅ s'asseoir (repli) |
+| `Hello()`, `Stretch()` | Python | ✅ saluer, s'étirer |
 | `Damp()` | C++ et Python | ✅ arrêt de sécurité (à qualifier) |
 | `BalanceStand()`, `RecoveryStand()` | C++ et Python | ✅ mais inutilisés ici |
 | `HandStand`, `LeftFlip`, `BackFlip`, `FreeWalk`, `FreeBound`, `FreeAvoid`, `WalkUpright`, `CrossStep`, `FreeJump` | Python | ❌ **écartés** : acrobaties dangereuses |
@@ -108,6 +109,67 @@ Règles retenues dans l'adaptateur (`adapters/webrtc.py`) :
 - `_do_move()` : un déplacement demandé alors que le robot est assis commence
   par un `StandUp` explicite.
 
+### Durée réelle et angle réel (corrigé le 21/10/2026)
+
+Trois causes distinctes faisaient qu'« 1 seconde » durait 5,7 s et que 90°
+demandés donnaient 139° :
+
+1. **Le SDK journalisait chaque message sur le logger racine**, au niveau
+   INFO : 474 Mo en 2 h. L'écriture synchrone saturait la boucle asyncio, et
+   l'état lu par le service avait **4,12 s de retard** (médiane). Le point
+   d'entrée coupe désormais ce flot (`_couper_le_flot_du_sdk()` dans
+   `__main__.main()`), tout en gardant `go2_service` à INFO.
+2. **Le test « robot prêt » comparait un entier à un ensemble.** Dans
+   `_do_move`, `self._code_etat != self.ETAT_PRET` était toujours vrai : chaque
+   déplacement attendait donc la stabilisation de la hauteur, jusqu'à 6 s,
+   avant d'envoyer sa première consigne. Le test correct est
+   `code not in ETAT_PRET`.
+3. **La boucle comptait ses tours au lieu de lire l'horloge.** `ecoule += 0.05`
+   dérive dès qu'un `await` dure plus de 50 ms. Elle utilise maintenant
+   `time.monotonic()`.
+
+Sémantique retenue, différente pour les deux mouvements :
+
+| Mouvement | Cible | Commande |
+|---|---|---|
+| Avancer / reculer / côté | **durée** demandée | `Move(vx, vy, 0)` tenu exactement `duration_s` à l'horloge murale, puis `StopMove` |
+| Tourner | **angle** demandé | servo proportionnel sur le cap mesuré (`imu.rpy[2]` déroulé), arrêt dans la bande morte |
+
+Coefficients du servo de cap (`adapters/motion.py`) :
+
+- bande morte : **1°** — sous cet écart, on arrête ;
+- gain : **4 /s** — vitesse = 4 × écart en radians, bornée à 0,5 rad/s ;
+- plancher : **0,10 rad/s** (5,7°/s) — le servo ne cale pas à quelques degrés ;
+- délai de sécurité : durée nominale à vitesse maximale × 2,5 + 1 s, plus 2 s
+  de freinage.
+
+La rotation est **refusée** si le cap n'est pas mesuré (ou plus mesuré depuis
+plus de 2 s) : tourner à l'aveugle est exactement ce qui produisait 139°.
+
+### La clé AES-128 du robot
+
+Le firmware récent (Go2 ≥ 1.1.15) refuse d'ouvrir le canal sans la clé
+AES-128 de la machine. Elle vit **hors du dépôt**, dans
+`/root/go2/robot.env` (droits 600) :
+
+```
+GO2_ROBOT_AES_KEY=…
+```
+
+Elle est lue par le service dans deux endroits, dans cet ordre :
+
+1. la variable d'environnement `GO2_ROBOT_AES_KEY` ;
+2. le fichier `GO2_ROBOT_ENV_FILE` (par défaut `/root/go2/robot.env`).
+
+Ce doublet n'est pas un caprice : la machine a été redémarrée, et le
+service relancé par une **autre copie** du script de démarrage, qui ne
+chargeait pas le fichier. Le branchement était alors refusé avec « la clé
+AES-128 du robot est absente ». Comme le service sait désormais lire le
+fichier lui-même, plus aucun script de démarrage ne peut lui retirer la clé.
+
+Les deux copies du script (`/usr/local/bin/demarrer.sh` et
+`/root/demarrer.sh`) chargent le fichier, et le déploiement les met à jour.
+
 ### Le code d'état du robot : 100, 1002, 1006, 1007
 
 Le SDK publie un `error_code` dans l'état du robot. Relevé sur la machine le
@@ -151,6 +213,188 @@ Aucune commande ensuite : le robot reste assis. La hauteur est repassée de
 Et le même programme, cette fois avec « avancer » : le robot se relève, la
 consigne nulle part, le code d'état repasse à `100`, et le robot parcourt
 **58 cm** pour 2 s demandées à 0,3 m/s (60 cm attendues).
+
+### La caméra du robot
+
+Le SDK `unitree_webrtc_connect` expose un canal vidéo :
+
+- `conn.video.switchVideoChannel(True)` demande au robot d'envoyer sa
+  caméra ;
+- `conn.video.add_track_callback(...)` reçoit la piste vidéo.
+
+Mesuré le 20/10/2026 : le robot envoie du **1280x720**, en H.264. Le service
+relaie ces images vers le navigateur au format **MJPEG**
+(`/api/robot/camera`) ; la clé AES ne quitte jamais la machine qui parle au
+robot. En l'absence de caméra (simulation, robot non branché), la route
+répond `503` et l'interface montre la vue 3D du robot.
+
+### Le capteur lidar (la vue « voxels »)
+
+Le lidar du Go2 publie sa carte sur `rt/utlidar/voxel_map_compressed`. Le
+SDK la décode en un **maillage** : `positions` sont les sommets, exprimés
+comme des **indices dans la grille** (128×128×38, à 5 cm), et `origin` /
+`resolution` placent la grille dans le repère du robot.
+
+Deux détails mesurés le 20/10/2026 :
+
+- le lidar ne publie sa carte que lorsque le robot est **debout** ;
+- la commande d'allumage est `rt/utlidar/switch` ; sans elle, seuls l'état
+  du capteur (`rt/utlidar/lidar_state`) arrive, sans les points.
+
+Le service renvoie le volume en **base64** (les cases occupées sont trois
+octets chacune) sur `/api/robot/lidar`, avec la **pose du robot** : sa place
+dans la carte et son **cap**.
+
+Cette pose est décisive : la carte est exprimée dans le repère « odom » (celui
+du monde), **pas** dans celui du robot. Le robot n'est donc pas forcément au
+centre de la grille, et il ne regarde pas forcément dans l'axe x. C'est
+`rt/utlidar/robot_pose` qui donne sa place et son cap — sans elle, le chien
+serait posé au milieu de la carte en regardant n'importe où.
+
+L'interface en fait la vue **3D** de l'application du constructeur : un volume
+de petits cubes (une case = 5 cm), colorés selon la hauteur (vert au sol,
+jaune et orange plus haut, violet en haut), la grille du sol, et le modèle
+3D du chien posé à la **place réelle** du robot et tourné vers son **cap
+réel** — le lidar est bien devant lui, et ce qui est devant dans la carte
+est devant lui.
+
+La même scène sert de vue par défaut, **sans les cubes** : le robot au
+milieu de la grille sombre. Le bouton lidar ajoute la carte ; dans cette
+vue on peut tourner autour du robot, alors que la vue par défaut reste
+passive.
+
+Le modèle vient de `public/model/go2.glb` (modèle public de Sketchfab,
+CC-BY-4.0, fourni dans `robot-toutou`). La hiérarchie des pattes a été
+conservée : 94 nœuds, 20 maillages, 7,3 Mo après simplification
+(`gltfpack -kn -km -noq -si 0.3 -se 0.02`). Il ne contient ni squelette ni
+clip d'animation : le rig est construit au chargement (groupes
+hanche → genou → cheville), et la marche est une animation procédurale
+lancée quand un bloc de déplacement tourne.
+
+⚠️ Trois pièges de three.js, appris à l'usage :
+- la sphère englobante d'un maillage instancié est calculée **une fois** : si
+  elle l'est quand il n'y a encore aucun cube, le maillage reste hors champ ;
+- les couleurs sont **par instance** (le volume est coloré selon la hauteur),
+  pas par sommet : demander des couleurs par sommet rend les cubes noirs ;
+- la géométrie doit être créée **à la taille d'une case** : la redimensionner
+  plus tard ne prend pas.
+
+Et la caméra n'est posée **qu'une fois** : la replacer à chaque nouvelle carte
+renverrait l'utilisateur à sa position de départ à chaque balayage.
+
+Le rendu est allégé : 12 000 cubes au maximum, et un pixel ratio plafonné à
+1,5 — au-delà, un rendu logiciel ne suit plus.
+
+### La marche autonome
+
+Le bouton « étoiles » (hors des blocs, c'est un **mode**, pas une
+instruction) envoie la commande `FreeWalk` (`SPORT_CMD["FreeWalk"] = 1045`),
+après avoir allumé l'évitement d'obstacles
+(`rt/api/obstacles_avoid/request`, `SWITCH_SET`).
+
+⚠️ Le robot **refuse** cette commande dans l'espace de commandes normal :
+il répond `3203` (« le robot n'a pas accepté la marche autonome », dit
+l'interface). La marche libre de l'application passe par l'espace **MCF**
+(`SPORT_CMD_MCF`), qui exige au préalable la bascule de mode par
+`rt/api/motion_switcher/request` — une handshake que le SDK ne fait pas
+lui-même. C'est la prochaine étape.
+
+### Les gestes du corps
+
+Quatre gestes, tous des commandes officielles du SDK, sont exposés à l'enfant :
+
+| Bloc | Commande | Effet |
+|---|---|---|
+| « Saluer » | `Hello` (1016) | le robot salue |
+| « S’étirer » | `Stretch` (1017) | le robot s'étire |
+| « Faire un cœur » | `FingerHeart` (1036) | le robot fait un cœur avec ses pattes avant |
+| « Faire un saut » | `FrontPounce` (1032) | le robot s'accroupit et pousse vers l'avant |
+
+Ces gestes sont distincts des postures : le service refuse tout geste qu'il ne
+sait pas exécuter. `CrossStep` (« pas croisé ») reste volontairement absent :
+ce n'est pas une action unique mais un mode de marche, et il figure dans les
+acrobaties écartées par `docs/SAFETY.md`.
+
+`Hello` et `Stretch` sont exposés par le SDK et validés par les tests et la
+simulation ; ils n'ont pas encore été exécutés sur le robot réel dans ce
+projet.
+
+### S'allonger et donner un coup de patte
+
+Deux autres actions, elles aussi officielles du SDK :
+
+| Bloc | Commande | Effet mesuré |
+|---|---|---|
+| « Se coucher » | `Damp` (1001) | le corps passe de 0,32 m à **0,05 m** : allongé par terre, et il y reste |
+| « Donner un coup de patte » | `FrontPounce` (1032) | le robot s'accroupit (0,18 m) et pousse très fort, vers l'avant |
+
+### Le robot ne saute pas (pour l'instant)
+
+Les cinq commandes de saut du SDK ont été essayées et mesurées
+(`FrontJump`, `FrontPounce`, `Bound`, `FreeJump`, `FreeBound`).
+
+Le signal qui tranche est **l'effort dans les pieds** (`foot_force` de l'état
+bas) : zéro signifie que le pied ne touche plus le sol.
+
+| Commande | Effort aux pieds | Hauteur estimée | Verdict |
+|---|---|---|---|
+| `FrontJump` | 274 (constant, comme debout) | 0,114 → 0,321 m | accroupi et pousse |
+| `FrontPounce` | 274 (constant) | 0,180 → 0,522 m | accroupi et pousse plus fort |
+| `Bound` | 274 (constant) | 0,301 → 0,308 m | refusée / sans effet |
+| `FreeJump`, `FreeBound` | 274 (constant) | 0,309 → 0,311 m | sans effet |
+
+**Les pieds ne déchargent jamais** : le robot garde toujours un pied au sol.
+Le pic d'accélération verticale (31 m/s², soit 3 g) montre une poussée
+violente, mais le robot ne décolle pas.
+
+⚠️ Piège à connaître : `body_height` est une **consigne** envoyée au
+contrôleur, pas une mesure ; l'odométrie (`position[2]`) est une
+*estimation* qui s'emballe pendant un mouvement violent. Seuls les efforts
+dans les pieds disent si le robot est en l'air.
+
+### La commande qui manque peut-être : parler en vitesse
+
+L'application officielle envoie une consigne de vitesse **en continu**, même
+joystick centré. Le robot reste alors dans l'état « en mouvement » (code
+`100`), et c'est dans cet état qu'il exécute les commandes de corps.
+
+Le service fait maintenant de même pendant un geste (`_flux_vitesse`) :
+une consigne de vitesse **nulle**, rafraîchie 5 fois par seconde. Le robot ne
+bouge pas, il reste à l'écoute.
+
+C'est très probablement là que se trouve la différence entre « le robot
+saute » et « le robot donne un coup de patte » : cela dépendait de l'état
+dans lequel le robot se trouvait quand la commande arrivait.
+
+### Les codes d'état du robot
+
+Relevés sur la machine, dans l'état `rt/lf/sportmodestate` :
+
+| Code | Signification |
+|---|---|
+| `1013` | debout et immobile — l'état normal au repos |
+| `100` | en mouvement (le client envoie une vitesse) |
+| `1002` | transition de posture (il se relève) |
+| `1006` | transition vers la position assise |
+| `1007` | assis |
+| `1001` | allongé par terre (après un `Damp`) |
+| `1009` | après un coup de patte |
+
+**C'est cet état, et non la hauteur, qui fait foi.** L'odométrie
+(`position[2]`) est une *estimation* : pendant un mouvement violent elle
+s'emballe (0,52 m mesurés pendant un bond, pour un robot de 0,32 m). Une
+fois cette hauteur aberrante retenue comme référence, le service croyait que
+le robot ne pouvait plus être debout : il redemandait `StandUp` sans fin, et
+le saut partait dans le chaos. D'où la règle : la référence de hauteur n'est
+mise à jour que sur les messages où le robot dit qu'il est debout.
+
+Le service attend `1013` **ou** `100` avant d'agir. Attendre `100` seul
+faisait perdre 12 secondes à chaque programme, parce que le robot immobile
+publie `1013`.
+
+Une consigne de posture est **vérifiée** après coup, sur l'état publié par le
+robot : s'il ne tient pas la posture demandée, la commande est renvoyée une
+fois, et l'échec est annoncé à l'enfant plutôt que silencieux.
 
 ---
 
@@ -354,8 +598,10 @@ sub.InitChannel(on_state, 10)
 - elle **dérive** ;
 - elle peut être bruitée à l'arrêt.
 
-Consigner la dérive observée sur 50 cm et sur 90°. C'est cette mesure qui
-déterminera si les tolérances (5 cm / 8°) sont réalistes.
+Consigner la dérive observée sur 50 cm et sur 90°. La distance n'est plus un
+critère d'arrêt (une translation dure la durée demandée) ; en revanche, c'est
+cette mesure qui dira si la bande morte de **1°** du servo de cap est tenable
+sur le robot réel.
 
 Si l'état n'est pas exploitable, **tout déplacement se soldera par « temps
 écoulé »**. C'est acceptable et honnête, mais il faut le savoir et le dire.

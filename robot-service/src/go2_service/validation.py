@@ -67,6 +67,21 @@ class CommandKind(str, Enum):
     SIT_DOWN = "sit_down"
     LIE_DOWN = "lie_down"
     BALANCE = "balance"
+    #: Geste du corps : le robot fait un coeur avec ses pattes avant.
+    #: Commande officielle du SDK (`FingerHeart`), sans acrobatie.
+    FINGER_HEART = "finger_heart"
+    #: Le robot salue avec une patte avant (`Hello` du SDK).
+    SALUTE = "salute"
+    #: Le robot s'étire (`Stretch` du SDK).
+    STRETCH = "stretch"
+    #: Le robot saute (`FrontPounce` du SDK).
+    #:
+    #: La commande SDK `FrontJump` a été mesurée : elle fait s'accroupir et
+    #: pousser, sans décoller. `FrontPounce` donne la vraie impulsion. Et le
+    #: geste n'est exécuté que si l'on PARLE au robot en vitesse pendant ce
+    #: temps, comme le fait l'application mobile — sinon il se rabat sur un
+    #: coup de patte.
+    FRONT_JUMP = "front_jump"
     STOP = "stop"
 
 
@@ -82,6 +97,10 @@ _CAPABILITY_BY_KIND: dict[CommandKind, Capability] = {
     CommandKind.SIT_DOWN: Capability.POSTURE,
     CommandKind.LIE_DOWN: Capability.POSTURE,
     CommandKind.BALANCE: Capability.POSTURE,
+    CommandKind.FINGER_HEART: Capability.POSTURE,
+    CommandKind.SALUTE: Capability.POSTURE,
+    CommandKind.STRETCH: Capability.POSTURE,
+    CommandKind.FRONT_JUMP: Capability.POSTURE,
     CommandKind.STOP: Capability.STOP,
 }
 
@@ -163,6 +182,14 @@ class RobotCommand:
                 return "Se coucher (simulation seulement)"
             case CommandKind.BALANCE:
                 return "Se stabiliser debout"
+            case CommandKind.FINGER_HEART:
+                return "Faire un cœur"
+            case CommandKind.SALUTE:
+                return "Saluer"
+            case CommandKind.STRETCH:
+                return "S’étirer"
+            case CommandKind.FRONT_JUMP:
+                return "Faire un saut"
             case CommandKind.STOP:
                 return "Arrêter le déplacement"
         return self.kind.value

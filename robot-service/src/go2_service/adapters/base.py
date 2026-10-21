@@ -142,6 +142,36 @@ class RobotAdapter(Protocol):
         """Arrêt immédiat. Doit être appelé même si une motion est en cours."""
         ...
 
+    async def camera_frame(self) -> bytes | None:
+        """Dernière image de la caméra du robot, encodée en JPEG.
+
+        `None` quand il n'y a pas de caméra (simulation) ou qu'elle n'a
+        encore rien envoyé. Jamais une image inventée.
+        """
+        ...
+
+    async def lidar_points(self) -> list[list[float]] | None:
+        """Derniers points du lidar du robot, en mètres.
+
+        `None` quand le lidar n'envoie rien. Jamais une carte inventée.
+        """
+        ...
+
+    async def lidar_volume(self) -> dict[str, Any] | None:
+        """Volume de voxels du lidar, pour une vue en 3D.
+
+        `None` quand le lidar n'envoie rien. Jamais une carte inventée.
+        """
+        ...
+
+    async def set_autonome(self, actif: bool) -> bool:
+        """Active ou coupe la marche autonome du robot.
+
+        Renvoie `False` quand le mode n'est pas disponible (simulation) ou
+        que le robot refuse.
+        """
+        ...
+
     async def prepare_run(self) -> None:
         """Préparation avant le PREMIER ordre d'un programme.
 

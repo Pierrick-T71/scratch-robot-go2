@@ -46,8 +46,46 @@ export interface RobotStatus {
 /** Postures que le service sait demander au robot. */
 export type RobotPosture = 'stand' | 'sit' | 'balance' | 'lie_down';
 
-export interface StartRequest {
+/** Mode autonome : le robot se débrouille seul, en évitant les obstacles. */
+export interface AutonomeResult {
+  autonome: boolean;
+  actif: boolean;
+  message: string;
+}
+
+/** Cases occupées de la carte du lidar, vues du dessus, en mètres. */
+export interface LidarResult {
+  points: [number, number][];
+  /** Volume de voxels : les sommets sont les indices dans la grille. */
+  volume: LidarVolume | null;
+  actif: boolean;
+}
+
+/**
+ * Le volume de voxels du lidar.
+ *
+ * `positions` est la liste des sommets en base64 : trois octets par sommet
+ * (les indices x, y, z dans la grille). `origin` et `resolution` donnent la
+ * position réelle de la grille dans le repère du robot.
+ */
+export interface LidarVolume {
+  origin: [number, number, number];
+  resolution: number;
+  /** Taille de la grille, en cases. */
+  largeur: [number, number, number];
   /**
+   * Le robot dans la carte : place et cap.
+   *
+   * La carte est exprimée dans le repère « odom » (celui du monde) : le
+   * robot n'est pas forcément au centre de la grille, et il ne regarde pas
+   * forcément dans l'axe x. C'est cette pose qui rend la vue réaliste.
+   */
+  robot: { x: number; y: number; cap: number };
+  positions: string;
+  sommets: number;
+}
+
+export interface StartRequest {  /**
    * Programme STRUCTURE, pas une liste de commandes.
    *
    * Les conditions et les variables ne peuvent pas être résolues à la
@@ -167,6 +205,21 @@ export const api = {
 
   stop: (): Promise<{ stopping: boolean }> =>
     request('/api/execution/stop', { method: 'POST' }),
+
+  /**
+   * Mode autonome : le robot marche tout seul, en évitant les obstacles.
+   *
+   * Ce n'est pas une instruction de programme : c'est un mode, coupé par le
+   * bouton « étoiles » et par l'arrêt d'urgence.
+   */
+  setAutonome: (enabled: boolean): Promise<AutonomeResult> =>
+    request<AutonomeResult>('/api/robot/autonome', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    }),
+
+  /** Carte du lidar, vue du dessus, en mètres autour du robot. */
+  getLidar: (): Promise<LidarResult> => request<LidarResult>('/api/robot/lidar'),
 
   /**
  * Battement de sécurité.

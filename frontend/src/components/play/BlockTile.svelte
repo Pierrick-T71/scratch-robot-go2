@@ -196,6 +196,27 @@
     --tone-icon: #2f8f5b;
   }
 
+  .blk--rose {
+    --tone: #f6b8cd;
+    --tone-hi: #fbd3e0;
+    --tone-ink: #4a1430;
+    --tone-icon: #c94b7c;
+  }
+
+  .blk--sky {
+    --tone: #c3d6ea;
+    --tone-hi: #dbe8f5;
+    --tone-ink: #1d2b3c;
+    --tone-icon: #4a6b91;
+  }
+
+  .blk--sun {
+    --tone: #f7d79c;
+    --tone-hi: #fce7bb;
+    --tone-ink: #4a3410;
+    --tone-icon: #c78d1c;
+  }
+
   .blk__icon {
     display: grid;
     place-items: center;

@@ -158,10 +158,31 @@ class TestPostureMesuree:
         assert adaptateur._est_assis() is True
 
     def test_sans_mesure_ni_ordre_on_ne_presume_pas_que_ce_soit_debout(self):
+        # Ni l'etat du robot, ni la mesure, ni le dernier ordre : on ne
+        # suppose pas que le robot soit debout. Le service le relèvera.
         adaptateur, _ = build_adapter()
         adaptateur._position = None  # noqa: SLF001
         adaptateur._posture = None  # noqa: SLF001
-        assert adaptateur._est_assis() is True
+        assert adaptateur._est_debout() is False
+        assert adaptateur._est_assis() is False
+
+    def test_un_robot_alleonge_est_detecte(self):
+        adaptateur, _ = build_adapter()
+        adaptateur._code_etat = 1001  # noqa: SLF001
+        adaptateur._position = (0.0, 0.0, 0.053)  # noqa: SLF001
+        adaptateur._hauteur_max = 0.327  # noqa: SLF001
+        assert adaptateur._est_alleonge() is True
+        assert adaptateur._est_assis() is False
+
+    def test_un_bond_ne_pollue_pas_la_hauteur_de_reference(self):
+        # Pendant un mouvement violent, l'odometrie s'emballe. Cette
+        # hauteur-la ne doit PAS devenir la reference « debout » : sinon
+        # le service Croira que le robot ne peut plus etre debout.
+        adaptateur, _ = build_adapter()
+        adaptateur._code_etat = 100  # en mouvement
+        adaptateur._position = (0.0, 0.0, 0.52)  # noqa: SLF001
+        adaptateur._hauteur_max = 0.327  # noqa: SLF001
+        assert adaptateur._est_debout() is True
 
 
 class TestEtatPret:

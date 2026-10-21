@@ -33,6 +33,7 @@ from fastapi import HTTPException
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from .adapters.base import RobotAdapter, RobotState
@@ -66,6 +67,42 @@ from .validation import (
 log = logging.getLogger(__name__)
 
 
+#: Nom de notre propre logger de paquet.
+#:
+#: Les modules du service utilisent `logging.getLogger(__name__)`, donc
+#: `go2_service` puis `go2_service.adapters.webrtc`, etc.
+NOTRE_LOGGER = "go2_service"
+
+
+def _couper_le_flot_du_sdk() -> None:
+    """Empêche le SDK de noyer le journal et de saturer la boucle asyncio.
+
+    ⚠️ Le SDK Unitree journalise CHAQUE message reçu ou envoyé, au
+    niveau INFO, sur le logger RACINE (`logging.info(...)`).
+
+    Mesuré sur la machine le 20/10/2026 : **474 Mo de journal en deux
+    heures**, soit plusieurs centaines de lignes par seconde. Ce flot
+    sature la boucle asyncio, et tout arrive avec retard :
+
+    - l'état lu par le service avait **4,1 s de retard** (médiane) ;
+    - la consigne d'arrêt partait avec le même retard.
+
+    Conséquence directe et mesurée : une rotation de 90° demandés
+    aboutissait à **139°**, et « avancer de 1 s » durait **5,7 s** et
+    parcourait 116 cm au lieu de 30.
+
+    On coupe donc le flot du SDK (logger racine à WARNING) et on relève
+    explicitement le nôtre (un logger de paquet n'hérite plus du niveau
+    de la racine dès qu'on lui en fixe un).
+
+    ⚠️ Appelée par le POINT D'ENTRÉE (`__main__.main`) et non par
+    `create_app` : une application construite dans un test ne doit pas
+    modifier la configuration de journalisation de tout le processus.
+    """
+    logging.getLogger().setLevel(logging.WARNING)
+    logging.getLogger(NOTRE_LOGGER).setLevel(logging.INFO)
+
+
 # --------------------------------------------------------------------------
 # Modèles d'API
 # --------------------------------------------------------------------------
@@ -94,14 +131,46 @@ class StartRequest(BaseModel):
 #: Le firmware récent (Go2 >= 1.1.15) refuse le handshake sans elle.
 ROBOT_AES_KEY_ENV = "GO2_ROBOT_AES_KEY"
 
+#: Fichier local qui porte la clé, hors dépôt.
+#:
+#: Le service peut être démarré par n'importe quel script (un redémarrage de
+#: la machine, un service systemd, une commande à la main). S'il ne trouve
+#: pas la variable d'environnement, il lit ce fichier : la clé ne peut plus
+#: disparaître parce qu'un script de démarrage a été oublié.
+ROBOT_AES_KEY_FILE = os.environ.get(
+    "GO2_ROBOT_ENV_FILE", "/root/go2/robot.env"
+)
+
 
 def _robot_aes_key() -> str | None:
-    """Clé AES-128 propre au robot, lue dans l'environnement du service.
+    """Clé AES-128 propre au robot.
+
+    Lue dans l'environnement du service, et à défaut dans le fichier local
+    qui la porte (`GO2_ROBOT_ENV_FILE`).
 
     Volontairement absente du dépôt : c'est un secret lié à une machine.
     """
     valeur = os.environ.get(ROBOT_AES_KEY_ENV, "").strip()
-    return valeur or None
+    if valeur:
+        return valeur
+
+    try:
+        with open(ROBOT_AES_KEY_FILE, encoding="utf-8") as f:
+            for ligne in f:
+                ligne = ligne.strip()
+                if ligne.startswith(ROBOT_AES_KEY_ENV + "="):
+                    return ligne.split("=", 1)[1].strip() or None
+    except OSError:
+        pass
+    return None
+
+
+class AutonomeRequest(BaseModel):
+    """Activation du mode autonome du robot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
 
 
 class RobotConnectRequest(BaseModel):
@@ -605,6 +674,91 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
         """Revient en simulation et immobilise le robot."""
         state.release_robot_adapter()
         return {"simulation": True}
+
+    @app.post("/api/robot/autonome")
+    async def robot_autonome(payload: AutonomeRequest) -> dict[str, Any]:
+        """Marche autonome du robot (l'« IA » de l'application).
+
+        Le robot se débrouille seul, en évitant les obstacles. C'est un MODE,
+        pas une instruction du programme : il se coupe au bouton, et l'arrêt
+        d'urgence reste prioritaire.
+
+        ⚠️ Le robot peut REFUSER cette commande (code 3203) : la marche libre
+        de l'application passe par l'espace de commandes MCF, qui exige une
+        bascule de mode préalable. On dit alors la vérité à l'écran.
+        """
+        ok = await state.adapter.set_autonome(payload.enabled)
+        return {
+            "autonome": bool(ok and payload.enabled),
+            "actif": payload.enabled,
+            "message": (
+                "Le robot marche tout seul."
+                if ok and payload.enabled
+                else "Le robot n’a pas accepté la marche autonome."
+                if payload.enabled
+                else "Le robot s’arrête de marcher tout seul."
+            ),
+        }
+
+    @app.get("/api/robot/lidar")
+    async def robot_lidar() -> dict[str, Any]:
+        """La carte du lidar du robot.
+
+        `volume` est le volume de voxels, en base64 (les sommets sont les
+        indices dans la grille) : c'est ce que l'application affiche, en 3D.
+        `points` est la même carte vue du dessus, en mètres autour du robot.
+
+        Tout est vide quand le lidar n'envoie rien : on ne dessine jamais
+        une carte inventée.
+        """
+        points = await state.adapter.lidar_points()
+        volume = await state.adapter.lidar_volume()
+        return {
+            "points": points or [],
+            "volume": volume,
+            "actif": bool(points or volume),
+        }
+
+    @app.get("/api/robot/camera")
+    async def robot_camera() -> StreamingResponse:
+        """Flux de la caméra du robot, au format MJPEG.
+
+        Le service reçoit les images du robot et les relaie : la clé AES ne
+        quitte jamais la machine qui parle au robot.
+
+        Réponse `503` quand il n'y a pas de caméra (simulation, robot non
+        branché) : l'interface montre alors son illustration, et le dit.
+        """
+        from fastapi import HTTPException
+
+        async def generateur():
+            derniere = b""
+            while True:
+                image = await state.adapter.camera_frame()
+                if image and image != derniere:
+                    derniere = image
+                    yield (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n"
+                        b"Content-Length: " + str(len(image)).encode() + b"\r\n\r\n"
+                        + image
+                        + b"\r\n"
+                    )
+                await asyncio.sleep(0.1)
+
+        # Une seule vérification avant d'ouvrir le flux : la caméra peut
+        # ne pas être prête, et un flux vide n'apprend rien à l'interface.
+        if await state.adapter.camera_frame() is None:
+            raise HTTPException(
+                status_code=503,
+                detail="La caméra du robot n’est pas disponible.",
+            )
+
+        return StreamingResponse(
+            generateur(),
+            media_type="multipart/x-mixed-replace; boundary=frame",
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.post("/api/execution/stop")
     async def stop() -> dict[str, Any]:

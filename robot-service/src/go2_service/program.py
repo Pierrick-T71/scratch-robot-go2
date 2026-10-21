@@ -45,7 +45,12 @@ CONDITIONS: dict[str, str] = {
 LOW_BATTERY_PERCENT = 30.0
 
 #: Postures exposées, toutes vérifiées dans les exemples officiels lus.
-POSTURES = frozenset({"stand", "sit", "balance"})
+POSTURES = frozenset({"stand", "sit", "balance", "lie_down"})
+
+#: Gestes du corps exposés. Le « coeur », le « saut », « saluer » et
+#: « s'étirer » sont des commandes officielles du SDK (`FingerHeart`,
+#: `FrontPounce`, `Hello`, `Stretch`).
+GESTURES = frozenset({"heart", "jump", "salute", "stretch"})
 
 MOVE_DIRECTIONS = frozenset({"forward", "backward", "left", "right"})
 TURN_DIRECTIONS = frozenset({"left", "right"})
@@ -112,6 +117,19 @@ class PostureStatement:
 
 
 @dataclass(frozen=True)
+class GestureStatement:
+    """Un geste du corps, sans acrobatie.
+
+    Les gestes exposés sont le cœur, le saut, saluer et s'étirer, tous des
+    commandes officielles du SDK. Le service refuse tout geste qu'il ne sait
+    pas exécuter.
+    """
+
+    gesture: str
+    line: int = 0
+
+
+@dataclass(frozen=True)
 class StopMoveStatement:
     line: int = 0
 
@@ -141,6 +159,7 @@ Statement = (
     | TurnStatement
     | WaitStatement
     | PostureStatement
+    | GestureStatement
     | StopMoveStatement
     | StopProgramStatement
     | RepeatStatement
@@ -195,6 +214,11 @@ def parse_statement(raw: Any, depth: int = 0) -> Statement:
         if posture not in POSTURES:
             raise CommandValidationError(f"La posture « {posture} » n’existe pas.")
         return PostureStatement(posture=posture, line=line)
+    if kind == "gesture":
+        gesture = raw.get("gesture")
+        if gesture not in GESTURES:
+            raise CommandValidationError(f"Le geste « {gesture} » n’existe pas.")
+        return GestureStatement(gesture=gesture, line=line)
     if kind == "stop_move":
         return StopMoveStatement(line=line)
     if kind == "stop_program":

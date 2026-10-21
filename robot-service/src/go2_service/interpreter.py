@@ -22,6 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .program import (
+    GestureStatement,
     IfStatement,
     MoveStatement,
     PostureStatement,
@@ -186,7 +187,17 @@ class Interpreter:
                     "stand": CommandKind.STAND_UP,
                     "sit": CommandKind.SIT_DOWN,
                     "balance": CommandKind.BALANCE,
+                    "lie_down": CommandKind.LIE_DOWN,
                 }[posture]
+                return RobotCommand(kind=kind)
+
+            case GestureStatement(gesture, _):
+                kind = {
+                    "heart": CommandKind.FINGER_HEART,
+                    "jump": CommandKind.FRONT_JUMP,
+                    "salute": CommandKind.SALUTE,
+                    "stretch": CommandKind.STRETCH,
+                }[gesture]
                 return RobotCommand(kind=kind)
 
             case StopMoveStatement():

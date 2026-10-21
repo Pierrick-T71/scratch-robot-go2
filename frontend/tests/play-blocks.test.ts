@@ -1,5 +1,5 @@
 /**
- * Les sept blocs de « Go2 Play ».
+ * Les douze blocs de « Go2 Play ».
  *
  * Ce qui est vérifié ici n'est pas cosmétique : c'est le contrat avec le
  * service. Un bloc dont la durée ou l'angle sort de ce que le service accepte
@@ -33,10 +33,15 @@ const KINDS: PlayBlockKind[] = [
   'sit',
   'stand',
   'balance',
+  'lie_down',
+  'heart',
+  'jump',
+  'salute',
+  'stretch',
 ];
 
 describe('catalogue', () => {
-  it('ne contient que les sept blocs autorisés', () => {
+  it('ne contient que les douze blocs autorisés', () => {
     expect(BLOCKS.map((spec) => spec.kind)).toEqual(KINDS);
   });
 
@@ -62,7 +67,16 @@ describe('catalogue', () => {
   });
 
   it('ne propose aucun réglage pour les postures', () => {
-    for (const kind of ['sit', 'stand', 'balance'] as const) {
+    for (const kind of [
+      'sit',
+      'stand',
+      'balance',
+      'lie_down',
+      'heart',
+      'jump',
+      'salute',
+      'stretch',
+    ] as const) {
       expect(specOf(kind).editable).toBeUndefined();
     }
   });
@@ -178,6 +192,41 @@ describe('traduction en programme', () => {
   it('produit un programme vide quand la timeline est vide', () => {
     expect(toProgram([])).toEqual({ statements: [] });
   });
+
+  it('traduit le geste « cœur » en instruction de geste', () => {
+    const program = toProgram([createBlock('heart')]);
+    expect(program.statements[0]).toMatchObject({
+      kind: 'gesture',
+      gesture: 'heart',
+      line: 1,
+    });
+  });
+
+  it('traduit « saluer » et « s’étirer » en instructions de geste', () => {
+    const program = toProgram([createBlock('salute'), createBlock('stretch')]);
+    expect(program.statements[0]).toMatchObject({
+      kind: 'gesture',
+      gesture: 'salute',
+      line: 1,
+    });
+    expect(program.statements[1]).toMatchObject({
+      kind: 'gesture',
+      gesture: 'stretch',
+      line: 2,
+    });
+  });
+
+  it('traduit l’allongement et le saut', () => {
+    const program = toProgram([createBlock('jump'), createBlock('lie_down')]);
+    expect(program.statements[0]).toMatchObject({
+      kind: 'gesture',
+      gesture: 'jump',
+    });
+    expect(program.statements[1]).toMatchObject({
+      kind: 'posture',
+      posture: 'lie_down',
+    });
+  });
 });
 
 describe('description', () => {
@@ -191,5 +240,7 @@ describe('description', () => {
     expect(describeBlock(turn)).toBe('Tourner à droite 180°');
 
     expect(describeBlock(createBlock('sit'))).toBe('S’asseoir');
+    expect(describeBlock(createBlock('salute'))).toBe('Saluer');
+    expect(describeBlock(createBlock('stretch'))).toBe('S’étirer');
   });
 });

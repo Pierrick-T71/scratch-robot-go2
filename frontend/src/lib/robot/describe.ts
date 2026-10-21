@@ -24,6 +24,14 @@ const POSTURE_LABELS: Record<string, string> = {
   stand: 'Se mettre debout',
   sit: 'S’asseoir',
   balance: 'Se stabiliser',
+  lie_down: 'Se coucher',
+};
+
+const GESTURE_LABELS: Record<string, string> = {
+  heart: 'Faire un cœur',
+  jump: 'Faire un saut',
+  salute: 'Saluer',
+  stretch: 'S’étirer',
 };
 
 const CONDITION_LABELS: Record<string, string> = {
@@ -49,6 +57,8 @@ export function describeStatement(statement: Statement): string {
       return `Attendre ${seconds(statement.seconds)}`;
     case 'posture':
       return POSTURE_LABELS[statement.posture] ?? statement.posture;
+    case 'gesture':
+      return GESTURE_LABELS[statement.gesture] ?? statement.gesture;
     case 'stop_move':
       return 'Arrêter le robot';
     case 'stop_program':

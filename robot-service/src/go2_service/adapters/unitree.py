@@ -64,6 +64,7 @@ import asyncio
 import logging
 import math
 import threading
+import time
 from typing import Any
 
 from ..config import Limits
@@ -78,12 +79,11 @@ from .base import (
     StopSignal,
 )
 from .motion import (
-    POSITION_TOLERANCE_CM,
-    YAW_TOLERANCE_DEG,
+    YAW_BANDE_MORTE_DEG,
     assert_speed_within_limits,
     plan_command,
-    shortest_angular_difference_deg,
     travelled_distance_cm,
+    yaw_rate_for_remaining,
 )
 
 log = logging.getLogger(__name__)
@@ -161,6 +161,10 @@ class UnitreeAdapter:
         self._setpoint = (0.0, 0.0, 0.0)
         self._position: tuple[float, float, float] | None = None
         self._yaw: float | None = None
+        #: Cap cumulé (déroulé) et cap brut précédent, pour que la rotation
+        #: puisse être asservie sans sauter au passage de ±π.
+        self._cap_cumule: float | None = None
+        self._yaw_precedent: float | None = None
         self._battery: float | None = None
 
         self._publish_thread: threading.Thread | None = None
@@ -340,7 +344,19 @@ class UnitreeAdapter:
         def _handler(message: Any) -> None:
             self._last_state = message
             self._battery = self._read_battery(message)
-            self._yaw = self._read_yaw(message)
+            yaw = self._read_yaw(message)
+            if yaw is not None:
+                if self._yaw_precedent is not None and self._cap_cumule is not None:
+                    delta = (
+                        (yaw - self._yaw_precedent + math.pi)
+                        % (2.0 * math.pi)
+                        - math.pi
+                    )
+                    self._cap_cumule += delta
+                else:
+                    self._cap_cumule = yaw
+                self._yaw_precedent = yaw
+                self._yaw = yaw
             self._position = self._read_position(message)
             recu.set()
 
@@ -478,6 +494,7 @@ class UnitreeAdapter:
         assert_speed_within_limits(
             MotionPlan(
                 linear_speed_mps=vx,
+                lateral_speed_mps=vy,
                 angular_speed_rps=vyaw,
                 nominal_duration_s=0.0,
                 timeout_s=0.0,
@@ -632,81 +649,114 @@ class UnitreeAdapter:
 
         assert_speed_within_limits(plan, self._limits)
 
-        # Point de départ issu de l'ÉTAT MESURÉ, pas d'un calcul théorique.
-        start_status = await self.get_status()
-        start_xy = (
-            (start_status.position_m[0], start_status.position_m[1])
-            if start_status.position_m
-            else None
-        )
-        start_yaw = start_status.yaw_rad
+        # Même sémantique que l'adaptateur WebRTC : une translation est tenue
+        # pendant la durée demandée ; une rotation est asservie sur le cap
+        # mesuré. Le SDK DDS ne connaît lui non plus que des vitesses.
+        if plan.angle_deg > 0:
+            return await self._tourner(plan, index, should_stop)
+        return await self._translater(plan, index, should_stop)
 
+    async def _translater(
+        self, plan, index: int, should_stop: StopSignal
+    ) -> CommandOutcome:
+        """Tient la consigne de vitesse pendant la durée demandée."""
+        depart_xy = (
+            (self._position[0], self._position[1]) if self._position else None
+        )
         self._start_publisher()
-        self._publish(plan.linear_speed_mps, 0.0, plan.angular_speed_rps)
         self._state = RobotState.MOVING
 
-        elapsed = 0.0
-        period = self._limits.timing.command_tick_seconds
+        debut = time.monotonic()
         try:
+            self._publish(
+                plan.linear_speed_mps, plan.lateral_speed_mps, 0.0
+            )
             while True:
-                if should_stop.requested:
-                    await self.request_stop()
+                if should_stop is not None and should_stop.requested:
                     return CommandOutcome(index=index, outcome="stopped")
 
-                await asyncio.sleep(period)
-                elapsed += period
-
-                status = await self.get_status()
-                if not status.connected:
-                    raise AdapterError("Liaison perdue pendant le déplacement.", recoverable=True)
-
-                if self._reached(plan, start_xy, start_yaw, status):
-                    await self.request_stop()
-                    return self._outcome(index, plan, start_xy, start_yaw, status, "exact")
-
-                if elapsed >= plan.timeout_s:
-                    # Dépassement : arrêt de sécurité. On ne déclare PAS la
-                    # cible atteinte.
-                    await self.request_stop()
-                    return self._outcome(index, plan, start_xy, start_yaw, status, "timeout")
+                maintenant = time.monotonic()
+                if not self._last_publish_ok:
+                    raise AdapterError(
+                        "Liaison avec le contrôleur du robot interrompue.",
+                        recoverable=True,
+                    )
+                if maintenant - debut >= plan.nominal_duration_s:
+                    break
+                if maintenant - debut >= plan.timeout_s:
+                    return self._bilan_distance(index, depart_xy, "timeout")
+                await asyncio.sleep(0.02)
         finally:
             # Toute sortie (y compris une exception) repasse par l'arrêt.
-            self._publish(0.0, 0.0, 0.0)
             await self.request_stop()
 
-    def _reached(self, plan, start_xy, start_yaw, status: Status) -> bool:
-        """Compare la consigne et l'ÉTAT MESURÉ.
+        return self._bilan_distance(index, depart_xy, "exact")
 
-        Si l'état n'est pas lisible, on ne peut rien confirmer : le résultat
-        sera un dépassement de délai, ce qui est le comportement conservateur.
-        """
-        if plan.distance_cm > 0:
-            if start_xy is None or status.position_m is None:
-                return False
-            current = travelled_distance_cm(start_xy, (status.position_m[0], status.position_m[1]))
-            # Seuil bas, et non `abs(diff) <= tol` : en cas de dépassement, la
-            # seconde formulation laisserait le robot avancer au lieu de s'arrêter.
-            return current >= plan.distance_cm - POSITION_TOLERANCE_CM
-
-        if plan.angle_deg > 0:
-            if start_yaw is None or status.yaw_rad is None:
-                return False
-            current = shortest_angular_difference_deg(start_yaw, status.yaw_rad)
-            return current >= plan.angle_deg - YAW_TOLERANCE_DEG
-
-        return False
-
-    def _outcome(self, index, plan, start_xy, start_yaw, status, outcome) -> CommandOutcome:
-        """Résultat construit à partir de l'état mesuré, jamais de la consigne."""
-        if plan.distance_cm > 0 and start_xy and status.position_m:
-            measured = travelled_distance_cm(start_xy, (status.position_m[0], status.position_m[1]))
-            return CommandOutcome(
-                index=index, outcome=outcome, measured_distance_cm=round(measured, 1)
+    async def _tourner(
+        self, plan, index: int, should_stop: StopSignal
+    ) -> CommandOutcome:
+        """Asservit la rotation sur le cap mesuré, avec bande morte."""
+        if self._cap_cumule is None:
+            raise AdapterError(
+                "Le cap du robot n’est pas mesuré : rotation refusée.",
+                recoverable=True,
             )
-        if plan.angle_deg > 0 and start_yaw is not None and status.yaw_rad is not None:
-            measured = shortest_angular_difference_deg(start_yaw, status.yaw_rad)
+
+        direction = 1.0 if plan.angular_speed_rps >= 0.0 else -1.0
+        depart = self._cap_cumule
+        cible = direction * math.radians(plan.angle_deg)
+        max_rate = (
+            abs(plan.angular_speed_rps) or self._limits.motion.max_angular_speed
+        )
+
+        self._start_publisher()
+        self._state = RobotState.MOVING
+        debut = time.monotonic()
+        parcouru = 0.0
+        try:
+            while True:
+                if should_stop is not None and should_stop.requested:
+                    return CommandOutcome(index=index, outcome="stopped")
+
+                parcouru = (
+                    (self._cap_cumule if self._cap_cumule is not None else depart)
+                    - depart
+                )
+                ecart = math.degrees(cible - parcouru)
+                if abs(ecart) <= YAW_BANDE_MORTE_DEG:
+                    break
+
+                if not self._last_publish_ok:
+                    raise AdapterError(
+                        "Liaison avec le contrôleur du robot interrompue.",
+                        recoverable=True,
+                    )
+                self._publish(
+                    0.0, 0.0, math.copysign(yaw_rate_for_remaining(abs(ecart), max_rate), ecart)
+                )
+                if time.monotonic() - debut >= plan.timeout_s:
+                    return self._bilan_angle(index, parcouru, "timeout")
+                await asyncio.sleep(0.02)
+        finally:
+            await self.request_stop()
+
+        return self._bilan_angle(index, parcouru, "exact")
+
+    def _bilan_distance(
+        self,
+        index: int,
+        depart_xy: tuple[float, float] | None,
+        outcome: str,
+    ) -> CommandOutcome:
+        """Résultat d'une translation, distance lue dans l'état mesuré."""
+        if depart_xy is not None and self._position is not None:
+            measured = travelled_distance_cm(
+                depart_xy, (self._position[0], self._position[1])
+            )
             return CommandOutcome(
-                index=index, outcome=outcome, measured_angle_deg=round(measured, 1)
+                index=index,
+                outcome=outcome,
+                measured_distance_cm=round(measured, 1),
             )
         return CommandOutcome(
             index=index,
@@ -714,11 +764,20 @@ class UnitreeAdapter:
             detail="Aucune mesure disponible pour cette instruction.",
         )
 
+    def _bilan_angle(
+        self, index: int, parcouru_rad: float, outcome: str
+    ) -> CommandOutcome:
+        """Résultat d'une rotation, angle lu dans le cap mesuré."""
+        return CommandOutcome(
+            index=index,
+            outcome=outcome,
+            measured_angle_deg=round(math.degrees(abs(parcouru_rad)), 1),
+        )
+
     async def request_stop(self) -> None:
         """Arrêt immédiat.
 
         Séquence retenue : consigne nulle republished, puis `StopMove()`.
-
         À VÉRIFIER : `StopMove()` est-il une commande distincte de `Move(0,0,0)` ?
         L'exemple C++ et Python montrent `StopMove()` comme appel séparé, mais
         leur équivalence réelle n'est pas documentée. Tant que ce n'est pas
@@ -741,6 +800,18 @@ class UnitreeAdapter:
             except Exception:
                 pass
         self._stop_publisher()
+
+    async def camera_frame(self) -> bytes | None:
+        """Ce canal ne transporte pas d'image : aucune, jamais inventée."""
+        return None
+
+    async def lidar_points(self) -> list[list[float]] | None:
+        """Ce canal ne transporte pas de lidar : aucun point, jamais inventé."""
+        return None
+
+    async def set_autonome(self, actif: bool) -> bool:
+        """Ce canal ne sait pas faire marcher le robot tout seul."""
+        return False
 
     def __del__(self) -> None:
         # Ne JAMAIS laisser une consigne de vitesse active en mémoire.

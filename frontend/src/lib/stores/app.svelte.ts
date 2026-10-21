@@ -51,6 +51,8 @@ class AppState {
   pendingStart = $state<Program | null>(null);
   /** Reglages en vigueur, fournis par le service (bornes incluses). */
   settings = $state<SettingsPayload | null>(null);
+  /** Le robot marche-t-il tout seul (mode autonome) ? */
+  autonome = $state(false);
 
   runId: string | null = null;
   /** Revision des reglages au moment de la derniere verification. */
@@ -93,6 +95,32 @@ class AppState {
    */
   get reportIsStale(): boolean {
     return this.report !== null && this.status.settingsRevision !== this.#validatedRevision;
+  }
+
+  /**
+   * Bascule le mode autonome : le robot se débrouille seul.
+   *
+   * Ce n'est pas une instruction du programme : rien n'est ajouté à la
+   * timeline. Le bouton « étoiles » le coupe, et l'arrêt d'urgence reste
+   * prioritaire.
+   */
+  async toggleAutonome(): Promise<void> {
+    const wanted = !this.autonome;
+    try {
+      const resultat = await api.setAutonome(wanted);
+      this.autonome = resultat.autonome;
+      this.#setNotice(
+        resultat.autonome ? 'ok' : 'warn',
+        resultat.message,
+      );
+    } catch (error) {
+      this.#setNotice(
+        'error',
+        error instanceof ServiceError
+          ? error.message
+          : 'La marche autonome n’a pas pu être activée.',
+      );
+    }
   }
 
   async refreshSettings(): Promise<void> {

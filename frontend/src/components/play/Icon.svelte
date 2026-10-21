@@ -90,8 +90,36 @@
     <circle cx="12" cy="12" r="9" />
     <path d="M9.6 9.2a2.6 2.6 0 1 1 3.6 2.4c-.8.4-1.2 1-1.2 1.9v.3" />
     <circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none" />
-  {:else if name === 'paw'}
-    <ellipse cx="7" cy="8.5" rx="2.2" ry="2.8" fill="currentColor" stroke="none" />
+  {:else if name === 'radar'}
+    <circle cx="12" cy="12" r="8.5" />
+    <circle cx="12" cy="12" r="4.5" />
+    <path d="M12 12 19 5" />
+  {:else if name === 'arrow-up'}
+    <path d="M12 20V5M12 5 6 11M12 5l6 6" />
+  {:else if name === 'moon'}
+    <path
+      d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"
+      fill="currentColor"
+      stroke="none"
+    />
+  {:else if name === 'heart'}
+    <path
+      d="M12 20.3 4.6 13a4.6 4.6 0 0 1 6.5-6.5l.9.9.9-.9A4.6 4.6 0 0 1 19.4 13z"
+      fill="currentColor"
+      stroke="none"
+    />
+  {:else if name === 'wave'}
+    <path
+      d="M8.1 12.3V6.4a1.5 1.5 0 0 1 3 0v4.7m0 .5V4.8a1.5 1.5 0 0 1 3 0v6.8m0 .4V6.7a1.5 1.5 0 0 1 3 0v7.1c0 4-2.5 6.6-6.2 6.6-3.1 0-5.2-2-5.8-4.9l-.7-3.2a1.5 1.5 0 0 1 2.8-1.2l1 2.1"
+    />
+    <path d="M3 4.8c1.2.4 2 1.2 2.5 2.4M2.4 8.2c.8.4 1.4 1 1.8 1.9" />
+  {:else if name === 'stretch'}
+    <circle cx="12" cy="4.2" r="2.1" />
+    <path d="M12 6.3v6.3" />
+    <path d="M12 8.2 6.8 4.6M12 8.2l5.2-3.6" />
+    <path d="M12 12.6 9 20M12 12.6l3 7.4" />
+    <path d="M6.5 20h4M13.5 20h4" />
+  {:else if name === 'paw'}    <ellipse cx="7" cy="8.5" rx="2.2" ry="2.8" fill="currentColor" stroke="none" />
     <ellipse cx="12" cy="6.6" rx="2.2" ry="2.9" fill="currentColor" stroke="none" />
     <ellipse cx="17" cy="8.5" rx="2.2" ry="2.8" fill="currentColor" stroke="none" />
     <ellipse cx="19.4" cy="13.4" rx="1.9" ry="2.4" fill="currentColor" stroke="none" />

@@ -30,12 +30,11 @@ from .base import (
     StopSignal,
 )
 from .motion import (
-    POSITION_TOLERANCE_CM,
-    YAW_TOLERANCE_DEG,
+    YAW_BANDE_MORTE_DEG,
     assert_speed_within_limits,
     plan_command,
-    shortest_angular_difference_deg,
     travelled_distance_cm,
+    yaw_rate_for_remaining,
 )
 
 #: Capacités complètes du robot simulé (mêmes noms que le service réel).
@@ -169,6 +168,18 @@ class SimulatedAdapter:
                 return await self._do_posture(Posture.LIE_DOWN, index)
             case CommandKind.BALANCE:
                 return await self._do_posture(Posture.BALANCE, index)
+            case CommandKind.FINGER_HEART:
+                # Le geste simulé : un bref mouvement, sans déplacement.
+                return await self._do_wait(1.5, index, should_stop)
+            case CommandKind.SALUTE:
+                # Saluer : un bref mouvement, sans deplacement.
+                return await self._do_wait(1.5, index, should_stop)
+            case CommandKind.STRETCH:
+                # S'étirer dure un peu plus longtemps qu'un salut.
+                return await self._do_wait(3.0, index, should_stop)
+            case CommandKind.FRONT_JUMP:
+                # Le saut simule : un bref mouvement, sans deplacement.
+                return await self._do_wait(1.5, index, should_stop)
             case CommandKind.STOP:
                 await self.request_stop()
                 # Un bloc « Arrêter le déplacement » est une instruction comme
@@ -200,6 +211,22 @@ class SimulatedAdapter:
     async def request_stop(self) -> None:
         self._state = RobotState.IDLE
         # Aucun report de position : on ne simule pas d'inertie résiduelle.
+
+    async def camera_frame(self) -> bytes | None:
+        """Le simulateur n'a pas de caméra : aucune image, jamais inventée."""
+        return None
+
+    async def lidar_points(self) -> list[list[float]] | None:
+        """Le simulateur n'a pas de lidar : aucun point, jamais inventé."""
+        return None
+
+    async def lidar_volume(self) -> dict[str, Any] | None:
+        """Le simulateur n'a pas de lidar : aucun volume, jamais inventé."""
+        return None
+
+    async def set_autonome(self, actif: bool) -> bool:
+        """Le simulateur ne marche pas tout seul : le mode est refusé."""
+        return False
 
     # -- Internes ----------------------------------------------------------
 
@@ -239,15 +266,26 @@ class SimulatedAdapter:
         # Protection de dernier niveau, avant toute « publication ».
         assert_speed_within_limits(plan, self._limits)
 
-        start_xy = (self._position[0], self._position[1])
-        start_yaw = self._yaw
+        if plan.angle_deg > 0:
+            return await self._tourner(plan, index, should_stop)
+        return await self._translater(plan, index, should_stop)
 
+    async def _translater(
+        self, plan, index: int, should_stop: StopSignal
+    ) -> CommandOutcome:
+        """Tient la vitesse pendant la durée demandée, puis s'arrête.
+
+        Même sémantique que l'adaptateur réel : la durée est la cible, pas la
+        distance. Cela couvre aussi les déplacements latéraux, dont
+        `distance_cm` vaut 0.
+        """
+        start_xy = (self._position[0], self._position[1])
         self._state = RobotState.MOVING
         elapsed = 0.0
         step = self._sim_step()
 
         while True:
-            if should_stop.requested:
+            if should_stop is not None and should_stop.requested:
                 await self.request_stop()
                 return CommandOutcome(index=index, outcome="stopped")
 
@@ -263,20 +301,70 @@ class SimulatedAdapter:
                     "La liaison avec le robot a été perdue.", recoverable=True
                 )
 
-            self._advance(plan.linear_speed_mps, getattr(plan, "lateral_speed_mps", 0.0), plan.angular_speed_rps, step)
+            self._advance(
+                plan.linear_speed_mps,
+                plan.lateral_speed_mps,
+                plan.angular_speed_rps,
+                step,
+            )
             self._battery = max(0.0, self._battery - self._period * 0.02)
 
-            reached = self._target_reached(plan, start_xy, start_yaw)
-
-            if reached and not self.simulate_stuck:
+            if (
+                elapsed >= plan.nominal_duration_s - 1e-9
+                and not self.simulate_stuck
+            ):
                 await self.request_stop()
-                return self._outcome_for(index, plan, start_xy, start_yaw, "exact")
+                return self._outcome_for(index, plan, start_xy, "exact")
 
-            if elapsed >= plan.timeout_s:
+            if elapsed >= plan.timeout_s - 1e-9:
                 # Dépassement : arrêt de sécurité, et on ne prétend PAS que la
                 # cible a été atteinte.
                 await self.request_stop()
-                return self._outcome_for(index, plan, start_xy, start_yaw, "timeout")
+                return self._outcome_for(index, plan, start_xy, "timeout")
+
+    async def _tourner(
+        self, plan, index: int, should_stop: StopSignal
+    ) -> CommandOutcome:
+        """Asservit la rotation sur le cap simulé, comme le fait le réel.
+
+        Le simulateur ne doit pas « réussir » une rotation que le robot réel
+        raterait : on applique donc la même bande morte et le même servo.
+        """
+        start_yaw = self._yaw
+        direction = 1.0 if plan.angular_speed_rps >= 0.0 else -1.0
+        max_rate = abs(plan.angular_speed_rps)
+        self._state = RobotState.MOVING
+        elapsed = 0.0
+        step = self._sim_step()
+
+        while True:
+            if should_stop is not None and should_stop.requested:
+                await self.request_stop()
+                return CommandOutcome(index=index, outcome="stopped")
+
+            ecart = math.degrees(
+                direction * math.radians(plan.angle_deg) - (self._yaw - start_yaw)
+            )
+            # `ecart` est exprimé dans le sens de la rotation : positif tant
+            # qu'il reste de l'angle à parcourir, négatif en cas de dépassement.
+            if abs(ecart) <= YAW_BANDE_MORTE_DEG:
+                await self.request_stop()
+                return self._outcome_for(
+                    index, plan, None, "exact", start_yaw=start_yaw
+                )
+
+            rate = yaw_rate_for_remaining(abs(ecart), max_rate)
+            await asyncio.sleep(self._real_sleep)
+            elapsed += step
+            if not self.simulate_stuck:
+                self._advance(0.0, 0.0, direction * rate, step)
+            self._battery = max(0.0, self._battery - self._period * 0.02)
+
+            if elapsed >= plan.timeout_s - 1e-9:
+                await self.request_stop()
+                return self._outcome_for(
+                    index, plan, None, "timeout", start_yaw=start_yaw
+                )
 
     def _advance(self, vx: float, vy: float, vyaw: float, dt: float) -> None:
         """Intègre une étape de déplacement, avec une dérive simulée."""
@@ -292,47 +380,34 @@ class SimulatedAdapter:
         self._position[1] += dx * sin_y + dy * cos_y
         self._yaw += vyaw * dt
 
-    def _target_reached(
-        self,
-        plan,
-        start_xy: tuple[float, float],
-        start_yaw: float,
-    ) -> bool:
-        """Le déplacement est-il arrivé (à la tolérance près) ?
-
-        On compare par un seuil bas et non par `abs(diff) <= tolérance` : en cas
-        de dépassement, la seconde formulation laisserait le robot continuer
-        d'avancer au lieu de s'arrêter.
-        """
-        if plan.distance_cm > 0:
-            current = travelled_distance_cm(start_xy, (self._position[0], self._position[1]))
-            return current >= plan.distance_cm - POSITION_TOLERANCE_CM
-        if plan.angle_deg > 0:
-            current = shortest_angular_difference_deg(start_yaw, self._yaw)
-            return current >= plan.angle_deg - YAW_TOLERANCE_DEG
-        return False
-
     def _outcome_for(
         self,
         index: int,
         plan,
-        start_xy: tuple[float, float],
-        start_yaw: float,
+        start_xy: tuple[float, float] | None,
         outcome: str,
+        start_yaw: float | None = None,
     ) -> CommandOutcome:
         """Construit le résultat à partir de l'état RÉELLEMENT simulé.
 
         La valeur mesurée vient de l'intégration, jamais de la consigne. C'est
         ce qui permet à l'interface d'afficher « mesuré » honnêtement.
         """
-        if plan.distance_cm > 0:
-            measured = travelled_distance_cm(
-                start_xy, (self._position[0], self._position[1])
+        if plan.angle_deg <= 0:
+            measured = (
+                travelled_distance_cm(
+                    start_xy, (self._position[0], self._position[1])
+                )
+                if start_xy is not None
+                else 0.0
             )
             return CommandOutcome(
                 index=index, outcome=outcome, measured_distance_cm=round(measured, 1)
             )
-        measured_angle = shortest_angular_difference_deg(start_yaw, self._yaw)
+        # Le cap simulé n'a pas de limite à ±π : la différence directe donne
+        # l'angle parcouru, y compris au-delà de 180°.
+        depart = start_yaw if start_yaw is not None else self._yaw
+        measured_angle = abs(math.degrees(self._yaw - depart))
         return CommandOutcome(
             index=index, outcome=outcome, measured_angle_deg=round(measured_angle, 1)
         )

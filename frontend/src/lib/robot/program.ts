@@ -25,7 +25,10 @@ export type MoveDirection = 'forward' | 'backward' | 'left' | 'right';
 export type TurnDirection = 'left' | 'right';
 
 /** Postures exposées aux enfants, toutes vérifiées dans le SDK lu. */
-export type Posture = 'stand' | 'sit' | 'balance';
+export type Posture = 'stand' | 'sit' | 'balance' | 'lie_down';
+
+/** Gestes du corps exposés aux enfants. */
+export type Gesture = 'heart' | 'jump' | 'salute' | 'stretch';
 
 /**
  * Conditions réellement implémentées.
@@ -69,6 +72,18 @@ export interface PostureStatement {
   line: number;
 }
 
+/**
+ * Un geste du corps, sans acrobatie.
+ *
+ * Aujourd'hui : le cœur, le saut, saluer et s'étirer, tous des commandes
+ * officielles du SDK. Le service refuse tout geste qu'il ne sait pas exécuter.
+ */
+export interface GestureStatement {
+  kind: 'gesture';
+  gesture: Gesture;
+  line: number;
+}
+
 export interface StopMoveStatement {
   kind: 'stop_move';
   line: number;
@@ -99,6 +114,7 @@ export type Statement =
   | TurnStatement
   | WaitStatement
   | PostureStatement
+  | GestureStatement
   | StopMoveStatement
   | StopProgramStatement
   | RepeatStatement

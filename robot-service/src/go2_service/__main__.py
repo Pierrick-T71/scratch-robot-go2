@@ -1,10 +1,14 @@
 """Point d'entrée du service.
 
-Lancement en développement :
-    uvicorn go2_service.main:app --host 127.0.0.1 --port 8765
+Lancement :
+    python -m go2_service
+
+Ce point d'entrée est le SEUL à configurer la journalisation : il coupe le
+flot du SDK Unitree avant de créer l'application (voir
+`main._couper_le_flot_du_sdk`). Un lancement direct par uvicorn ne bénéficierait
+pas de ce réglage.
 
 Le choix du port et de l'interface vient de `shared/safety-limits.json`.
-Voir `python -m go2_service` pour un lancement avec ces valeurs par défaut.
 """
 
 from __future__ import annotations
@@ -23,9 +27,17 @@ def main() -> None:
     d'abord `docs/SAFETY.md` (section « Exposition réseau »).
     """
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.WARNING,
         format="%(asctime)s  %(levelname)-7s %(name)s: %(message)s",
     )
+
+    # Le SDK Unitree journalise CHAQUE message sur le logger racine, au niveau
+    # INFO. Mesuré : 474 Mo de journal en 2 h, et une latence de 4,1 s sur
+    # l'état du robot. On coupe ce flot AVANT de créer l'application ; notre
+    # propre logger reste à INFO (voir `main._couper_le_flot_du_sdk`).
+    from .main import _couper_le_flot_du_sdk
+
+    _couper_le_flot_du_sdk()
 
     limits = load_limits()
 

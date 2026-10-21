@@ -2,7 +2,7 @@
   /**
    * Bibliothèque de blocs.
    *
-   * Deux catégories seulement, parce qu'il n'existe que six blocs : afficher
+   * Deux catégories seulement, parce que les blocs sont peu nombreux : afficher
    * des onglets vides (« Attente », « Capteurs »…) promettrait des fonctions
    * que le robot ne sait pas exécuter.
    *

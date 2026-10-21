@@ -92,6 +92,18 @@ class FakeAdapter:
     async def request_stop(self) -> None:
         self.stop_calls += 1
 
+    async def camera_frame(self) -> bytes | None:
+        return None
+
+    async def lidar_points(self) -> list[list[float]] | None:
+        return None
+
+    async def lidar_volume(self) -> dict[str, Any] | None:
+        return None
+
+    async def set_autonome(self, actif: bool) -> bool:
+        return False
+
     def supports(self, capability: Capability) -> bool:
         return capability in ALWAYS_AVAILABLE
 
@@ -149,6 +161,33 @@ class TestSimplePlan:
         engine = ExecutionEngine(adapter, LIMITS)
         run(engine, parse_program(SIMPLE_PLAN))
         assert adapter.prepare_calls == 1
+
+    def test_the_heart_gesture_becomes_a_physical_command(self):
+        # Le « coeur » est un geste du SDK (`FingerHeart`) : il doit
+        # atteindre le robot, pas rester dans le service.
+        adapter = FakeAdapter()
+        engine = ExecutionEngine(adapter, LIMITS)
+        run(engine, parse_program({"statements": [{"kind": "gesture", "gesture": "heart"}]}))
+        assert kinds(adapter) == ["finger_heart"]
+
+    def test_the_salute_and_stretch_gestures_reach_the_robot(self):
+        # `Hello` et `Stretch` sont deux commandes officielles du SDK. Le
+        # service doit les traduire en commandes physiques distinctes, sans
+        # les confondre avec le cœur ou le saut.
+        adapter = FakeAdapter()
+        engine = ExecutionEngine(adapter, LIMITS)
+        run(
+            engine,
+            parse_program(
+                {
+                    "statements": [
+                        {"kind": "gesture", "gesture": "salute"},
+                        {"kind": "gesture", "gesture": "stretch"},
+                    ]
+                }
+            ),
+        )
+        assert kinds(adapter) == ["salute", "stretch"]
 
     def test_the_speed_is_chosen_by_the_service(self):
         # L'enfant ne saisit pas de vitesse : c'est une limite de sécurité,

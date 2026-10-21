@@ -202,6 +202,17 @@ class TestParseStatement:
         with pytest.raises(CommandValidationError):
             parse_statement(statement("posture", posture="backflip"))
 
+    def test_accepts_the_body_gestures(self):
+        for gesture in ("heart", "jump", "salute", "stretch"):
+            parsed = parse_statement(statement("gesture", gesture=gesture))
+            assert parsed.gesture == gesture
+
+    def test_refuses_a_gesture_that_does_not_exist(self):
+        # Un geste inconnu ne doit jamais partir vers le robot : le service
+        # ne sait l'exécuter ni le mesurer.
+        with pytest.raises(CommandValidationError):
+            parse_statement(statement("gesture", gesture="backflip"))
+
 
 class TestParseProgram:
     def test_accepts_a_whole_plan(self):

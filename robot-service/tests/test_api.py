@@ -305,6 +305,38 @@ class TestRealModeStaysRefused:
         assert response.status_code == 422
 
 
+class TestRobotAesKey:
+    """La clé du robot ne doit pas disparaître au redémarrage de la machine.
+
+    Le service a été redémarré par un script qui ne chargeait pas le
+    fichier local : la clé manquait, et le branchement était refusé. Le
+    service la lit donc lui-même dans le fichier quand la variable
+    d'environnement est absente.
+    """
+
+    def test_the_key_comes_from_the_environment_first(self, monkeypatch):
+        from go2_service import main as service_main
+
+        monkeypatch.setenv("GO2_ROBOT_AES_KEY", "depuis-l-env")
+        assert service_main._robot_aes_key() == "depuis-l-env"
+
+    def test_the_key_is_read_from_the_local_file(self, monkeypatch, tmp_path):
+        from go2_service import main as service_main
+
+        fichier = tmp_path / "robot.env"
+        fichier.write_text("GO2_ROBOT_AES_KEY=depuis-le-fichier\n", encoding="utf-8")
+        monkeypatch.delenv("GO2_ROBOT_AES_KEY", raising=False)
+        monkeypatch.setattr(service_main, "ROBOT_AES_KEY_FILE", str(fichier))
+        assert service_main._robot_aes_key() == "depuis-le-fichier"
+
+    def test_without_a_key_the_service_says_so(self, monkeypatch, tmp_path):
+        from go2_service import main as service_main
+
+        monkeypatch.delenv("GO2_ROBOT_AES_KEY", raising=False)
+        monkeypatch.setattr(service_main, "ROBOT_AES_KEY_FILE", str(tmp_path / "absent.env"))
+        assert service_main._robot_aes_key() is None
+
+
 class TestSettingsContract:
     def test_settings_are_readable(self, client):
         response = client.get("/api/settings")
