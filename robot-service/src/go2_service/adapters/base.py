@@ -29,6 +29,14 @@ class AdapterError(RuntimeError):
         self.recoverable = recoverable
 
 
+class SafetyInterrupt(AdapterError):
+    """Le robot s'est arrêté de lui-même pour une raison de sécurité.
+
+    Distinct d'une panne : l'arrêt est VOULU. Le moteur d'exécution le traduit
+    en fin de programme « safety », et non en erreur technique.
+    """
+
+
 class Posture(str, Enum):
     """Postures exposées aux enfants."""
 
@@ -64,6 +72,12 @@ class Status:
     yaw_rad: float | None = None
     battery_percent: float | None = None
     posture: Posture | None = None
+    #: Mesure ou raison d'un arrêt de sécurité détecté par l'adaptateur.
+    #: `None` quand aucun arrêt de ce type n'est armé.
+    safety_reason: str | None = None
+    #: Message du relevé automatique (le robot s'est relevé tout seul, ou
+    #: n'a pas réussi). `None` quand rien ne s'est passé.
+    recovery_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -161,14 +175,6 @@ class RobotAdapter(Protocol):
         """Volume de voxels du lidar, pour une vue en 3D.
 
         `None` quand le lidar n'envoie rien. Jamais une carte inventée.
-        """
-        ...
-
-    async def set_autonome(self, actif: bool) -> bool:
-        """Active ou coupe la marche autonome du robot.
-
-        Renvoie `False` quand le mode n'est pas disponible (simulation) ou
-        que le robot refuse.
         """
         ...
 

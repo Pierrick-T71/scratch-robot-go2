@@ -224,10 +224,6 @@ class SimulatedAdapter:
         """Le simulateur n'a pas de lidar : aucun volume, jamais inventé."""
         return None
 
-    async def set_autonome(self, actif: bool) -> bool:
-        """Le simulateur ne marche pas tout seul : le mode est refusé."""
-        return False
-
     # -- Internes ----------------------------------------------------------
 
     async def _do_wait(

@@ -28,6 +28,17 @@ export interface RobotStatus {
   executing: boolean;
   /** Explication si le robot refuse une action, sinon null. */
   blockedReason: string | null;
+  /**
+   * Raison d'un arrêt de sécurité détecté par le robot (portage), sinon
+   * null. Tant qu'elle est présente, le service refuse toute nouvelle
+   * instruction physique.
+   */
+  safetyReason: string | null;
+  /**
+   * Message du relevé automatique : le robot s'est relevé tout seul, ou il
+   * n'a pas réussi. `null` quand il ne s'est rien passé.
+   */
+  recoveryReason: string | null;
   /** Position mesuree, si l'etat est disponible. */
   position: { x: number; y: number; z: number } | null;
   yawRad: number | null;
@@ -45,13 +56,6 @@ export interface RobotStatus {
 
 /** Postures que le service sait demander au robot. */
 export type RobotPosture = 'stand' | 'sit' | 'balance' | 'lie_down';
-
-/** Mode autonome : le robot se débrouille seul, en évitant les obstacles. */
-export interface AutonomeResult {
-  autonome: boolean;
-  actif: boolean;
-  message: string;
-}
 
 /** Cases occupées de la carte du lidar, vues du dessus, en mètres. */
 export interface LidarResult {
@@ -207,18 +211,8 @@ export const api = {
     request('/api/execution/stop', { method: 'POST' }),
 
   /**
-   * Mode autonome : le robot marche tout seul, en évitant les obstacles.
-   *
-   * Ce n'est pas une instruction de programme : c'est un mode, coupé par le
-   * bouton « étoiles » et par l'arrêt d'urgence.
+   * Carte du lidar, vue du dessus, en mètres autour du robot.
    */
-  setAutonome: (enabled: boolean): Promise<AutonomeResult> =>
-    request<AutonomeResult>('/api/robot/autonome', {
-      method: 'POST',
-      body: JSON.stringify({ enabled }),
-    }),
-
-  /** Carte du lidar, vue du dessus, en mètres autour du robot. */
   getLidar: (): Promise<LidarResult> => request<LidarResult>('/api/robot/lidar'),
 
   /**

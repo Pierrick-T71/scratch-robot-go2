@@ -13,6 +13,11 @@
    *
    * La même scène sert de vue par défaut, sans les cubes. Quand un bloc de
    * déplacement tourne, les pattes marchent ; sinon, le robot reste immobile.
+   *
+   * La caméra est placée DERRIÈRE le robot, dans l'axe de son museau : on le
+   * voit de dos, et tout ce qui est devant lui occupe l'écran. C'est la même
+   * orientation que celle de l'enfant qui se tient derrière le vrai chien —
+   * et, en vue lidar, les cubes arrivent donc du bon côté.
    */
   import * as THREE from 'three';
   import { onDestroy } from 'svelte';
@@ -102,6 +107,19 @@
   /** Pas de rotation : les cubes sont alignes sur la grille. */
   const IDENTITE = new THREE.Quaternion();
 
+  /* ------------------------------------------------------------------ */
+  /* La caméra : DERRIÈRE le robot, comme dans un jeu à la 3e personne.  */
+  /* ------------------------------------------------------------------ */
+
+  /** Recul de la caméra derrière le robot, en mètres. */
+  const CAMERA_RECUL = 1.7;
+  /** Hauteur de la caméra au-dessus du sol, en mètres. */
+  const CAMERA_HAUTEUR = 1.1;
+  /** Longueur visée devant le robot, en mètres. */
+  const CAMERA_VISEE = 0.45;
+  /** Hauteur du point visé : un peu au-dessus du dos, pour voir devant. */
+  const CAMERA_VISEE_Y = 0.45;
+
   /** La géométrie des cubes : on y met l'échelle de la grille. */
   let geometrie: THREE.BoxGeometry | null = null;
   /** L'échelle actuellement appliquée à la géométrie. */
@@ -116,6 +134,34 @@
   let cadre = 0;
   /** La camera a-t-elle deja ete posee ? (une seule fois, sinon elle saute) */
   let cameraPlacee = false;
+  /** Cap du robot dans la scène : 0 = museau vers +X. */
+  let capChien = 0;
+
+  /**
+   * Place la caméra DERRIÈRE le robot, dans l'axe de son museau.
+   *
+   * C'est la vue à la troisième personne : on voit le chien de dos, et la
+   * place devant lui occupe l'écran. La vue lidar s'ouvre de la même façon,
+   * pour que les cubes arrivent du bon côté.
+   */
+  function poserCameraDerriere(): void {
+    if (!camera) return;
+    const x = chien?.position.x ?? 0;
+    const z = chien?.position.z ?? 0;
+    // Le museau pointe vers +X quand le cap vaut 0 ; un cap positif tourne
+    // vers la GAUCHE du robot, c'est-à-dire vers -Z.
+    const avantX = Math.cos(capChien);
+    const avantZ = -Math.sin(capChien);
+    const viseX = x + avantX * CAMERA_VISEE;
+    const viseZ = z + avantZ * CAMERA_VISEE;
+    camera.position.set(
+      x - avantX * CAMERA_RECUL,
+      CAMERA_HAUTEUR,
+      z - avantZ * CAMERA_RECUL,
+    );
+    controles?.target.set(viseX, CAMERA_VISEE_Y, viseZ);
+    camera.lookAt(viseX, CAMERA_VISEE_Y, viseZ);
+  }
 
   /** La couleur d'un cube, selon sa hauteur relative. */
   function couleurHauteur(h: number): THREE.Color {
@@ -180,7 +226,9 @@
     scene.fog = new THREE.Fog(0x0d1016, 8, 22);
 
     camera = new THREE.PerspectiveCamera(48, 1, 0.05, 120);
-    camera.position.set(3.4, 2.6, 3.4);
+    // Position de départ : derrière le robot. Il n'est pas encore chargé,
+    // on le suppose à l'origine, museau vers +X.
+    camera.position.set(-CAMERA_RECUL, CAMERA_HAUTEUR, 0);
 
     renderer = new THREE.WebGLRenderer({
       canvas,
@@ -194,11 +242,12 @@
     controles = new OrbitControls(camera, canvas);
     controles.enableDamping = true;
     controles.dampingFactor = 0.08;
-    controles.target.set(0, 0.1, 0);
     controles.minDistance = 1.2;
     controles.maxDistance = 16;
     controles.maxPolarAngle = Math.PI * 0.52;
     controles.enabled = interactive;
+    // Cadrage de départ : la caméra se place derrière le robot.
+    poserCameraDerriere();
 
     // La lumiere : une ambiance douce, plus une directionnelle.
     scene.add(new THREE.HemisphereLight(0xdfe9ff, 0x1d2a22, 1.4));
@@ -379,14 +428,14 @@
       // de tour pour qu'il regarde vers l'avant du robot, puis on lui applique
       // le cap mesure.
       chien.rotation.y = (pose.cap ?? 0) + Math.PI / 2;
+      capChien = pose.cap ?? 0;
 
       // La camera n'est posee qu'UNE fois : sinon chaque nouvelle carte
-      // renverrait l'utilisateur a sa position de depart.
+      // renverrait l'utilisateur a sa position de depart. Elle se place
+      // DERRIERE le robot, dans son axe.
       if (!cameraPlacee) {
         cameraPlacee = true;
-        controles?.target.set(x, 0.25, z);
-        camera?.position.set(x + 2.7, 2.1, z + 2.7);
-        camera?.lookAt(x, 0.25, z);
+        poserCameraDerriere();
       }
     }
   }
@@ -402,15 +451,9 @@
   $effect(() => {
     if (!controles) return;
     controles.enabled = interactive;
-    // En revenant à la vue par défaut, on remet le cadrage de départ :
-    // cette vue est passive, l'enfant ne pourrait plus le rattraper.
-    if (!interactive) {
-      const x = chien?.position.x ?? 0;
-      const z = chien?.position.z ?? 0;
-      controles.target.set(x, 0.1, z);
-      camera?.position.set(x + 3.4, 2.6, z + 3.4);
-      camera?.lookAt(x, 0.1, z);
-    }
+    // On entre dans une vue : on se replace DERRIÈRE le robot, dans l'axe
+    // de son museau. En vue lidar, l'enfant peut ensuite tourner autour.
+    poserCameraDerriere();
   });
 
   $effect(() => {

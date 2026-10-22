@@ -41,9 +41,12 @@ import logging
 import math
 import random
 import time
+from collections import deque
 from typing import Any
 
 from ..config import Limits
+from ..recovery import AutoRecovery, RecoverySample
+from ..state_safety import SafetySample, StateSafety
 from ..validation import Capability, CommandKind, RobotCommand
 from .base import (
     AdapterError,
@@ -51,6 +54,7 @@ from .base import (
     MotionPlan,
     Posture,
     RobotState,
+    SafetyInterrupt,
     Status,
     StopSignal,
 )
@@ -106,8 +110,73 @@ class WebRTCAdapter:
     #: Delai maximal d'attente d'un acquittement de commande.
     COMMAND_TIMEOUT_S = 3.0
 
+    #: Delai maximal d'attente de l'acquittement d'une COMMANDE DE POSTURE.
+    #:
+    #: Mesuré le 21/10/2026 : le robot acquitte « s'asseoir » après 2 s, mais
+    #: parfois plus de 3 s (il attend la fin de son cycle de marche). Avec le
+    #: delai court de 3 s, le service abandonnait la commande alors que le
+    #: robot s'asseyait bel et bien : le programme se terminait, l'arret de
+    #: fin de programme relevait le robot, et « s'asseoir » ne tenait pas.
+    POSTURE_TIMEOUT_S = 8.0
+
+    #: Duree maximale d'attente de la POSTURE PUBLIEE par le robot, quand
+    #: son acquittement s'est perdu. Le robot s'assoit en 2 a 4 s.
+    POSTURE_ATTENTE_S = 6.0
+
     #: Au-dela de ce silence, l'etat est declare perdu.
     STATE_STALE_S = 2.0
+
+    #: Durée pendant laquelle une posture volontaire (assis, allongé, debout)
+    #: est considérée en transition du point de vue de la détection de
+    #: portage.
+    POSTURE_GRACE_S = 5.0
+
+    #: Période d'examen de la situation « le robot est tombé » (secondes).
+    RELEVER_EXAMEN_S = 0.2
+
+    #: Temps maximal d'attente du robot qui se relève, après `RecoveryStand`.
+    RELEVER_ATTENTE_S = 12.0
+
+    #: Pause avant une seconde tentative de relevé.
+    RELEVER_REESSAI_S = 2.0
+
+    #: Duree d'attente de la posture « allongé » après un `Damp` : le robot
+    #: met 2 à 3 s à se poser.
+    COUCHER_ATTENTE_S = 4.0
+
+    #: Part de la fenêtre du lidar qui ne voit rien (pourcentage) à partir
+    #: de laquelle on considère que le lidar est bloqué contre le sol.
+    #:
+    #: ⚠️ NON UTILISÉ : mesuré le 21/10/2026, ce pourcentage passe de 0-8 %
+    #: (debout) à 61-70 % (allongé) alors que le lidar tourne librement.
+    #: Ce n'est donc pas un indice de blocage.
+    LIDAR_SALISSURE_SEUIL = 30.0
+
+    #: Fraction de la rotation de référence en dessous (ou au-dessus) de
+    #: laquelle on considère que le lidar est bloqué : sa fenêtre frotte
+    #: contre le sol et son contrôleur change de régime.
+    #:
+    #: Mesuré le 21/10/2026, avec une médiane de 0,0203 :
+    #:
+    #: | Situation | ratio | écart |
+    #: |---|---|---|
+    #: | normal | 0,0202 – 0,0203 | ±1 % |
+    #: | relèvement | 0,0182 | −10 % |
+    #: | **bloqué (14:14)** | **0,0334** | **+64 %** |
+    #: | **bloqué (13:55)** | **0,0114** | **−44 %** |
+    #:
+    #: Le seuil de 25 % sépare les deux.
+    LIDAR_ROTATION_BLOQUEE = 0.75
+
+    #: Nombre de mesures de rotation Gardées pour calculer la médiane.
+    LIDAR_ROTATIONS_MAX = 60
+
+    #: Nombre de mesures minimum avant de pouvoir conclure.
+    LIDAR_ROTATIONS_MIN = 10
+
+    #: Au-delà de cette ancienneté, l'état du lidar est considéré comme
+    #: périmé : on ne conclut pas à partir d'une mesure morte.
+    LIDAR_ETAT_PERIME_S = 3.0
 
     #: Variation de hauteur (m) sous laquelle le robot est considere immobile.
     STABLE_HEIGHT_M = 0.003
@@ -147,6 +216,11 @@ class WebRTCAdapter:
     #: l'empeche meme de finir sa transition.
     ETAT_TRANSITION = 1002
 
+    #: Code d'etat publie au DEBUT d'une transition vers la position
+    #: assise ou allongee (`1006`). Pendant cette transition, le robot est
+    #: en train de se poser : lui envoyer `Move` le releverait.
+    ETAT_TRANSITION_ASSIS = 1006
+
     #: Code d'etat publie quand le robot est ASSIS.
     ETAT_ASSIS = 1007
 
@@ -184,6 +258,19 @@ class WebRTCAdapter:
 
         self._position: tuple[float, float, float] | None = None
         self._yaw: float | None = None
+        #: Efforts mesurés sous les quatre pieds (`rt/lf/lowstate`).
+        #: La somme sous 60 signifie qu'aucun pied ne porte (voir
+        #: `state_safety.py`).
+        self._foot_force: tuple[int, ...] | None = None
+        self._foot_force_at: float | None = None
+        self._pieds_deja_logges = False
+        #: Décision de portage, avec verrouillage.
+        self._securite = StateSafety()
+        #: Fin d'une fenêtre pendant laquelle un changement de posture
+        #: volontaire (s'asseoir, se coucher, se relever) ne doit pas être pris
+        #: pour un portage : les pieds se déchargent avant que le code d'état
+        #: ait basculé sur « assis », « allongé » ou « debout ».
+        self._posture_grace_until = 0.0
         #: Cap CUMULÉ (déroulé) depuis la connexion, en radians.
         #:
         #: `imu_state.rpy[2]` revient de -π à +π : une rotation qui franchit
@@ -201,6 +288,9 @@ class WebRTCAdapter:
         self._last_state_at: float | None = None
         #: Code d'etat publie par le robot (100 = pret, 1002 = transition).
         self._code_etat: int | None = None
+        #: Code d'état précédent : permet de journaliser les changements
+        #: (`1013` debout, `100` en mouvement, `1007` assis, `1001` allongé).
+        self._code_etat_precedent: int | None = None
         #: Plus haute hauteur vue depuis la connexion : sert de reference
         #: pour savoir si le robot est actuellement assis.
         self._hauteur_max: float | None = None
@@ -221,8 +311,33 @@ class WebRTCAdapter:
         self._pose_vue = False
         #: Pose du robot dans la carte du lidar : position et cap.
         self._pose_robot: dict[str, float] | None = None
-        #: Le robot marche-t-il tout seul ?
-        self._autonome = False
+        #: Roulis de l'IMU, en radians. Sert au relevage automatique : un
+        #: chien couché sur le flanc a un roulis de l'ordre de 90°.
+        self._roullis: float | None = None
+        #: Avons-nous demandé nous-mêmes l'allongement du robot ? (bloc
+        #: « se coucher » ou arrêt de sécurité). Tant que c'est vrai, on ne
+        #: le relève pas tout seul : c'est nous qui l'avions allongé.
+        self._allonge_demande = False
+        #: Un programme est-il en cours ? Pendant un programme, c'est lui
+        #: qui prépare le robot (`prepare_run` le relève).
+        self._programme_en_cours = False
+        #: Décision de relevage automatique (module `recovery.py`).
+        self._relever_auto = AutoRecovery()
+        #: Tâche de relevage en cours, et dernier examen de la situation.
+        self._tache_relever: asyncio.Task[None] | None = None
+        self._relever_examen_at: float = 0.0
+        #: Raison du dernier relevage automatique, affichée dans l'état.
+        self._recovery_reason: str | None = None
+        #: Dernier état du lidar (`rt/utlidar/lidar_state`) : rotation,
+        #: salissure, erreur.
+        self._etat_lidar: dict[str, Any] | None = None
+        #: Signature de cet état, pour ne journaliser que les changements.
+        self._signature_lidar: tuple[Any, ...] | None = None
+        #: Quand cet état a été reçu (monotonic).
+        self._etat_lidar_at: float = 0.0
+        #: Dernières rotations mesurées : la médiane donne la rotation
+        #: typique du lidar, insensible aux pics.
+        self._rotations: deque[float] = deque(maxlen=self.LIDAR_ROTATIONS_MAX)
 
         self._premier_etat: asyncio.Event | None = None
 
@@ -240,6 +355,15 @@ class WebRTCAdapter:
     @property
     def last_error(self) -> str | None:
         return None
+
+    @property
+    def safety_stop_reason(self) -> str | None:
+        """Raison du verrouillage de sécurité en cours, sinon `None`.
+
+        Propriété volontairement synchrone : le chien de garde la lit dans sa
+        boucle, sans attendre le réseau.
+        """
+        return self._securite.reason if self._securite.latched else None
 
     def enable_physical_commands(self) -> None:
         """Ouvre le pilotage pour CETTE instance, jamais pour la classe."""
@@ -287,6 +411,14 @@ class WebRTCAdapter:
         self._cap_cumule = None
         self._yaw_precedent = None
         self._cap_mesure_at = None
+        # Une nouvelle liaison repart d'une surveillance neuve : un
+        # verrouillage de l'ancienne session ne doit pas bloquer le robot.
+        self._securite.reset()
+        self._foot_force = None
+        self._foot_force_at = None
+        self._pieds_deja_logges = False
+        self._posture_grace_until = 0.0
+        self._code_etat_precedent = None
 
         try:
             self._connexion = UnitreeWebRTCConnection(
@@ -375,6 +507,7 @@ class WebRTCAdapter:
         self._connexion = None
         self._connected = False
         self._last_state_at = None
+        self._code_etat_precedent = None
         self._cap_cumule = None
         self._yaw_precedent = None
         self._cap_mesure_at = None
@@ -385,12 +518,21 @@ class WebRTCAdapter:
     def _sur_etat(self, message: Any) -> None:
         """Memorise l'etat publie par le robot. Ne doit jamais lever."""
         donnees = (message or {}).get("data") or {}
+        maintenant = time.monotonic()
         try:
             # L'etat du robot est lu EN PREMIER : la hauteur de reference
             # doit etre jugee avec le code du MEME message.
             code_etat = donnees.get("error_code")
             if isinstance(code_etat, (int, float)):
-                self._code_etat = int(code_etat)
+                nouveau_code = int(code_etat)
+                if nouveau_code != self._code_etat_precedent:
+                    # Le code d'état dit ce que le robot fait vraiment
+                    # (`100` en mouvement, `1013` debout immobile, `1007`
+                    # assis, `1001` allongé). Le journaliser permet de
+                    # relire une sequence apres coup.
+                    log.info("Etat du robot : %s", nouveau_code)
+                    self._code_etat_precedent = nouveau_code
+                self._code_etat = nouveau_code
 
             position = donnees.get("position") or []
             if len(position) >= 3:
@@ -412,8 +554,11 @@ class WebRTCAdapter:
             imu = donnees.get("imu_state") or {}
             rpy = imu.get("rpy") or []
             if len(rpy) >= 3:
+                # Le roulis ne sert PAS à arrêter le robot (une transition de
+                # posture le fait mentir). Il sert au relevage automatique :
+                # un chien couché sur le flanc a un roulis de 90°.
+                self._roullis = float(rpy[0])
                 yaw = float(rpy[2])
-                maintenant = time.monotonic()
                 if self._yaw_precedent is None or self._cap_cumule is None:
                     self._cap_cumule = yaw
                 else:
@@ -441,17 +586,27 @@ class WebRTCAdapter:
             if isinstance(mode, (int, float)):
                 self._mode = int(mode)
 
-            self._last_state_at = time.monotonic()
+            self._last_state_at = maintenant
         except (TypeError, ValueError, AttributeError):
             # Un etat illisible vaut « inconnu », jamais une valeur inventee.
             pass
+
+        self._evaluer_securite(maintenant)
+        self._examiner_relever(maintenant)
 
         if self._premier_etat is not None:
             self._premier_etat.set()
 
     def _sur_batterie(self, message: Any) -> None:
-        """Lit le niveau de batterie s'il est present, sinon ne touche a rien."""
+        """Lit le niveau de batterie et les efforts dans les pieds.
+
+        Le topic `rt/lf/lowstate` porte les deux. Les efforts sont la SEULE
+        mesure directe du contact avec le sol : c'est eux qui permettent de
+        détecter un robot soulevé.
+        """
         donnees = (message or {}).get("data") or {}
+        maintenant = time.monotonic()
+
         candidats: list[Any] = []
         bms = donnees.get("bms_state")
         if isinstance(bms, dict):
@@ -460,7 +615,276 @@ class WebRTCAdapter:
         for valeur in candidats:
             if isinstance(valeur, (int, float)):
                 self._battery = float(valeur)
+                break
+
+        pieds = donnees.get("foot_force")
+        if isinstance(pieds, (list, tuple)) and len(pieds) == 4:
+            try:
+                forces = tuple(int(float(valeur)) for valeur in pieds)
+            except (TypeError, ValueError):
+                forces = None
+            if forces is not None:
+                self._foot_force = forces
+                self._foot_force_at = maintenant
+                if not self._pieds_deja_logges:
+                    self._pieds_deja_logges = True
+                    log.info("Efforts aux pieds mesures : %s", list(forces))
+
+        self._evaluer_securite(maintenant)
+
+    # -- Surveillance des appuis --------------------------------------------
+
+    def _evaluer_securite(self, maintenant: float) -> None:
+        """Met à jour le verrouillage de sécurité, sans jamais lever."""
+        if self._last_state_at is None or self._code_etat is None:
+            # Sans état du robot, on ne sait pas s'il est assis, debout ou
+            # allongé : toute conclusion serait une supposition.
+            return
+
+        # Une posture volontaire vient d'être demandée : les efforts peuvent
+        # disparaître avant que le code d'état ne passe à « assis »,
+        # « allongé » ou « debout ». On laisse la transition se terminer.
+        if not self._securite.latched and maintenant < self._posture_grace_until:
+            return
+
+        try:
+            au_sol = self._est_assis() or self._est_alleonge()
+            evenement = self._securite.update(
+                SafetySample(
+                    now=maintenant,
+                    au_sol=au_sol,
+                    foot_force=self._foot_force,
+                    foot_force_at=self._foot_force_at,
+                )
+            )
+        except Exception:  # noqa: BLE001 - un callback ne doit jamais lever
+            log.exception("Surveillance de sécurité : mesure illisible.")
+            return
+
+        if evenement.tripped:
+            self._declencher_arret_securite(
+                evenement.reason or "Le robot s’est arrêté pour sa sécurité."
+            )
+        elif evenement.cleared:
+            log.info(
+                "Sécurité : appuis revenus normaux, robot réarmé."
+            )
+            if self._state is RobotState.ERROR:
+                self._state = RobotState.IDLE
+
+    # -- Relevage automatique -----------------------------------------------
+
+    def _examiner_relever(self, maintenant: float) -> None:
+        """Regarde si le robot tombé doit se relever tout seul.
+
+        On n'examine pas à chaque message : une fois toutes les 200 ms.
+        Le robot est relevé quand il est **sur le flanc** (son lidar, devant
+        la tête, balaie alors un plan vertical et frotte le sol), et que
+        personne ne l'a allongé.
+        """
+        if maintenant - self._relever_examen_at < self.RELEVER_EXAMEN_S:
+            return
+        self._relever_examen_at = maintenant
+
+        tache = self._tache_relever
+        if tache is not None and not tache.done():
+            return
+        if self._securite.latched:
+            # Le robot est porte (ou a ete arrete pour une autre raison) :
+            # on ne fait aucune maneuver physique.
+            return
+
+        try:
+            evenement = self._relever_auto.update(
+                RecoverySample(
+                    now=maintenant,
+                    allongé=self._est_alleonge(),
+                    lidar_bloque=self._lidar_bloque(),
+                    demande_par_nous=self._allonge_demande,
+                    programme_en_cours=self._programme_en_cours,
+                )
+            )
+        except Exception:  # noqa: BLE001 - un callback ne doit jamais lever
+            log.exception("Relevage automatique : mesure illisible.")
+            return
+
+        if not evenement.triggered:
+            return
+
+        self._recovery_reason = evenement.reason
+        log.warning(
+            "Relevage automatique : %s", evenement.reason or "le robot est tombé."
+        )
+        try:
+            boucle = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._tache_relever = boucle.create_task(self._relever_automatiquement())
+
+    async def _relever_automatiquement(self) -> None:
+        """Relève le robot allongé, pour qu'il ne frotte pas sur son lidar.
+
+        On utilise `StandUp`, la même commande que la préparation d'un
+        programme : elle a été vérifiée depuis la position allongée (le
+        chien passe de 0,05 m à 0,32 m de haut). L'état publié par le robot
+        fait foi : il peut se relever même si l'acquittement se perd.
+        """
+        for essai in range(2):
+            if self._securite.latched:
                 return
+            try:
+                await self._appliquer_posture("StandUp", Posture.STAND)
+            except SafetyInterrupt:
+                return
+            except AdapterError as exc:
+                log.warning("Relevage automatique : commande refusée (%s).", exc)
+            if await self._attendre_debout(self.RELEVER_ATTENTE_S):
+                log.info("Relevage automatique : le robot est debout.")
+                self._allonge_demande = False
+                self._recovery_reason = "Le robot s’est relevé tout seul."
+                return
+            await asyncio.sleep(self.RELEVER_REESSAI_S)
+
+        self._recovery_reason = (
+            "Le robot est allongé et n’a pas pu se relever tout seul : "
+            "demande à un adulte de le redresser."
+        )
+        log.warning("Relevage automatique : le robot n'a pas pu se relever.")
+
+    def _lidar_bloque(self) -> bool | None:
+        """Le lidar frotte-t-il le sol ?
+
+        Le lidar publie sa rotation **réelle** (`com_rotation_speed`) et la
+        rotation **demandée** (`sys_rotation_speed`). Quand sa fenêtre
+        tournante frotte contre le sol, le contrôleur du lidar change de
+        régime : sa rotation **s'écarte** de la valeur normale.
+
+        On compare donc la rotation réelle à la **médiane** des rotations
+        récentes : c'est la valeur typique du lidar, et elle ne bouge pas
+        quand une mesure est anormale.
+
+        Mesuré le 21/10/2026 sur le robot réel (ratio = rotation réelle /
+        rotation demandée, médiane = 0,0203) :
+
+        | Situation | ratio | écart à la médiane |
+        |---|---|---|
+        | normal, debout ou allongé | 0,0202 – 0,0203 | ±1 % |
+        | pendant un relèvement | 0,0182 | −10 % |
+        | **lidar bloqué** (14:14:44) | **0,0334** | **+64 %** |
+        | **lidar bloqué** (13:55:59) | **0,0114** | **−44 %** |
+
+        Le blocage se manifeste donc **dans les deux sens** : c'est l'écart à
+        la médiane qui compte, pas seulement une baisse. Le seuil est donc
+        de **25 %** dans les deux sens.
+
+        `None` tant qu'on n'a pas assez de mesures : on ne conclut jamais
+        dans le vide.
+
+        ⚠️ Le `dirty_percentage` du lidar NE veut PAS dire « bloqué » :
+        mesuré le 21/10/2026, il passe de 0-8 % (debout) à 61-70 % (allongé)
+        alors que le lidar tourne librement. Ce n'est donc pas notre
+        critère.
+        """
+        etat = self._etat_lidar
+        if etat is None:
+            return None
+        if time.monotonic() - self._etat_lidar_at > self.LIDAR_ETAT_PERIME_S:
+            return None
+
+        erreur = etat.get("erreur")
+        if isinstance(erreur, (int, float)) and erreur != 0:
+            # Le firmware signale lui-même que le lidar a un problème.
+            return True
+
+        ratio = etat.get("ratio")
+        if not isinstance(ratio, (int, float)):
+            return None
+        nominale = self._rotation_mediane()
+        if nominale is None:
+            return None
+        ecart = ratio / nominale
+        return (
+            ecart < self.LIDAR_ROTATION_BLOQUEE
+            or ecart > 1.0 / self.LIDAR_ROTATION_BLOQUEE
+        )
+
+    def _rotation_mediane(self) -> float | None:
+        """Rotation typique du lidar : la médiane des dernières mesures.
+
+        La médiane, et non le maximum : un pic de mesure (on a vu 0,0729
+        pendant une pose, contre 0,0203 en temps normal) ne doit pas
+        déplacer l'échelle. Un maximum l'aurait déplacée de 3,6 fois, et
+        tout aurait ensuite semblé « bloqué ».
+
+        Seules les mesures **normales** entrent dans l'historique : un
+        blocage durable ne doit pas décaler la référence, sinon le
+        détecteur s'éteindrait de lui-même au bout de quelques secondes.
+        """
+        if len(self._rotations) < self.LIDAR_ROTATIONS_MIN:
+            return None
+        triees = sorted(self._rotations)
+        milieu = len(triees) // 2
+        if len(triees) % 2:
+            return triees[milieu]
+        return (triees[milieu - 1] + triees[milieu]) / 2.0
+
+    def _rotation_normale(self, ratio: float) -> bool:
+        """Cette rotation est-elle dans le régime normal du lidar ?"""
+        nominale = self._rotation_mediane()
+        if nominale is None:
+            # On n'a pas encore de référence : on accepte la mesure.
+            return True
+        ecart = ratio / nominale
+        return (
+            self.LIDAR_ROTATION_BLOQUEE
+            <= ecart
+            <= 1.0 / self.LIDAR_ROTATION_BLOQUEE
+        )
+
+    async def _attendre_debout(self, timeout_s: float) -> bool:
+        """Attend que le robot soit debout (code d'état `100` ou `1013`)."""
+        fin = time.monotonic() + timeout_s
+        while time.monotonic() < fin:
+            if self._est_debout():
+                return True
+            await asyncio.sleep(0.2)
+        return self._est_debout()
+
+    def _declencher_arret_securite(self, raison: str) -> None:
+        """Arrête la marche et relâche les pattes du robot porté.
+
+        On annule d'abord la consigne de vitesse persistante, puis on envoie
+        `Damp`. C'est le seul ordre SDK qui coupe l'équilibrage actif : sans
+        lui, le robot continue à bouger les pattes pour retrouver son assiette
+        dans les mains de la personne qui le porte.
+
+        `Damp` rend le robot mou. C'est voulu ici : il est soulevé, donc
+        soutenu. On ne l'utilise jamais pour un robot simplement posé au sol.
+        """
+        self._state = RobotState.ERROR
+        log.warning(
+            "ARRET DE SECURITE : %s (pieds=%s, etat=%s)",
+            raison,
+            list(self._foot_force) if self._foot_force else None,
+            self._code_etat,
+        )
+
+        if self._connexion is None:
+            return
+
+        if not (self._est_assis() or self._est_alleonge()):
+            try:
+                self._envoyer_move(0.0, 0.0, 0.0)
+                self._envoyer_sans_reponse("StopMove")
+            except Exception:  # noqa: BLE001 - l'arrêt doit être tenté quand même
+                log.exception("Sécurité : l’arrêt de vitesse n’a pas pu être envoyé.")
+            try:
+                # Coupe l'équilibrage actif : les pattes cessent de chercher
+                # un appui. Le robot reste soutenu par la personne.
+                self._envoyer_sans_reponse("Damp")
+                self._allonge_demande = True
+            except Exception:  # noqa: BLE001
+                log.exception("Sécurité : le relâchement des pattes a échoué.")
 
     # -- Etat --------------------------------------------------------------
 
@@ -472,6 +896,7 @@ class WebRTCAdapter:
                 state=RobotState.DISCONNECTED,
                 capabilities=UNITREE_CAPABILITIES,
                 blocked_reason="Le service n’est pas connecté au robot.",
+                safety_reason=self.safety_stop_reason,
             )
 
         bloque: str | None = None
@@ -490,6 +915,8 @@ class WebRTCAdapter:
             yaw_rad=self._yaw,
             battery_percent=self._battery,
             posture=self._posture,
+            safety_reason=self.safety_stop_reason,
+            recovery_reason=self._recovery_reason,
         )
 
     # -- Emission ----------------------------------------------------------
@@ -528,11 +955,19 @@ class WebRTCAdapter:
     def _envoyer_move(self, vx: float, vy: float, vyaw: float) -> None:
         self._envoyer_sans_reponse("Move", {"x": vx, "y": vy, "z": vyaw})
 
-    async def _commander(self, nom: str, parametre: Any = "") -> int | None:
+    async def _commander(
+        self,
+        nom: str,
+        parametre: Any = "",
+        timeout_s: float | None = None,
+    ) -> int | None:
         """Envoie une commande et attend son acquittement.
 
         Retourne le code de statut renvoye par le robot, ou `None` si le
         robot n'a pas repondu dans le delai.
+
+        `timeout_s` : les postures ont leur propre delai (`POSTURE_TIMEOUT_S`),
+        le robot met plus de temps a acquitter « s'asseoir ».
         """
         connexion = self._connexion
         if connexion is None:
@@ -548,7 +983,7 @@ class WebRTCAdapter:
                 connexion.datachannel.pub_sub.publish_request_new(
                     self._rtc["SPORT_MOD"], demande
                 ),
-                timeout=self.COMMAND_TIMEOUT_S,
+                timeout=self.COMMAND_TIMEOUT_S if timeout_s is None else timeout_s,
             )
         except asyncio.TimeoutError:
             return None
@@ -585,6 +1020,10 @@ class WebRTCAdapter:
         """
         try:
             resultat = await self._appliquer_posture("StandUp", Posture.STAND)
+        except SafetyInterrupt:
+            # Un arrêt de sécurité ne doit jamais être transformé en simple
+            # « relèvement refusé » : le programme doit s'arrêter.
+            raise
         except AdapterError as exc:
             log.warning("Relèvement refusé : %s", exc)
             return False
@@ -720,6 +1159,19 @@ class WebRTCAdapter:
         """
         if not self._connected or self._connexion is None:
             return
+        # Un programme commence : c'est lui qui relève le robot s'il est
+        # allongé, pas le relevage automatique.
+        self._programme_en_cours = True
+        self._allonge_demande = False
+        # Le message du dernier relevé n'a plus lieu d'être.
+        self._recovery_reason = None
+        if self._securite.latched:
+            # Ne pas simplement ignorer la préparation : le moteur doit
+            # terminer en « safety », pas enchaîner sur le premier bloc.
+            raise SafetyInterrupt(
+                self._securite.reason
+                or "Le robot est à l’arrêt pour une raison de sécurité."
+            )
         if self._est_debout():
             # Déjà sur ses pattes : rien à demander.
             return
@@ -732,6 +1184,19 @@ class WebRTCAdapter:
 
     # -- Execution ---------------------------------------------------------
 
+    def _refuser_si_secours(self) -> None:
+        """Refuse toute commande tant que le verrouillage est actif.
+
+        `request_stop()` reste appelable, mais ne renvoie plus rien tant que
+        le verrouillage est actif : le déclencheur a déjà envoyé l'arrêt et
+        `Damp`.
+        """
+        if self._securite.latched:
+            raise SafetyInterrupt(
+                self._securite.reason
+                or "Le robot est à l’arrêt pour une raison de sécurité."
+            )
+
     async def execute_command(
         self, command: RobotCommand, index: int, should_stop: StopSignal
     ) -> CommandOutcome:
@@ -741,6 +1206,11 @@ class WebRTCAdapter:
             )
         if not self._connected or self._connexion is None:
             raise AdapterError("Le robot n’est pas connecté.", recoverable=True)
+
+        # L'arrêt reste toujours permis. Toute autre instruction est refusée
+        # tant que le robot n'est pas de nouveau stable sur ses appuis.
+        if command.kind is not CommandKind.STOP:
+            self._refuser_si_secours()
 
         match command.kind:
             case CommandKind.WAIT:
@@ -786,11 +1256,65 @@ class WebRTCAdapter:
     ) -> CommandOutcome:
         restant = max(0.0, seconds)
         while restant > 0:
+            self._refuser_si_secours()
             if should_stop.requested:
                 return CommandOutcome(index=index, outcome="stopped")
             await asyncio.sleep(min(0.05, restant))
             restant -= 0.05
+        self._refuser_si_secours()
         return CommandOutcome(index=index, outcome="exact")
+
+    async def _attendre_posture(
+        self, posture: Posture, timeout_s: float | None = None
+    ) -> bool:
+        """Attend que le robot PUBLIE la posture demandée.
+
+        Le code d'état est la seule preuve : `1007` assis, `1013`/`100`
+        debout, `1001` allongé. On l'interroge toutes les 100 ms, et on
+        abandonne après `timeout_s`.
+
+        Cette attente existe parce que l'acquittement d'une posture peut
+        se perdre : le robot s'assoit quand meme, et c'est son etat publie
+        qui dit la verite.
+        """
+        if timeout_s is None:
+            timeout_s = self.POSTURE_ATTENTE_S
+        fin = time.monotonic() + timeout_s
+        while time.monotonic() < fin:
+            if self._posture_tenue(posture):
+                return True
+            await asyncio.sleep(0.1)
+        return self._posture_tenue(posture)
+
+    async def _attendre_alleonge(self, timeout_s: float | None = None) -> bool:
+        """Attend que le robot PUBLIE qu'il est allongé (`1001`).
+
+        C'est la preuve qu'il s'est réellement couché. Une commande peut
+        être acquittée et rester sans effet : le robot est alors occupé par
+        autre chose (un geste, par exemple).
+        """
+        if timeout_s is None:
+            timeout_s = self.COUCHER_ATTENTE_S
+        fin = time.monotonic() + timeout_s
+        while time.monotonic() < fin:
+            if self._est_alleonge():
+                return True
+            await asyncio.sleep(0.1)
+        return self._est_alleonge()
+
+    def _est_au_sol(self) -> bool:
+        """Le robot est-il au sol, ou en train de s'y poser ?
+
+        Dans ces cas, on n'envoie **aucune** consigne de vitesse : sur un Go2,
+        `Move` et `StopMove` relèvent le robot.
+
+        Le troisième cas (transition vers la position assise, code `1006`) a
+        été ajouté après le 21/10/2026 : l'arrêt de fin de programme
+        arrivait pendant la pose et relevait le chien.
+        """
+        if self._est_assis() or self._est_alleonge():
+            return True
+        return self._code_etat == self.ETAT_TRANSITION_ASSIS
 
     def _posture_tenue(self, posture: Posture) -> bool:
         """La posture demandée est-elle réellement tenue ?
@@ -835,10 +1359,29 @@ class WebRTCAdapter:
         laquelle il ignorerait tous les mouvements du programme.
         """
         dernier_code: int | None = None
+        self._refuser_si_secours()
+        if posture in (Posture.STAND, Posture.SIT, Posture.LIE_DOWN):
+            # Les pieds peuvent se décharger avant que l'état du robot ne
+            # publie la posture finale. Cette fenêtre couvre la transition,
+            # y compris le relèvement depuis la position assise.
+            self._posture_grace_until = time.monotonic() + self.POSTURE_GRACE_S
         for essai in range(2):
-            code = await self._commander(nom)
+            self._refuser_si_secours()
+            code = await self._commander(nom, timeout_s=self.POSTURE_TIMEOUT_S)
+            self._refuser_si_secours()
             if code is None:
-                # Pas de reponse : on ne peut rien affirmer.
+                # Pas de reponse dans le delai. Pour une POSTURE, l'etat
+                # PUBLIE par le robot (`1007` assis, `1013`/`100` debout) est
+                # une preuve plus solide que la reponse : on attend la
+                # posture au lieu de conclure a un echec. Le robot s'assoit
+                # bien, meme si l'acquittement s'est perdu.
+                if await self._attendre_posture(posture):
+                    self._posture = posture
+                    return CommandOutcome(
+                        index=0,
+                        outcome="exact",
+                        detail="Le robot a publié la posture demandée (mesure).",
+                    )
                 return CommandOutcome(
                     index=0,
                     outcome="timeout",
@@ -865,6 +1408,7 @@ class WebRTCAdapter:
             # On attend la fin de la transition : une commande envoyée
             # pendant que le robot se pose serait refusée.
             await self._attendre_stable()
+            self._refuser_si_secours()
 
             if posture is Posture.STAND:
                 # Reprendre la main sur la vitesse : c'est la consigne NULLE
@@ -876,6 +1420,16 @@ class WebRTCAdapter:
                     log.info("Le robot ne signale pas son retour a l'etat pret.")
 
             if not self._posture_tenue(posture):
+                # La posture n'est pas encore publiee : on lui laisse le
+                # temps de s'etablir avant de reessayer. Mesuré le
+                # 21/10/2026 : le robot passe en `1006` (transition) puis en
+                # `1007` (assis) quelques secondes apres la commande.
+                if await self._attendre_posture(posture):
+                    return CommandOutcome(
+                        index=0,
+                        outcome="exact",
+                        detail="Le robot a publié la posture demandée (mesure).",
+                    )
                 log.info(
                     "Le robot n'a pas tenu la posture %s : on recommence.",
                     posture.value,
@@ -916,6 +1470,8 @@ class WebRTCAdapter:
         """
         fin = time.monotonic() + duree_s
         while time.monotonic() < fin:
+            if self._securite.latched:
+                return
             self._envoyer_move(0.0, 0.0, 0.0)
             await asyncio.sleep(self.MOVE_REFRESH_S)
 
@@ -944,6 +1500,14 @@ class WebRTCAdapter:
         """
         if lever_si_assis and not self._est_debout():
             await self._relever()
+        self._refuser_si_secours()
+        if nom == "Damp":
+            # « Se coucher » : le robot se relâche et ses pieds peuvent se
+            # décharger avant que le code d'état ne passe à « allongé ».
+            self._posture_grace_until = time.monotonic() + self.POSTURE_GRACE_S
+            # C'est nous qui l'allongeons : le relevage automatique s'y
+            # applique (le lidar peut frotter le sol).
+            self._allonge_demande = True
 
         flux: asyncio.Task[None] | None = None
         if flux_vitesse:
@@ -952,12 +1516,26 @@ class WebRTCAdapter:
             await asyncio.sleep(0.8)
 
         try:
-            code = await self._commander(nom)
+            self._refuser_si_secours()
+            code = await self._commander(
+                nom,
+                # Un geste met le robot en mouvement : il acquitte APRÈS
+                # l'avoir exécuté (6,5 s mesurés pour « faire un cœur » le
+                # 21/10/2026). Avec le délai court de 3 s, le service
+                # abandonnait le geste et envoyait l'instruction SUIVANTE
+                # pendant que le robot faisait encore son geste : celle-ci
+                # était alors avalée.
+                timeout_s=self.POSTURE_TIMEOUT_S,
+            )
+        except SafetyInterrupt:
+            raise
         except AdapterError as exc:
             raise AdapterError(f"Le robot n’a pas acquitté le geste : {exc}") from exc
         finally:
             if flux is not None:
                 flux.cancel()
+
+        self._refuser_si_secours()
 
         if code is None:
             return CommandOutcome(
@@ -974,6 +1552,26 @@ class WebRTCAdapter:
 
         # Le geste dure quelques secondes : on attend la fin du mouvement.
         await self._attendre_stable()
+        self._refuser_si_secours()
+
+        if nom == "Damp":
+            # « Se coucher » : on vérifie que le robot est bien allongé.
+            # La commande peut être avalée si le robot vient de faire un
+            # geste (il est encore en mouvement). On réessaie une fois.
+            if not await self._attendre_alleonge():
+                log.info("Le robot ne s'est pas allongé : on réessaie.")
+                try:
+                    await self._commander(nom, timeout_s=self.POSTURE_TIMEOUT_S)
+                except AdapterError as exc:
+                    log.warning("Se coucher : commande refusée (%s).", exc)
+                if not await self._attendre_alleonge():
+                    return CommandOutcome(
+                        index=index,
+                        outcome="timeout",
+                        detail="Le robot n’a pas voulu s’allonger.",
+                    )
+                self._posture = Posture.LIE_DOWN
+
         if reprendre_la_main:
             self._prendre_la_main()
             if not await self._attendre_pret():
@@ -1006,6 +1604,7 @@ class WebRTCAdapter:
         """
         if not self._est_debout():
             await self._relever()
+        self._refuser_si_secours()
 
         code = self._code_etat
         if code is not None and code not in self.ETAT_PRET:
@@ -1028,6 +1627,7 @@ class WebRTCAdapter:
                     "transition de posture.",
                     recoverable=True,
                 )
+            self._refuser_si_secours()
 
     async def _do_move(
         self, command: RobotCommand, index: int, should_stop: StopSignal
@@ -1040,6 +1640,7 @@ class WebRTCAdapter:
         # de lui-même ; on le fait explicite, pour ne pas laisser le mouvement
         # dépendre d'un effet de bord.
         await self._se_preparer_a_bouger()
+        self._refuser_si_secours()
 
         # Dernier point de controle avant que la valeur n'atteigne le canal.
         assert_speed_within_limits(plan, self._limits)
@@ -1078,10 +1679,19 @@ class WebRTCAdapter:
         dernier_envoi = 0.0
         resultat = "exact"
         motif: str | None = None
+        securite: str | None = None
         try:
             while True:
                 if should_stop is not None and should_stop.requested:
                     resultat = "stopped"
+                    break
+
+                if self._securite.latched:
+                    resultat = "stopped"
+                    securite = (
+                        self._securite.reason
+                        or "Le robot s’est arrêté pour sa sécurité."
+                    )
                     break
 
                 maintenant = time.monotonic()
@@ -1142,6 +1752,16 @@ class WebRTCAdapter:
         # L'arrêt est envoyé ; on laisse au robot le temps de s'immobiliser
         # avant de lire la position. Le bloc suivant ne démarre qu'après.
         await asyncio.sleep(self.STOP_SETTLE_S)
+        if securite is None and self._securite.latched:
+            # Le verrouillage a pu être posé juste après la dernière lecture
+            # de la boucle : la fin de ce pas doit tout de même être signalée
+            # comme une sécurité, pas comme un succès.
+            securite = (
+                self._securite.reason
+                or "Le robot s’est arrêté pour sa sécurité."
+            )
+        if securite is not None:
+            raise SafetyInterrupt(securite)
         return self._bilan_distance(index, depart_xy, resultat, motif)
 
     async def _tourner(
@@ -1189,10 +1809,19 @@ class WebRTCAdapter:
         parcouru = 0.0
         resultat = "exact"
         motif: str | None = None
+        securite: str | None = None
         try:
             while True:
                 if should_stop is not None and should_stop.requested:
                     resultat = "stopped"
+                    break
+
+                if self._securite.latched:
+                    resultat = "stopped"
+                    securite = (
+                        self._securite.reason
+                        or "Le robot s’est arrêté pour sa sécurité."
+                    )
                     break
 
                 maintenant = time.monotonic()
@@ -1243,6 +1872,15 @@ class WebRTCAdapter:
         await asyncio.sleep(self.ROTATION_SETTLE_S)
         if self._cap_cumule is not None:
             parcouru = self._cap_cumule - depart
+        if securite is None and self._securite.latched:
+            # Même raison que pour la translation : aucun pas ne doit finir
+            # en « réussi » si le verrouillage a été posé pendant l'arrêt.
+            securite = (
+                self._securite.reason
+                or "Le robot s’est arrêté pour sa sécurité."
+            )
+        if securite is not None:
+            raise SafetyInterrupt(securite)
         return self._bilan_angle(index, parcouru, resultat, motif)
 
     def _bilan_distance(
@@ -1362,66 +2000,6 @@ class WebRTCAdapter:
         except Exception:  # noqa: BLE001
             return None
 
-    # -- Mode autonome -----------------------------------------------------
-
-    async def set_autonome(self, actif: bool) -> bool:
-        """Active ou coupe la marche autonome du robot.
-
-        Deux commandes officielles du SDK :
-        - l'évitement d'obstacles (`rt/api/obstacles_avoid/request`,
-          `SWITCH_SET`) : c'est lui qui allume le lidar ;
-        - la marche libre (`FreeWalk`), que le robot exécute tout seul.
-
-        Couper le mode s'arrête d'abord le robot, puis éteint l'évitement.
-        """
-        connexion = self._connexion
-        if connexion is None:
-            return False
-
-        if not actif:
-            await self.request_stop()
-            self._autonome = False
-            self._publier_avoid(False)
-            return True
-
-        self._publier_avoid(True)
-        try:
-            code = await self._commander("FreeWalk")
-        except AdapterError as exc:
-            log.warning("Marche autonome refusee : %s", exc)
-            self._publier_avoid(False)
-            return False
-        if code is None:
-            log.warning("Marche autonome : le robot n'a pas repondu.")
-            self._publier_avoid(False)
-            return False
-        if code != 0:
-            # 3203 : le robot refuse dans l'espace de commandes normal.
-            # La marche libre de l'application passe par l'espace MCF, qui
-            # exige au prealable la bascule de mode (`motion_switcher`).
-            log.warning("Marche autonome refusee par le robot (code %s).", code)
-            self._publier_avoid(False)
-            return False
-        self._autonome = True
-        return True
-
-    def _publier_avoid(self, actif: bool) -> None:
-        """Allume (ou éteint) l'évitement d'obstacles du robot."""
-        connexion = self._connexion
-        if connexion is None:
-            return
-        sujet = self._rtc.get(
-            "OBSTACLES_AVOID", "rt/api/obstacles_avoid/request"
-        )
-        try:
-            connexion.datachannel.pub_sub.publish_without_callback(
-                topic=sujet,
-                data={"api_id": 1001, "parameter": {"enable": actif}},
-            )
-            log.info("Evitement d'obstacles : %s", "actif" if actif else "coupe")
-        except Exception as exc:  # noqa: BLE001
-            log.info("Evitement d'obstacles indisponible : %s", exc)
-
     # -- Lidar -------------------------------------------------------------
 
     async def _demarrer_lidar(self) -> None:
@@ -1456,6 +2034,50 @@ class WebRTCAdapter:
         except Exception as exc:  # noqa: BLE001
             log.info("Lidar indisponible : %s", exc)
 
+    def _sur_etat_lidar(self, donnees: dict[str, Any]) -> None:
+        """Mémorise l'état du lidar : rotation, salissure, erreur.
+
+        C'est le message `rt/utlidar/lidar_state`. Il porte l'état de la
+        fenêtre tournante : quand elle frotte le sol, sa rotation réelle
+        ralentit et le firmware peut signaler une erreur ou de la saleté.
+        """
+        erreur = donnees.get("error_state")
+        salissure = donnees.get("dirty_percentage")
+        sys_speed = donnees.get("sys_rotation_speed")
+        com_speed = donnees.get("com_rotation_speed")
+        ratio: float | None = None
+        if (
+            isinstance(com_speed, (int, float))
+            and isinstance(sys_speed, (int, float))
+            and sys_speed
+        ):
+            ratio = float(com_speed) / float(sys_speed)
+            # Seules les rotations NORMALES entrent dans l'historique : un
+            # blocage durable ne doit pas décaler la référence, sinon le
+            # détecteur s'éteindrait de lui-même au bout de quelques
+            # secondes.
+            if self._rotation_normale(ratio):
+                self._rotations.append(ratio)
+        nouveau = {
+            "erreur": erreur,
+            "salissure": salissure,
+            "rotation_sys": sys_speed,
+            "rotation_com": com_speed,
+            "ratio": round(ratio, 5) if ratio is not None else None,
+        }
+        # On ne journalise que ce qui change vraiment : l'IMU du lidar, lui,
+        # bouge a chaque tour de tete.
+        signature = (
+            erreur,
+            salissure,
+            round(ratio, 4) if ratio is not None else None,
+        )
+        if signature != self._signature_lidar:
+            self._signature_lidar = signature
+            self._etat_lidar = nouveau
+            self._etat_lidar_at = time.monotonic()
+            log.info("Lidar : état %s", nouveau)
+
     def _sur_lidar(self, message: Any) -> None:
         """Une carte du lidar est arrivée.
 
@@ -1475,6 +2097,12 @@ class WebRTCAdapter:
                 for cle, valeur in donnees.items()
             }
             log.info("Lidar : premier message sur %s, structure %s", sujet, resume)
+
+        if "error_state" in donnees:
+            # C'est l'etat du lidar lui-meme, pas la carte : il dit si sa
+            # fenetre tournante frotte quelque chose.
+            self._sur_etat_lidar(donnees)
+            return
 
         cells = self._cellules_2d(donnees)
         if cells:
@@ -1678,21 +2306,31 @@ class WebRTCAdapter:
         sans attente de reponse — un arret qui depend du reseau n'est pas un
         arret.
 
-        ⚠️ EXCEPTION : si le robot est ASSIS, on n'envoie RIEN.
-
+        ⚠️ EXCEPTION 1 : si le robot est ASSIS ou ALLONGÉ, on n'envoie RIEN.
         Sur un Go2, une commande `Move` releve le robot, et `StopMove` le
         releve aussi : la fin d'un programme termine par « s'asseoir » le
-        remettrait debout aussitot, sans que l'ait demande. Un robot assis
-        ne se deplace pas : il n'y a donc aucune consigne de mouvement a
-        annuler, et le silence est la seule reponse honnete.
+        remettrait debout aussitot, sans que l'ait demande.
+
+        ⚠️ EXCEPTION 2 : si un arrêt de sécurité est actif, on n'envoie RIEN
+        non plus. Le déclencheur a déjà envoyé `Move(0)`, `StopMove` puis
+        `Damp`. Renvoyer `Move` ici relèverait le robot et annulerait le
+        relâchement des pattes.
         """
-        self._state = RobotState.IDLE
+        # Un arrêt de sécurité reste un état d'erreur tant que le robot n'est
+        # pas réarmé : la fin de programme ne doit pas le faire disparaître.
+        if not self._securite.latched:
+            self._state = RobotState.IDLE
+        # Le programme est fini : c'est le moment où le relevage automatique
+        # peut agir, si le lidar est bloqué.
+        self._programme_en_cours = False
         if self._connexion is None:
             return
-        if self._est_assis() or self._est_alleonge():
-            # Assis ou allongé : le robot ne se déplace pas, il n'y a donc
-            # aucune consigne à annuler. Et surtout : une consigne de vitesse
-            # le relèverait.
+        if self._securite.latched:
+            return
+        if self._est_au_sol():
+            # Assis, allongé, ou en train de se poser : le robot ne se
+            # déplace pas, il n'y a donc aucune consigne à annuler. Et
+            # surtout : une consigne de vitesse le relèverait.
             log.info("Robot au sol : aucune consigne d'arret envoyee.")
             return
         try:
@@ -1722,8 +2360,11 @@ class WebRTCAdapter:
             rapport["message"] = "Le robot n’est pas connecté."
             return rapport
 
+        # La descente en position assise décharge les pieds avant que le code
+        # d'état ne passe à 1007 : ce n'est pas un portage.
+        self._posture_grace_until = time.monotonic() + self.POSTURE_GRACE_S
         try:
-            code = await self._commander("Sit")
+            code = await self._commander("Sit", timeout_s=self.POSTURE_TIMEOUT_S)
         except AdapterError as exc:
             rapport["message"] = str(exc)
             return rapport

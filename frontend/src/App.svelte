@@ -55,12 +55,11 @@
   );
 
   const walking = $derived(
-    app.autonome ||
-      (app.execution === 'running' &&
-        (runningKind === 'forward' ||
-          runningKind === 'backward' ||
-          runningKind === 'turn_left' ||
-          runningKind === 'turn_right')),
+    app.execution === 'running' &&
+      (runningKind === 'forward' ||
+        runningKind === 'backward' ||
+        runningKind === 'turn_left' ||
+        runningKind === 'turn_right'),
   );
 
   $effect(() => {
@@ -182,13 +181,28 @@
     status={app.status}
     busy={app.isBusy}
     blockCount={blocks.length}
-    autonome={app.autonome}
     onStart={start}
     onStop={stop}
     onSave={save}
     onOpenRobot={() => (showRobot = true)}
-    onToggleAutonome={() => void app.toggleAutonome()}
   />
+
+  {#if app.status.safetyReason}
+    <div class="safety" role="alert" aria-live="assertive">
+      <span class="safety__icon" aria-hidden="true">🛑</span>
+      <div class="safety__text">
+        <strong>Le robot s’est arrêté pour ta sécurité.</strong>
+        <p>{app.status.safetyReason}</p>
+      </div>
+    </div>
+  {:else if app.status.recoveryReason}
+    <div class="safety safety--info" role="status" aria-live="polite">
+      <span class="safety__icon" aria-hidden="true">🐕</span>
+      <div class="safety__text">
+        <p>{app.status.recoveryReason}</p>
+      </div>
+    </div>
+  {/if}
 
   <main class="app__main">
     <div class="app__library">
@@ -204,6 +218,7 @@
         {blocks}
         {runningIndex}
         busy={app.isBusy}
+        blocked={Boolean(app.status.safetyReason)}
         notice={app.notice}
         onAdd={addBlock}
         onRemove={removeBlock}
@@ -281,6 +296,51 @@
     height: 100vh;
     min-height: 0;
     padding: 14px 18px 18px;
+  }
+
+  .safety {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin: 0 0 14px;
+    padding: 12px 16px;
+    border: 1px solid #a33a45;
+    border-radius: 16px;
+    background: linear-gradient(180deg, #3b1b20, #2d1519);
+    color: #ffd7db;
+    box-shadow: 0 10px 24px rgb(0 0 0 / 28%);
+  }
+
+  .safety--info {
+    border-color: #2f6d55;
+    background: linear-gradient(180deg, #1c3a30, #16302a);
+    color: #d6f2e4;
+  }
+
+  .safety--info .safety__text p {
+    color: #a9d8c3;
+  }
+
+  .safety__icon {
+    font-size: 24px;
+    line-height: 1.1;
+  }
+
+  .safety__text {
+    min-width: 0;
+  }
+
+  .safety__text strong {
+    display: block;
+    font-size: 17px;
+    letter-spacing: -0.01em;
+  }
+
+  .safety__text p {
+    margin: 3px 0 0;
+    color: #f3b6bd;
+    font-size: 14px;
+    line-height: 1.35;
   }
 
   .app__main {

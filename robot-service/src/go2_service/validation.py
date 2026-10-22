@@ -112,7 +112,11 @@ _MOVE_KINDS = frozenset(
 )
 _TURN_KINDS = frozenset({CommandKind.TURN_LEFT, CommandKind.TURN_RIGHT})
 #: Postures NON vérifiées dans les exemples officiels unitree_sdk2 lus.
-UNVERIFIED_POSTURES = frozenset({CommandKind.LIE_DOWN})
+#:
+#: `LIE_DOWN` (`Damp`) en faisait partie. Il en a été retiré le 21/10/2026 :
+#: la posture a été MESURÉE sur le robot réel (le corps passe de 0,32 m à
+#: 0,05 m, et le robot publie `1001`).
+UNVERIFIED_POSTURES = frozenset()
 
 
 @dataclass(frozen=True)
@@ -179,7 +183,7 @@ class RobotCommand:
             case CommandKind.SIT_DOWN:
                 return "S’asseoir"
             case CommandKind.LIE_DOWN:
-                return "Se coucher (simulation seulement)"
+                return "Se coucher"
             case CommandKind.BALANCE:
                 return "Se stabiliser debout"
             case CommandKind.FINGER_HEART:

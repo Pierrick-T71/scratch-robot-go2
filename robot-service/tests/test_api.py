@@ -45,6 +45,7 @@ class TestStatus:
         body = response.json()
         assert body["mode"] == "simulation"
         assert body["executing"] is False
+        assert body["safetyReason"] is None
 
     def test_simulation_offers_the_sensor_the_robot_does_not_have(self, client):
         # Le simulateur propose la détection d'obstacle ; l'adaptateur

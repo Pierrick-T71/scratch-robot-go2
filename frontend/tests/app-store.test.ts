@@ -55,6 +55,8 @@ beforeEach(() => {
     capabilities: [],
     executing: false,
     blockedReason: null,
+    safetyReason: null,
+    recoveryReason: null,
     position: null,
     yawRad: null,
     batteryPercent: 100,

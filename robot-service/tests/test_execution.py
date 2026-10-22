@@ -21,18 +21,23 @@ from go2_service.adapters.base import (  # noqa: E402
     Posture,
     RobotAdapter,
     RobotState,
+    SafetyInterrupt,
     Status,
     StopSignal,
 )
 from go2_service.adapters.motion import plan_command  # noqa: E402
+from go2_service.adapters.simulated import SimulatedAdapter  # noqa: E402
 from go2_service.config import load_limits  # noqa: E402
 from go2_service.execution import (  # noqa: E402
     FINISH_COMPLETED,
     FINISH_ERROR,
+    FINISH_SAFETY,
     FINISH_STOPPED,
     ConcurrentExecutionError,
     ExecutionEngine,
 )
+from go2_service.main import ServiceState  # noqa: E402
+from go2_service.safety import SafetyWatchdog  # noqa: E402
 from go2_service.interpreter import ProgramError, RobotTruth  # noqa: E402
 from go2_service.program import parse_program  # noqa: E402
 from go2_service.validation import (  # noqa: E402
@@ -100,9 +105,6 @@ class FakeAdapter:
 
     async def lidar_volume(self) -> dict[str, Any] | None:
         return None
-
-    async def set_autonome(self, actif: bool) -> bool:
-        return False
 
     def supports(self, capability: Capability) -> bool:
         return capability in ALWAYS_AVAILABLE
@@ -431,6 +433,81 @@ class TestSafety:
             asyncio.run(collect())
         # L'arrêt a bien été demandé malgré l'exception.
         assert adapter.stop_calls >= 1
+
+    def test_un_arret_de_securite_termine_le_programme_en_safety(self):
+        # L'adaptateur a détecté un portage et a déjà envoyé `StopMove`. Le
+        # moteur doit arrêter le programme avec la raison « safety » et ne
+        # jamais enchaîner sur l'instruction suivante.
+        class SafetyAdapter(FakeAdapter):
+            async def execute_command(self, command, index, should_stop):
+                self.executed.append(command)
+                raise SafetyInterrupt("Le robot a été soulevé.")
+
+        adapter = SafetyAdapter()
+        engine = ExecutionEngine(adapter, LIMITS)
+        events = run(engine, parse_program(SIMPLE_PLAN))
+
+        assert events[-1].reason == FINISH_SAFETY
+        assert len(adapter.executed) == 1
+        assert adapter.stop_calls >= 1
+        assert any(
+            event.type == "step_finished" and event.outcome == "stopped"
+            for event in events
+        )
+
+    def test_un_arret_de_securite_pendant_la_preparation_ne_bouge_pas(self):
+        class SafetyPrepare(FakeAdapter):
+            async def prepare_run(self) -> None:
+                raise SafetyInterrupt("Le robot n’a plus d’appui au sol.")
+
+        adapter = SafetyPrepare()
+        engine = ExecutionEngine(adapter, LIMITS)
+        events = run(engine, parse_program(SIMPLE_PLAN))
+
+        assert events[-1].reason == FINISH_SAFETY
+        assert adapter.executed == []
+        assert adapter.stop_calls >= 1
+
+    def test_le_chien_de_garde_termine_le_programme_sur_un_verrouillage(self):
+        from go2_service.execution import ActiveExecution
+
+        class SafetyAdapter(FakeAdapter):
+            safety_stop_reason = "Le robot a été soulevé : il s’est arrêté."
+
+        adapter = SafetyAdapter()
+        engine = ExecutionEngine(adapter, LIMITS)
+        engine._active = ActiveExecution(run_id="run-safety")  # noqa: SLF001
+        chien = SafetyWatchdog(engine, adapter, LIMITS)
+
+        resultat = chien.tick()
+
+        assert resultat.triggered is True
+        assert resultat.reason == adapter.safety_stop_reason
+        assert engine._active.stop_signal.reason == FINISH_SAFETY  # noqa: SLF001
+        assert chien.trips == 1
+
+    async def test_le_chien_de_garde_est_relance_apres_branchement(self):
+        # `adopt_robot_adapter` reconstruit le moteur ET le chien de garde.
+        # Sans redémarrage explicite de ce dernier, plus aucun bail n'était
+        # surveillé après un branchement réel.
+        limits = load_limits()
+        simulation = SimulatedAdapter(limits)
+        await simulation.connect()
+        etat = ServiceState(limits=limits, adapter=simulation)
+        await etat.watchdog.start()
+        premier = etat.watchdog
+
+        try:
+            await etat.adopt_robot_adapter(simulation)
+            assert premier.running is False
+            assert etat.watchdog.running is True
+            assert etat.mode == "real"
+
+            await etat.release_robot_adapter()
+            assert etat.mode == "simulation"
+            assert etat.watchdog.running is True
+        finally:
+            await etat.watchdog.stop()
 
 
 class TestInterpreterBounds:

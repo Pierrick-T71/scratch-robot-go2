@@ -53,9 +53,10 @@ client.Init()
 | `StandUp()` | C++ et Python | ✅ se lever |
 | `StandDown()` | C++ et Python | ✅ s'asseoir (repli) |
 | `Hello()`, `Stretch()` | Python | ✅ saluer, s'étirer |
-| `Damp()` | C++ et Python | ✅ arrêt de sécurité (à qualifier) |
+| `Damp()` | C++ et Python | ✅ se coucher, et relâcher les pattes en sécurité de portage |
 | `BalanceStand()`, `RecoveryStand()` | C++ et Python | ✅ mais inutilisés ici |
-| `HandStand`, `LeftFlip`, `BackFlip`, `FreeWalk`, `FreeBound`, `FreeAvoid`, `WalkUpright`, `CrossStep`, `FreeJump` | Python | ❌ **écartés** : acrobaties dangereuses |
+| `HandStand`, `LeftFlip`, `BackFlip`, `FreeBound`, `FreeAvoid`, `WalkUpright`, `CrossStep`, `FreeJump` | Python | ❌ **écartés** : acrobaties dangereuses |
+| `FreeWalk` | Python | ❌ **écarté** : le robot le refuse (`3203`) dans l'espace de commandes normal ; il faudrait basculer en mode MCF (`rt/api/motion_switcher/request`), non documenté |
 | `Sit()`, `RiseSit()` | **C++ seulement** | ❓ **à vérifier** en Python |
 | `SwitchGait()`, `Euler()`, `BodyHeight()` | C++ | ❌ hors périmètre pédagogique |
 
@@ -108,6 +109,43 @@ Règles retenues dans l'adaptateur (`adapters/webrtc.py`) :
   il n'y a donc aucune consigne à annuler ;
 - `_do_move()` : un déplacement demandé alors que le robot est assis commence
   par un `StandUp` explicite.
+
+### « S'asseoir » ne tenait pas : l'acquittement arrive trop tard (21/10/2026)
+
+Constat sur le robot réel : le programme « s'asseoir » revenait avec
+« temps écoulé (non mesuré) », et le chien **se relevait aussitôt**.
+
+Chronologie mesurée (journal du service) :
+
+| Instant | Événement |
+|---|---|
+| 12:56:28,4 | commande `Sit` envoyée |
+| 12:56:31,5 | délai de 3 s dépassé : le service abandonne la commande |
+| 12:56:32,4 | le robot publie `1006` (début de transition) |
+| 12:56:32,6 | le robot publie `1007` — **il est bien assis** |
+| 12:56:32,6 | `2005` puis `100` : l'arrêt de fin de programme le relève |
+
+Deux causes, corrigées :
+
+1. **Le délai d'acquittement de 3 s était trop court.** Le robot acquitte
+   « s'asseoir » après 2 s, parfois plus de 3 s (il attend la fin de son
+   cycle de marche). Une commande de posture a désormais son propre délai
+   (`POSTURE_TIMEOUT_S = 8 s`).
+2. **L'acquittement peut se perdre alors que le robot obéit.** Dans ce cas,
+   c'est l'**état publié par le robot** qui fait foi : `1007` = assis. Le
+   service attend donc la posture publiée (`_attendre_posture()`) au lieu de
+   conclure à un échec. Comme la posture est alors vraiment tenue, l'arrêt
+   de fin de programme n'envoie rien (`_est_assis()` est vrai) et le robot
+   **reste assis**.
+
+Vérifié le 21/10/2026 sur le robot réel : programme « s'asseoir » → `1006`
+puis `1007`, hauteur 0,31 m → 0,22 m, et **20 s plus tard le chien est
+toujours assis**. Le programme suivant le relève : `1002` → `100`, sans
+aucun arrêt de sécurité.
+
+Le code d'état est désormais journalisé à chaque changement
+(`Etat du robot : 1007`) : c'est la trace qui a permis de comprendre la
+chrono ci-dessus.
 
 ### Durée réelle et angle réel (corrigé le 21/10/2026)
 
@@ -285,20 +323,6 @@ renverrait l'utilisateur à sa position de départ à chaque balayage.
 Le rendu est allégé : 12 000 cubes au maximum, et un pixel ratio plafonné à
 1,5 — au-delà, un rendu logiciel ne suit plus.
 
-### La marche autonome
-
-Le bouton « étoiles » (hors des blocs, c'est un **mode**, pas une
-instruction) envoie la commande `FreeWalk` (`SPORT_CMD["FreeWalk"] = 1045`),
-après avoir allumé l'évitement d'obstacles
-(`rt/api/obstacles_avoid/request`, `SWITCH_SET`).
-
-⚠️ Le robot **refuse** cette commande dans l'espace de commandes normal :
-il répond `3203` (« le robot n'a pas accepté la marche autonome », dit
-l'interface). La marche libre de l'application passe par l'espace **MCF**
-(`SPORT_CMD_MCF`), qui exige au préalable la bascule de mode par
-`rt/api/motion_switcher/request` — une handshake que le SDK ne fait pas
-lui-même. C'est la prochaine étape.
-
 ### Les gestes du corps
 
 Quatre gestes, tous des commandes officielles du SDK, sont exposés à l'enfant :
@@ -328,6 +352,79 @@ Deux autres actions, elles aussi officielles du SDK :
 | « Se coucher » | `Damp` (1001) | le corps passe de 0,32 m à **0,05 m** : allongé par terre, et il y reste |
 | « Donner un coup de patte » | `FrontPounce` (1032) | le robot s'accroupit (0,18 m) et pousse très fort, vers l'avant |
 
+### Le robot s'allonge à la fin d'un programme : les gestes avalent la commande
+
+Constat du 21/10/2026 : un programme « faire un cœur » puis « se coucher »
+laissait le chien **debout**. Trois causes, corrigées :
+
+1. **Le geste acquittait 6,5 s plus tard.** Le service attendait 3 s,
+   abandonnait, et envoyait « se coucher » **pendant que le robot faisait
+   encore son geste** : la commande était alors avalée. Les gestes ont
+   désormais le même délai que les postures (8 s).
+2. **« Se coucher » n'était pas vérifié.** La commande partait, sans qu'on
+   regarde si le robot s'était réellement allongé. C'est désormais vérifié
+   sur l'**état publié** (`1001`), et la commande est renvoyée une fois si
+   le robot n'a pas obéi.
+3. **L'arrêt de fin de programme relevait le chien.** Pendant la transition
+   vers la position allongée (`1006`), le service envoyait quand même
+   `Move(0)` + `StopMove` — et sur un Go2, `Move` relève le robot. Pendant
+   une transition de posture, **aucune** consigne de vitesse n'est envoyée.
+
+Le « se coucher » a aussi été retiré des postures « non vérifiées » : il
+est mesuré sur le robot réel (le corps passe de 0,32 m à 0,05 m, et le
+robot publie `1001`).
+
+### L'état du lidar (`rt/utlidar/lidar_state`)
+
+Le message porte l'état de la fenêtre tournante du lidar :
+
+| Champ | Signification (mesurée le 21/10/2026) |
+|---|---|
+| `error_state` | 0 en toutes circonstances dans nos essais, y compris allongé |
+| `dirty_percentage` | **0 à 8 %** debout, **61 à 70 %** allongé par terre |
+| `sys_rotation_speed` | rotation demandée, ≈ 12917 |
+| `com_rotation_speed` | rotation réelle, ≈ 261.8 (ratio ≈ 0,0203) |
+| `imu_rpy` | attitude de la **tête** du lidar : elle tourne, ce n'est pas l'assiette du robot |
+
+⚠️ **`dirty_percentage` n'est PAS un indice de blocage.** Il monte à 63 %
+quand le chien s'allonge, alors que son lidar tourne librement. La
+première version du relevage automatique s'appuyait dessus : le chien se
+relevait à chaque « se coucher ». C'est faux, et le critère a été remplacé
+par la **rotation réelle**.
+
+Le signal juste, c'est la **rotation réelle** (`com_rotation_speed`) :
+quand la fenêtre frotte contre le sol, le contrôleur du lidar change de
+régime et la rotation s'écarte de sa valeur normale. Mesures du 21/10/2026
+(ratio = rotation réelle / rotation demandée) :
+
+| Situation | ratio | écart à la médiane |
+|---|---|---|
+| normal, debout ou allongé | 0,0202 – 0,0203 | ±1 % |
+| pendant un relèvement | 0,0182 | −10 % |
+| **lidar bloqué (14:14:44)** | **0,0334** | **+64 %** |
+| **lidar bloqué (13:55:59)** | **0,0114** | **−44 %** |
+
+⚠️ **Le blocage se manifeste dans les deux sens.** La première version ne
+regardait que la baisse : elle a vu le blocage de 13:55, mais laissé passer
+celui de 14:14 (rotation en hausse) — le chien est resté allongé, le lidar
+bloqué. Le critère est donc un **écart** de plus de **25 %** dans les deux
+sens.
+
+Le seuil retenu est donc **25 % d'écart** autour de la **médiane** des
+60 dernières rotations. La médiane, et non le maximum : une mesure anormale
+(0,0729, relevée pendant une pose) ferait otherwise passer l'échelle de
+3,6×, et tout le reste de la session semblerait « bloqué » — c'est ce qui
+s'est passé, et le chien se relevait à chaque « se coucher ».
+
+Et **seules les mesures normales** entrent dans l'historique : sinon un
+blocage durable décalerait la référence, et le détecteur s'éteindrait de
+lui-même au bout de quelques secondes.
+
+Le premier vrai blocage a été observé le 21/10/2026 : le chien s'est relevé
+tout seul 2,4 s après le blocage (confirmation d'une seconde + commande).
+Le second (14:14) n'a **pas** été détecté avant la correction ci-dessus.
+Deux échantillons ne prouvent pas la marge : il faut en observer d'autres.
+
 ### Le robot ne saute pas (pour l'instant)
 
 Les cinq commandes de saut du SDK ont été essayées et mesurées
@@ -344,6 +441,10 @@ bas) : zéro signifie que le pied ne touche plus le sol.
 | `FreeJump`, `FreeBound` | 274 (constant) | 0,309 → 0,311 m | sans effet |
 
 **Les pieds ne déchargent jamais** : le robot garde toujours un pied au sol.
+
+Mesure complémentaire du 21/10/2026, robot debout au repos : `[86, 97, 86,
+89]`, puis `[86, 101, 85, 88]`, soit une somme de **358 à 360**. Le seuil de
+portage à 60 reste donc très en dessous d'un appui normal.
 Le pic d'accélération verticale (31 m/s², soit 3 g) montre une poussée
 violente, mais le robot ne décolle pas.
 
@@ -351,6 +452,12 @@ violente, mais le robot ne décolle pas.
 contrôleur, pas une mesure ; l'odométrie (`position[2]`) est une
 *estimation* qui s'emballe pendant un mouvement violent. Seuls les efforts
 dans les pieds disent si le robot est en l'air.
+
+Ces efforts servent désormais à la protection de portage : une somme sous 60
+pendant que le robot est debout déclenche `Move(0)`, `StopMove`, puis `Damp`,
+et un verrouillage. `Damp` relâche les pattes pour qu'elles cessent de chercher
+un équilibre dans les mains de la personne qui porte le robot. Voir
+`docs/SAFETY.md`, section « Détection de portage ».
 
 ### La commande qui manque peut-être : parler en vitesse
 
@@ -411,13 +518,14 @@ Ces points sont **inconnus**, pas « probablement bons ». Les vérifier :
 | 5 | Signature **réelle** de `SportClient.Move` (ordre vx/vy/vyaw) | `python -c "import inspect; from unitree_sdk2py.go2.sport.sport_client import SportClient; print(inspect.signature(SportClient.Move))"` |
 | 6 | `Sit()` / `RiseSit()` existent-elles en Python ? | `dir(SportClient)` |
 | 7 | Comportement **réel** de `StopMove()` : arrêt net ou amorti ? Délai ? | essai §5 |
-| 8 | `Damp()` est-il l'arrêt le plus sûr ? | essai §6 |
+| 8 | `Damp()` est-il l'arrêt le plus sûr ? | essai §6 — **utilisé pour la sécurité de portage (relâcher les pattes), jamais testé physiquement** |
 | 9 | Signification du code d'erreur retourné par `Move()` | essai §7 |
 | 10 | Fiabilité de `position()` comme retour | comparaison §8 |
 | 11 | Fréquence de publication acceptée | essai §9 |
 | 12 | Interface réseau : `ip addr` montre `eth0` ? | `ip -br addr` |
 | 13 | La télécommande officielle et l'app Unitree ne rentrent-elles pas en conflit ? | essai §10 |
 | 14 | Les licences/options autorisent-elles le contrôle programmatique ? | documentation Unitree |
+| 15 | **Que vaut `com_rotation_speed` quand le lidar frotte le sol ?** | −44 % (13:55) ou +64 % (14:14) par rapport à la médiane — **à confirmer sur d'autres blocages** |
 
 ---
 
@@ -540,8 +648,12 @@ C'est le point le plus important de la campagne.
 1. `StopMove()` immobilise-t-il le robot **immédiatement** ?
 2. Combien de temps entre l'envoi et l'arrêt effectif ?
 3. Le robot a-t-il une **inertie résiduelle** (il roule encore) ?
-4. `Damp()` donne-t-il un arrêt plus sûr, ou moins ?
-5. Le robot se **relève-t-il** après un `Damp()` ?
+4. `Damp()` donne-t-il un arrêt plus sûr, ou moins ? **Il est désormais
+   envoyé par la sécurité de portage, pour relâcher les pattes : il reste
+   à vérifier sur le robot réel.**
+5. Le robot se **relève-t-il** après un `Damp()` ? *(Il ne se relève pas tout
+   seul : après un `Damp`, le service réarme quand les quatre pieds
+   portent, et le programme suivant le relève.)*
 6. Que se passe-t-il si on coupe le réseau **pendant** un `Move()` ?
 
 > Si la réponse à la question 6 est « le robot continue de marcher », c'est

@@ -88,6 +88,16 @@ class SafetyWatchdog:
         if not self._engine.is_running:
             return WatchdogResult(triggered=False)
 
+        # Le robot a détecté un portage. L'adaptateur a déjà envoyé l'arrêt
+        # physique puis `Damp` ; le moteur doit terminer le programme avec la
+        # raison « safety », pas continuer l'instruction suivante.
+        securite = getattr(self._adapter, "safety_stop_reason", None)
+        if securite:
+            self.trips += 1
+            log.warning("Sécurité du robot : %s (total: %d)", securite, self.trips)
+            self._engine.request_stop(FINISH_SAFETY)
+            return WatchdogResult(triggered=True, reason=securite)
+
         now = time.monotonic()
         if not self._engine.lease_expired(now, self._limits.safety.lease_timeout_ms):
             return WatchdogResult(triggered=False)

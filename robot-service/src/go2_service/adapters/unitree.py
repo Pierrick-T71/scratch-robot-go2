@@ -809,10 +809,6 @@ class UnitreeAdapter:
         """Ce canal ne transporte pas de lidar : aucun point, jamais inventé."""
         return None
 
-    async def set_autonome(self, actif: bool) -> bool:
-        """Ce canal ne sait pas faire marcher le robot tout seul."""
-        return False
-
     def __del__(self) -> None:
         # Ne JAMAIS laisser une consigne de vitesse active en mémoire.
         self._publish_running = False

@@ -10,9 +10,11 @@
   let { onHelp, onSettings }: Props = $props();
 
   const connection = $derived(
-    app.status.connected
-      ? { tone: 'ok' as const, text: 'Robot connecté' }
-      : { tone: 'danger' as const, text: 'Robot non connecté' },
+    app.status.safetyReason
+      ? { tone: 'danger' as const, text: 'Robot à l’arrêt' }
+      : app.status.connected
+        ? { tone: 'ok' as const, text: 'Robot connecté' }
+        : { tone: 'danger' as const, text: 'Robot non connecté' },
   );
 
   const mode = $derived(

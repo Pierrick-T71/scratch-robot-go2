@@ -26,6 +26,8 @@ go2-scratch/
 │     ├─ execution.py         Moteur d'exécution
 │     ├─ validation.py        Validation AUTORITATIVE
 │     ├─ safety.py            Chien de garde et bail
+│     ├─ state_safety.py      Détection de portage (appuis des pieds)
+│     ├─ recovery.py          Relevage automatique si le lidar frotte
 │     ├─ config.py            Lecture de shared/safety-limits.json
 │     └─ adapters/            base · motion · simulated · unitree
 └─ docs/
@@ -248,6 +250,50 @@ L'arrêt est demandé à trois niveaux :
 
 Le moteur appelle `request_stop()` dans un `finally` : **aucune exécution ne se
 termine sans avoir demandé l'arrêt**, même sur exception.
+
+### 5.3 bis Détection de portage
+
+`state_safety.py` est une décision **pure**, testable sans robot. L'adaptateur
+WebRTC lui fournit deux mesures :
+
+- `foot_force` de `rt/lf/lowstate` : somme < 60 → aucun pied ne porte ;
+- le code d'état et la posture, pour exclure un `Sit`/`Damp` volontaire.
+
+L'assiette de l'IMU n'est **pas** un critère : elle produisait un faux arrêt
+pendant le relèvement après « s'asseoir ».
+
+Quand la décharge des quatre pieds est constatée, l'adaptateur envoie
+immédiatement une consigne nulle, `StopMove`, puis `Damp`. `Damp` coupe
+l'équilibrage actif et relâche les pattes : c'est ce qui arrête les mouvements
+de recherche d'appui quand le robot est porté. L'adaptateur pose ensuite un
+**verrouillage**. Toute commande suivante est refusée par `SafetyInterrupt`,
+que le moteur traduit en fin de programme `FINISH_SAFETY`.
+
+Le verrouillage se lève uniquement après une seconde de quatre appuis
+revenus. La posture n'est pas exigée : après `Damp`, le robot peut être
+allongé et sera relevé par le programme suivant. Les détails et les limites
+sont dans `docs/SAFETY.md`.
+
+### 5.3 ter Relevage automatique
+
+`recovery.py` est, comme `state_safety.py`, une décision **pure** : quand un
+robot allongé doit-il se relever tout seul ?
+
+L'adaptateur WebRTC lui fournit :
+
+- l'état publié par le robot (`1001` = allongé par terre) ;
+- le fait que **nous** ayons demandé l'allongement (bloc « se coucher ») ;
+- la mesure du blocage du lidar : la rotation réelle du lidar
+  (`com_rotation_speed`) comparée à sa nominale ;
+- le fait qu'aucun programme ne soit en cours.
+
+Quand ces quatre conditions sont réunies pendant une seconde, l'adaptateur
+envoie `StandUp` — la même commande que la préparation d'un programme, dont
+l'effet depuis la position allongée a été mesuré. L'état publié par le robot
+fait foi : le chien peut se relever même si l'acquittement se perd. En cas
+d'échec, l'interface l'annonce (`recoveryReason`).
+
+Les détails et les limites sont dans `docs/SAFETY.md`.
 
 ### 5.4 Distinguer « terminé » de « temps écoulé »
 

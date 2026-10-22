@@ -17,6 +17,8 @@
     /** Index du bloc en cours d'exécution, ou null. */
     runningIndex: number | null;
     busy: boolean;
+    /** Le robot est verrouillé par la sécurité : on ne peut pas relancer. */
+    blocked?: boolean;
     notice: AppNotice | null;
     onAdd: (kind: PlayBlockKind, index?: number) => void;
     onRemove: (id: string) => void;
@@ -31,6 +33,7 @@
     blocks,
     runningIndex,
     busy,
+    blocked = false,
     notice,
     onAdd,
     onRemove,
@@ -130,8 +133,10 @@
         class="flag"
         class:flag--busy={busy}
         aria-label="Lancer le programme"
-        title="Lancer le programme"
-        disabled={busy || blocks.length === 0}
+        title={blocked
+          ? 'Repose le robot au sol et attends qu’il soit stable avant de relancer'
+          : 'Lancer le programme'}
+        disabled={busy || blocks.length === 0 || blocked}
         onclick={onStart}
       >
         <Icon name="flag" size={22} />

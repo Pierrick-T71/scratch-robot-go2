@@ -29,7 +29,7 @@ import time
 from dataclasses import dataclass, field
 from typing import AsyncIterator
 
-from .adapters.base import AdapterError, CommandOutcome, RobotAdapter, StopSignal
+from .adapters.base import AdapterError, CommandOutcome, RobotAdapter, SafetyInterrupt, StopSignal
 from .interpreter import Interpreter, ProgramError, RobotTruth
 from .validation import RobotCommand
 
@@ -183,6 +183,10 @@ class ExecutionEngine:
         """
         try:
             await self._adapter.prepare_run()
+        except SafetyInterrupt:
+            # Le verrouillage de sécurité doit arrêter le programme, pas être
+            # avalé comme un simple refus de posture.
+            raise
         except Exception as exc:  # noqa: BLE001
             log.warning("Préparation du robot impossible : %s", exc)
 
@@ -192,7 +196,13 @@ class ExecutionEngine:
         # Le robot doit être sur ses quatre pattes avant le premier ordre.
         # S'il est resté assis (fin de programme précédente, test de liaison),
         # il se relève tout seul : l'enfant n'a rien à demander.
-        await self._prepare_run()
+        try:
+            await self._prepare_run()
+        except SafetyInterrupt as exc:
+            active.cancel_reason = FINISH_SAFETY
+            yield ExecutionEvent(type="error", message=str(exc))
+            yield ExecutionEvent(type="execution_finished", reason=FINISH_SAFETY)
+            return
 
         for index, command in enumerate(commands):
             if active.stop_signal.requested:
@@ -207,6 +217,19 @@ class ExecutionEngine:
                 result: CommandOutcome = await self._adapter.execute_command(
                     command, index, active.stop_signal
                 )
+            except SafetyInterrupt as exc:
+                # L'adaptateur a déjà envoyé l'arrêt physique. On termine le
+                # programme avec la raison « safety », jamais comme une panne.
+                active.cancel_reason = FINISH_SAFETY
+                yield ExecutionEvent(
+                    type="step_finished",
+                    index=index,
+                    label=command.label(),
+                    outcome="stopped",
+                    message=str(exc),
+                )
+                yield ExecutionEvent(type="execution_finished", reason=FINISH_SAFETY)
+                return
             except AdapterError as exc:
                 yield ExecutionEvent(
                     type="error",

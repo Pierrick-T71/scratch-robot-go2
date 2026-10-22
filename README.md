@@ -39,6 +39,8 @@ consignes.
 - **Vérification** avant tout pilotage, avec message clair et emplacement de l'erreur.
 - **Exécution** avec progression étape par étape, valeur mesurée affichée quand elle existe.
 - **Arrêt immédiat** toujours visible, plus arrêt automatique si l'interface se déconnecte.
+- **Arrêt automatique si le robot est soulevé** : les efforts dans les pieds sont surveillés ; le robot s'arrête, relâche ses pattes et se verrouille.
+- **Relevage automatique** : si le robot s'est allongé et que son lidar frotte le sol, il se relève tout seul.
 - **Mode simulation** par défaut, jamais confondu avec le pilotage réel.
 - **Panneau Configuration** : réglages du robot (réservés à un adulte) et préférences.
 

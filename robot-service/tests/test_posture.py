@@ -16,6 +16,7 @@ Ces tests vérifient les ENVOIS faits au canal, pas l'opinion du service.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -31,9 +32,15 @@ from go2_service.config import load_limits  # noqa: E402
 class FakePubSub:
     """Enregistre les publications, sans répondre comme le robot."""
 
-    def __init__(self, code: int = 0, codes: list[int] | None = None) -> None:
+    def __init__(
+        self,
+        code: int = 0,
+        codes: list[int] | None = None,
+        sans_reponse: bool = False,
+    ) -> None:
         self.code = code
         self.codes = list(codes) if codes else None
+        self.sans_reponse = sans_reponse
         self.published: list[tuple[str, str]] = []
         self.requested: list[tuple[str, str]] = []
 
@@ -42,6 +49,10 @@ class FakePubSub:
 
     async def publish_request_new(self, topic: str, demande: dict) -> dict:
         self.requested.append((demande["api_id"], ""))
+        if self.sans_reponse:
+            # Le robot n'acquitte jamais : c'est le cas mesure le 21/10/2026,
+            # ou l'acquittement arrive apres le delai du service.
+            await asyncio.sleep(3600)
         code = self.code
         if self.codes:
             code = self.codes.pop(0) if len(self.codes) > 1 else self.codes[0]
@@ -49,13 +60,23 @@ class FakePubSub:
 
 
 class FakeDataChannel:
-    def __init__(self, code: int = 0, codes: list[int] | None = None) -> None:
-        self.pub_sub = FakePubSub(code, codes)
+    def __init__(
+        self,
+        code: int = 0,
+        codes: list[int] | None = None,
+        sans_reponse: bool = False,
+    ) -> None:
+        self.pub_sub = FakePubSub(code, codes, sans_reponse)
 
 
 class FakeConnexion:
-    def __init__(self, code: int = 0, codes: list[int] | None = None) -> None:
-        self.datachannel = FakeDataChannel(code, codes)
+    def __init__(
+        self,
+        code: int = 0,
+        codes: list[int] | None = None,
+        sans_reponse: bool = False,
+    ) -> None:
+        self.datachannel = FakeDataChannel(code, codes, sans_reponse)
 
 
 class FakeSportCmd:
@@ -66,12 +87,17 @@ class FakeSportCmd:
         "StopMove": 0x2102,
         "StandUp": 0x2103,
         "Sit": 0x2104,
+        "Damp": 0x2105,
     }
 
 
-def build_adapter(code: int = 0, codes: list[int] | None = None) -> tuple[WebRTCAdapter, FakeConnexion]:
+def build_adapter(
+    code: int = 0,
+    codes: list[int] | None = None,
+    sans_reponse: bool = False,
+) -> tuple[WebRTCAdapter, FakeConnexion]:
     adaptateur = WebRTCAdapter(limits=load_limits(), robot_ip="172.16.8.11")
-    connexion = FakeConnexion(code, codes)
+    connexion = FakeConnexion(code, codes, sans_reponse)
     adaptateur._connexion = connexion  # noqa: SLF001 - double de test
     adaptateur._connected = True  # noqa: SLF001
     adaptateur._sport_cmd = FakeSportCmd.COMMANDES  # noqa: SLF001
@@ -80,6 +106,7 @@ def build_adapter(code: int = 0, codes: list[int] | None = None) -> tuple[WebRTC
     # Attentes raccourcies : les tests ne doivent pas dormir trois secondes.
     adaptateur.STABLE_SAMPLE_S = 0.01  # noqa: SLF001
     adaptateur.STABLE_SAMPLES = 2  # noqa: SLF001
+    adaptateur.COUCHER_ATTENTE_S = 0.05  # noqa: SLF001
     return adaptateur, connexion
 
 
@@ -125,6 +152,30 @@ class TestArret:
         await adaptateur.request_stop()
 
         assert commandes(connexion) == ["Move", "StopMove"]
+
+    @pytest.mark.asyncio
+    async def test_un_robot_assis_publie_ne_releve_pas_a_l_arret(self):
+        # Le robot PUBLIE 1007 quand il est assis. C'est cet etat, et non
+        # le dernier ordre envoye, qui doit empecher l'arret de fin de
+        # programme de relever le chien.
+        adaptateur, connexion = build_adapter()
+        adaptateur._code_etat = 1007  # noqa: SLF001
+
+        await adaptateur.request_stop()
+
+        assert commandes(connexion) == []
+
+    @pytest.mark.asyncio
+    async def test_un_robot_en_train_de_se_poser_ne_releve_pas_a_l_arret(self):
+        # Code 1006 : début de la transition vers la position assise. Le
+        # robot est en train de se poser ; lui envoyer `Move` le relèverait
+        # au moment même où il obéit au « se coucher ».
+        adaptateur, connexion = build_adapter()
+        adaptateur._code_etat = 1006  # noqa: SLF001
+
+        await adaptateur.request_stop()
+
+        assert commandes(connexion) == []
 
 
 class TestPostureMesuree:
@@ -276,6 +327,53 @@ class TestPreparationDuProgramme:
         assert adaptateur._posture is Posture.SIT  # noqa: SLF001
 
 
+class TestSeCoucher:
+    """« Se coucher » doit vraiment coucher le robot.
+
+    Mesuré le 21/10/2026 : un « faire un cœur » suivi d'un « se coucher »
+    n'aboutissait à rien. Le geste acquittait 6,5 s plus tard : le service
+    abandonnait au bout de 3 s et envoyait « se coucher » pendant que le
+    robot faisait encore son geste — la commande était alors avalée, et
+    l'arrêt de fin de programme relevait le chien.
+    """
+
+    @pytest.mark.asyncio
+    async def test_le_coucher_est_verifie_et_reessaye(self):
+        adaptateur, connexion = build_adapter()
+        # Le robot n'a pas encore publishé qu'il est allongé : la première
+        # commande n'a pas suffi.
+        adaptateur._code_etat = 100  # noqa: SLF001 - encore debout
+
+        resultat = await adaptateur._do_geste(  # noqa: SLF001
+            "Damp",
+            0,
+            lever_si_assis=False,
+            reprendre_la_main=False,
+            flux_vitesse=False,
+        )
+
+        # Le `Damp` a été renvoyé, et le résultat est honnête.
+        assert len(connexion.datachannel.pub_sub.requested) == 2
+        assert resultat.outcome == "timeout"
+
+    @pytest.mark.asyncio
+    async def test_le_coucher_reussi_ne_renvoie_pas_de_consigne(self):
+        adaptateur, connexion = build_adapter()
+        adaptateur._code_etat = 1001  # noqa: SLF001 - allongé par terre
+
+        resultat = await adaptateur._do_geste(  # noqa: SLF001
+            "Damp",
+            0,
+            lever_si_assis=False,
+            reprendre_la_main=False,
+            flux_vitesse=False,
+        )
+
+        assert resultat.outcome == "exact"
+        # Une seule commande : le robot a obéi du premier coup.
+        assert len(connexion.datachannel.pub_sub.requested) == 1
+
+
 class TestPostureRefusee:
     """Le robot refuse une posture pendant une transition.
 
@@ -306,3 +404,42 @@ class TestPostureRefusee:
         assert commandes_demandees(connexion) == ["Sit", "Sit"]
         assert resultat.outcome == "failed"
         assert "refusé" in (resultat.detail or "")
+
+
+class TestAcquittementPerdu:
+    """L'acquittement d'une posture peut se perdre.
+
+    Mesuré le 21/10/2026 : le robot acquitte « s'asseoir » apres 2 s, mais
+    parfois plus de 3 s. Le service abandonnait alors la commande, le
+    programme se terminait, et l'arret de fin de programme relevait le
+    robot — l'enfant voyait le chien se relever aussitôt.
+
+    L'etat PUBLIE par le robot (`1007` = assis) est une preuve plus solide
+    que la reponse : c'est lui qui fait foi.
+    """
+
+    @pytest.mark.asyncio
+    async def test_une_posture_publiee_sans_acquittement_est_acquittée(self):
+        adaptateur, connexion = build_adapter(sans_reponse=True)
+        adaptateur.POSTURE_TIMEOUT_S = 0.05  # noqa: SLF001
+        # Le robot publie 1007 : il est assis.
+        adaptateur._code_etat = 1007  # noqa: SLF001
+        adaptateur._position = (0.0, 0.0, 0.22)  # noqa: SLF001
+
+        resultat = await adaptateur._do_posture("Sit", Posture.SIT, 0)  # noqa: SLF001
+
+        assert commandes_demandees(connexion) == ["Sit"]
+        assert resultat.outcome == "exact"
+        assert "publié" in (resultat.detail or "")
+
+    @pytest.mark.asyncio
+    async def test_sans_acquittement_ni_posture_publiee_c_est_un_echec(self):
+        adaptateur, _ = build_adapter(sans_reponse=True)
+        adaptateur.POSTURE_TIMEOUT_S = 0.05  # noqa: SLF001
+        adaptateur.POSTURE_ATTENTE_S = 0.05  # noqa: SLF001
+        adaptateur._code_etat = 100  # noqa: SLF001 - encore debout
+        adaptateur._position = (0.0, 0.0, 0.30)  # noqa: SLF001
+
+        resultat = await adaptateur._do_posture("Sit", Posture.SIT, 0)  # noqa: SLF001
+
+        assert resultat.outcome == "timeout"

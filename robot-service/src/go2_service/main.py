@@ -165,14 +165,6 @@ def _robot_aes_key() -> str | None:
     return None
 
 
-class AutonomeRequest(BaseModel):
-    """Activation du mode autonome du robot."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool
-
-
 class RobotConnectRequest(BaseModel):
     """Branchement d'un robot réel, déclaré depuis l'interface.
 
@@ -306,17 +298,21 @@ class ServiceState:
             )
         await self.watchdog.emergency_stop()
 
-    def adopt_robot_adapter(self, adapter: Any) -> None:
+    async def adopt_robot_adapter(self, adapter: Any) -> None:
         """
         Confie le service au robot, après test réussi.
 
         Le moteur et le chien de garde sont reconstruits : ils gardent
         l'ancien adaptateur dans leurs closures, et le robot ne serait pas
-        couvert par le bail de sécurité.
+        couvert par le bail de sécurité. Le nouveau chien de garde doit être
+        DÉMARRÉ explicitement : sans cela, après un branchement, plus aucun
+        bail n'était surveillé.
         """
+        await self.watchdog.stop()
         self.adapter = adapter
         self.engine = ExecutionEngine(self.adapter, limits=self.limits)
         self.watchdog = SafetyWatchdog(self.engine, self.adapter, self.limits)
+        await self.watchdog.start()
         self._mode = "real"
         self.last_robot_ip = getattr(adapter, "robot_ip", None)
 
@@ -329,6 +325,7 @@ class ServiceState:
         le robot partir tout seul.
         """
         await self.watchdog.emergency_stop()
+        await self.watchdog.stop()
         ancien = self.adapter
         try:
             await ancien.disconnect()
@@ -344,6 +341,7 @@ class ServiceState:
             pass
         self.engine = ExecutionEngine(self.adapter, limits=self.limits)
         self.watchdog = SafetyWatchdog(self.engine, self.adapter, self.limits)
+        await self.watchdog.start()
         self._mode = "simulation"
 
     def report_robot_failure(self, robot_ip: str, message: str) -> None:
@@ -387,6 +385,8 @@ class ServiceState:
             "capabilities": sorted(c.value for c in status.capabilities),
             "executing": self.engine.is_running,
             "blockedReason": status.blocked_reason,
+            "safetyReason": status.safety_reason,
+            "recoveryReason": status.recovery_reason,
             "position": (
                 {"x": status.position_m[0], "y": status.position_m[1], "z": status.position_m[2]}
                 if status.position_m
@@ -666,7 +666,7 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
             )
 
         # Le robot est là : on lui confie le service, jusqu'au prochain arrêt.
-        state.adopt_robot_adapter(candidat)
+        await state.adopt_robot_adapter(candidat)
         return rapport
 
     @app.post("/api/robot/disconnect")
@@ -674,31 +674,6 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
         """Revient en simulation et immobilise le robot."""
         state.release_robot_adapter()
         return {"simulation": True}
-
-    @app.post("/api/robot/autonome")
-    async def robot_autonome(payload: AutonomeRequest) -> dict[str, Any]:
-        """Marche autonome du robot (l'« IA » de l'application).
-
-        Le robot se débrouille seul, en évitant les obstacles. C'est un MODE,
-        pas une instruction du programme : il se coupe au bouton, et l'arrêt
-        d'urgence reste prioritaire.
-
-        ⚠️ Le robot peut REFUSER cette commande (code 3203) : la marche libre
-        de l'application passe par l'espace de commandes MCF, qui exige une
-        bascule de mode préalable. On dit alors la vérité à l'écran.
-        """
-        ok = await state.adapter.set_autonome(payload.enabled)
-        return {
-            "autonome": bool(ok and payload.enabled),
-            "actif": payload.enabled,
-            "message": (
-                "Le robot marche tout seul."
-                if ok and payload.enabled
-                else "Le robot n’a pas accepté la marche autonome."
-                if payload.enabled
-                else "Le robot s’arrête de marcher tout seul."
-            ),
-        }
 
     @app.get("/api/robot/lidar")
     async def robot_lidar() -> dict[str, Any]:

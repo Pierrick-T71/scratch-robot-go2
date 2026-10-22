@@ -78,6 +78,38 @@ Clique sur **⛔ Arrêter**.
 
 Si le robot bouge encore, **préviens l'adulte tout de suite**.
 
+### 5. Si le robot est soulevé
+
+Le robot s'arrête **tout seul** et relâche ses pattes. Un bandeau rouge
+s'affiche.
+
+- Pose-le **doucement au sol**.
+- Attends **une seconde** sans le tenir.
+- S'il reste allongé et que le bandeau reste affiché, **demande à l'adulte**.
+
+Ne le relance pas pendant que tu le tiens.
+
+### 6. Si le robot s'est allongé tout seul
+
+Si le robot s'est allongé **et** que son lidar (le petit capteur devant sa
+tête) est coincé contre le sol, il **se relève tout seul**. Un bandeau vert
+te le dit.
+
+S'il n'y arrive pas, **demande à l'adulte** : il faut le redresser à la
+main.
+
+### 7. Voir le robot
+
+La petite fenêtre montre le robot **de dos**, comme si tu étais juste
+derrière lui : ce qui est devant lui est au fond de l'image, et le chien ne
+cache pas la suite du chemin.
+
+- Le bouton **radar** (en haut à gauche) affiche les obstacles vus par le
+  lidar. Ils arrivent **devant** le chien, là où ils sont vraiment.
+- Le bouton **caméra** (en haut à droite) montre ce que voit la caméra du
+  robot.
+- Appuie une deuxième fois sur le même bouton pour revenir au robot 3D.
+
 ---
 
 ## Les blocs

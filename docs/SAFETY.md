@@ -76,6 +76,180 @@ garanties.
 | Délai par déplacement | `durée_nominale × 2,5 + 1 s`, puis arrêt |
 | Fin garantie | `request_stop()` appelé dans un `finally` — même sur exception |
 | État toujours affiché | progression et état du robot visibles en permanence |
+| **Portage / pieds dans le vide** | `foot_force` (état bas) : somme sous 60 → `Move(0)`, `StopMove`, `Damp` au prochain message (≈ 0,5 s) et verrouillage |
+| **Relevage automatique** | robot allongé **par nous** + lidar bloqué (rotation réelle en chute) → il se relève tout seul |
+
+### Détection de portage
+
+Le 21 octobre 2026, une protection a été ajoutée dans l'adaptateur WebRTC.
+Elle répond à un risque concret : un robot soulevé pendant une marche continue
+de battre des pattes pour retrouver son équilibre, puis repart dès qu'il
+retrouve un appui.
+
+**Mesure utilisée**
+
+| Mesure | Topic | Règle |
+|---|---|---|
+| Efforts sous les quatre pieds | `rt/lf/lowstate` → `foot_force` | somme **< 60** = aucun appui |
+
+Le seuil de 60 vient des mesures existantes : `docs/ROBOT_SETUP.md` indique
+qu'un `foot_force` nul signifie que le pied ne touche plus le sol, et
+`.setup/test_sauts3.py` utilise déjà `somme < 60` pour « les pieds ne portent
+plus ». Au repos, la **somme** relevée est de l'ordre de 300 : 274 pendant les
+essais de saut, et **358 à 360** à la connexion du 21/10/2026
+(`[86, 97, 86, 89]`, puis `[86, 101, 85, 88]`). Le seuil de 60 reste donc très
+en dessous d'un appui normal.
+
+**Pourquoi l'assiette n'est plus surveillée**
+
+La première version arrêtait aussi le robot au-delà de 45° de roulis ou de
+tangage. Ce seuil a produit un **faux arrêt** pendant un enchaînement normal
+« s'asseoir puis se relever » : l'IMU voit la transition, pas seulement la
+posture finale. Le 21 octobre 2026, ce critère a été retiré. Seule la décharge
+des quatre pieds déclenche désormais l'arrêt.
+
+Conséquence assumée : un robot penché ou sur une pente, mais avec les pieds
+chargés, n'est **pas** arrêté automatiquement. L'adulte doit intervenir.
+
+**Ce qui se passe**
+
+1. L'adaptateur annule la consigne de vitesse (`Move(0, 0, 0)`).
+2. Il envoie `StopMove`.
+3. Il envoie `Damp` : c'est le seul ordre du SDK qui coupe l'équilibrage
+   actif. Les pattes cessent de chercher un appui et se relâchent. Le robot
+   devient mou : la personne qui le porte doit le tenir fermement.
+4. Un verrouillage bloque toute nouvelle commande.
+5. Le programme en cours se termine avec la raison `safety` ; le chien de
+   garde le constate aussi.
+6. L'interface affiche un bandeau rouge avec la raison et la consigne
+   « repose-le au sol ».
+
+### Le robot s'est allongé et son lidar frotte le sol
+
+Le lidar du Go2 est monté **devant la tête**. Quand le chien est allongé, sa
+fenêtre tournante peut frotter le sol : le moteur force, le chien s'use, et
+la carte du lidar devient illisible.
+
+Dans ce cas précis — et **seulement** dans ce cas — le robot se relève tout
+seul.
+
+| Condition | Effet |
+|---|---|
+| Le robot est allongé (`1001`) | — |
+| **C'est nous qui l'avons allongé** (bloc « se coucher ») | — |
+| **Le lidar est bloqué** | → le robot se relève (`StandUp`) |
+| Un programme est en cours | c'est le programme qui prépare le robot, pas le relevé automatique |
+| Le lidar tourne librement | le chien reste allongé, comme demandé |
+
+**Comment on sait que le lidar est bloqué ?**
+
+Le lidar publie (`rt/utlidar/lidar_state`) sa rotation **réelle**
+(`com_rotation_speed`) et la rotation **demandée** (`sys_rotation_speed`).
+Quand sa fenêtre frotte contre le sol, le moteur force : la rotation réelle
+chute.
+
+Le service compare la rotation réelle à la **médiane** des rotations
+récentes (60 mesures), et considère le lidar bloqué quand elle s'écarte de
+plus de **25 %** de cette médiane — **dans les deux sens**. Une erreur
+firmware (`error_state` non nul) compte aussi comme un blocage.
+
+Mesures réelles du 21/10/2026 (ratio = rotation réelle / rotation demandée) :
+
+| Situation | ratio | écart à la médiane |
+|---|---|---|
+| normal, debout ou allongé | 0,0202 – 0,0203 | ±1 % |
+| pendant un relèvement | 0,0182 | −10 % |
+| **lidar bloqué (14:14:44)** | **0,0334** | **+64 %** |
+| **lidar bloqué (13:55:59)** | **0,0114** | **−44 %** |
+
+Le seuil de 25 % sépare donc nettement le blocage du pire cas normal.
+
+> ⚠️ **Le blocage se manifeste dans les deux sens.** Une première version ne
+> regardait que la *baisse* de rotation : elle a détecté le blocage de
+> 13:55, mais laissé passer celui de 14:14 (où la rotation **monte**). Le
+> chien est resté allongé, le lidar bloqué. C'est corrigé, et un test
+> verrouille les deux formes.
+
+> ⚠️ **La médiane, et non le maximum.** Une mesure anormale a été relevée
+> pendant une pose (0,0729, soit 3,6 fois la normale). Avec une échelle
+> bâtie sur le maximum, tout le reste de la session aurait semblé « bloqué »
+> et le chien se serait relevé à chaque « se coucher » : c'est exactement ce
+> qui est arrivé. Un test verrouille ce cas.
+
+> ⚠️ **Seules les mesures normales entrent dans l'historique.** Sans cela, un
+> blocage durable décalerait la référence, et le détecteur s'éteindrait de
+> lui-même au bout de quelques secondes. Un test verrouille ce cas aussi.
+
+> ⚠️ Le `dirty_percentage` du lidar **n'est pas** un indice de blocage :
+> il passe de 0-8 % (debout) à 61-70 % (allongé) alors que le lidar tourne
+> librement. Un premier jet s'appuyait dessus : c'était faux, le
+> déclenchement a été corrigé.
+
+**Limites assumées**
+
+- Un robot **tombé** n'est pas relevé : le cas visé est le bloc « se coucher ».
+  Un adulte s'en occupe.
+- Le relevé est une **manœuvre physique** : il échoue si l'espace autour du
+  robot est obstrué. Le chien reste allongé, et l'interface le dit.
+- Si le robot est **porté** pendant l'opération, l'arrêt de sécurité de
+  portage est prioritaire : son verrouillage interdit tout relevé.
+
+> ⚠️ **Deux blocages réels ont été observés** sur le robot le 21/10/2026,
+> et ils n'ont pas la même signature : l'un fait chuter la rotation du
+> lidar (−44 %), l'autre la fait monter (+64 %). Le seuil de 25 % est calé
+> sur ces deux mesures, mais deux échantillons ne prouvent pas la marge : il
+> faudra le confirmer sur d'autres blocages. Voir `docs/ROBOT_SETUP.md`.
+
+**La fenêtre de grâce des postures**
+
+Un changement de posture volontaire (« s'asseoir », « se coucher », « se
+relever ») décharge les pieds avant que le robot ne publie sa nouvelle
+posture. Pendant les **5 secondes** qui suivent la commande, la détection de
+portage est donc **suspendue** : un robot qui s'assoit n'est pas pris pour un
+robot soulevé. C'est cette fenêtre qui évite le faux arrêt du 21/10/2026.
+
+Conséquence : soulever le robot pendant un changement de posture ne déclenche
+rien pendant 5 s. En dehors de cette fenêtre, la détection est active.
+
+**Réarmement**
+
+Le verrouillage ne s'enlève que lorsque les quatre pieds portent de nouveau
+pendant **une seconde**. Un seul échantillon favorable ne suffit pas.
+
+La posture n'est pas exigée : après un `Damp`, le robot peut être allongé. Le
+programme suivant le relèvera. Si ses pieds ne portent pas (robot sur le
+flanc, par exemple), le réarmement automatique ne s'applique pas : un adulte
+doit reconnecter le robot.
+
+Aucun programme n'est repris automatiquement après un arrêt de sécurité.
+
+**Limites assumées**
+
+- Un seul pied au-dessus d'un vide, les trois autres portant, n'est **pas**
+  détecté : `foot_force` ne dit pas où est le sol.
+- Un robot posé au bord d'une table n'est pas détecté.
+- Un robot soulevé alors qu'il est déjà assis ou allongé n'est pas détecté :
+  ces postures sont exclues pour ne pas confondre un `Sit`/`Damp` volontaire
+  avec un portage.
+- Le détecteur ne distingue pas un portage d'une chute ou d'un robot posé sur
+  un support sans appui : dans les deux cas, `Damp` relâche les pattes. Un
+  robot non soutenu peut donc tomber.
+- Sans `foot_force` frais, aucun portage n'est conclu. Une mesure absente
+  n'est jamais remplacée par une valeur favorable.
+- `rt/lf/lowstate` est un flux basse fréquence : la détection arrive au
+  prochain message, soit environ **0,5 s** après le décollage. Les pattes
+  peuvent donc bouger brièvement avant le `Damp`.
+- Le verrouillage est **en mémoire** : un redémarrage du service l'efface.
+  Après un redémarrage, un adulte doit vérifier que le robot est au sol avant
+  de relancer un programme.
+- Cette protection ne remplace ni la télécommande, ni l'adulte, ni l'arrêt
+  d'urgence physique.
+
+> ⚠️ **Portage réel non validé à ce jour.** Les tests couvrent la décision
+> pure, l'adaptateur (topics simulés), le moteur et le chien de garde. Les
+> transitions « s'asseoir » et « se relever » ont été essayées sur le robot ;
+> aucun essai de soulèvement n'a été lancé dans le cadre de cette
+> modification.
 
 ### Le bail en détail
 
@@ -205,6 +379,23 @@ Volontairement absentes de l'application :
 
 Le service a déclenché l'arrêt de sécurité (bail expiré ou erreur). Le robot
 devrait être immobile. Vérifier physiquement avant de relancer.
+
+### Le robot est soulevé : « il s'est arrêté et a relâché ses pattes »
+
+C'est la protection de portage. Le robot a reçu `Damp` : il est **mou**, il ne
+tient pas tout seul.
+
+1. Le poser **doucement** au sol, en le tenant.
+2. Attendre **une seconde** : le service réarme quand les quatre pieds
+   portent.
+3. S'il reste allongé et que le bandeau reste affiché, un adulte doit
+   **reconnecter** le robot (bouton « Robot réel »), puis relancer un
+   programme : il se relèvera tout seul.
+4. Ne jamais poser les doigts entre les pattes d'un robot mou.
+
+> ⚠️ Tant que le `Damp` de portage n'a pas été essayé sur le robot réel
+> (aucun essai de soulèvement n'a été autorisé), cette procédure est
+> **théorique** : la télécommande reste la référence.
 
 ### Le service ne répond plus du tout
 

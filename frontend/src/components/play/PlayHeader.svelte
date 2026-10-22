@@ -12,40 +12,39 @@
     status: RobotStatus;
     busy: boolean;
     blockCount: number;
-    /** Le robot marche-t-il tout seul ? */
-    autonome?: boolean;
     onStart: () => void;
     onStop: () => void;
     onSave: () => void;
     onOpenRobot: () => void;
-    onToggleAutonome?: () => void;
   }
 
   let {
     status,
     busy,
     blockCount,
-    autonome = false,
     onStart,
     onStop,
     onSave,
     onOpenRobot,
-    onToggleAutonome,
   }: Props = $props();
 
   const label = $derived(
-    status.mode === 'simulation'
-      ? 'Simulation'
-      : status.connected
-        ? 'Go2 Connecté'
-        : 'Go2 hors ligne',
+    status.safetyReason
+      ? 'Robot à l’arrêt'
+      : status.mode === 'simulation'
+        ? 'Simulation'
+        : status.connected
+          ? 'Go2 Connecté'
+          : 'Go2 hors ligne',
   );
   const tone = $derived(
-    status.mode === 'simulation'
-      ? 'sim'
-      : status.connected
-        ? 'on'
-        : 'off',
+    status.safetyReason
+      ? 'off'
+      : status.mode === 'simulation'
+        ? 'sim'
+        : status.connected
+          ? 'on'
+          : 'off',
   );
 </script>
 
@@ -78,9 +77,13 @@
     <button
       type="button"
       class="action action--run"
-      disabled={busy || blockCount === 0}
+      disabled={busy || blockCount === 0 || Boolean(status.safetyReason)}
       onclick={onStart}
-      title={blockCount === 0 ? 'Ajoute d’abord un bloc' : 'Lancer le programme'}
+      title={status.safetyReason
+        ? 'Repose le robot au sol et attends qu’il soit stable avant de relancer'
+        : blockCount === 0
+          ? 'Ajoute d’abord un bloc'
+          : 'Lancer le programme'}
     >
       <span class="action__icon action__icon--run">
         <Icon name="play" size={20} />
@@ -122,23 +125,6 @@
   >
     <span class="status__dot" aria-hidden="true"></span>
     {label}
-  </button>
-
-  <button
-    type="button"
-    class="stars"
-    class:stars--on={autonome}
-    aria-pressed={autonome}
-    aria-label={autonome
-      ? 'Arrêter la marche autonome'
-      : 'Faire marcher le robot tout seul'}
-    title={autonome
-      ? 'Arrêter la marche autonome'
-      : 'Le robot se débrouille seul'}
-    onclick={onToggleAutonome}
-  >
-    <Icon name="sparkle" size={20} />
-    <span class="stars__label">Autonome</span>
   </button>
 </header>
 
@@ -329,58 +315,6 @@
     border-radius: 50%;
     background: currentColor;
     box-shadow: 0 0 12px currentColor;
-  }
-
-  /* Le mode autonome : un petit bouton a part, avec des etoiles. */
-  .stars {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 48px;
-    padding: 0 18px;
-    border-radius: 999px;
-    border: 1px solid rgb(160 130 220 / 38%);
-    background: rgb(140 110 210 / 16%);
-    color: #cdbcf2;
-    font-family: inherit;
-    font-size: 15px;
-    font-weight: 650;
-    cursor: pointer;
-    white-space: nowrap;
-    transition:
-      background 0.15s ease,
-      color 0.15s ease,
-      transform 0.12s ease;
-  }
-
-  .stars:hover {
-    background: rgb(150 120 220 / 26%);
-    color: #e3d7fb;
-    transform: translateY(-1px);
-  }
-
-  .stars:focus-visible {
-    outline: 2px solid #cfe0f5;
-    outline-offset: 3px;
-  }
-
-  .stars--on {
-    background: linear-gradient(180deg, #b18cf0, #8a63d8);
-    border-color: rgb(220 200 255 / 60%);
-    color: #1a1030;
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 30%),
-      0 6px 18px rgb(138 99 216 / 40%);
-  }
-
-  @media (max-width: 720px) {
-    .stars__label {
-      display: none;
-    }
-
-    .stars {
-      padding: 0 14px;
-    }
   }
 
   @media (max-width: 1180px) {

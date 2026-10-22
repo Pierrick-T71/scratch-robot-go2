@@ -4,12 +4,12 @@
 
 | Suite | Commande | Résultat |
 |---|---|---|
-| Frontend — unitaires | `cd frontend && npm test` | **79 tests, 6 fichiers, tous passants** |
+| Frontend — unitaires | `cd frontend && npm test` | **213 tests, 10 fichiers, tous passants** |
 | Frontend — types | `cd frontend && npm run check` | **0 erreur, 0 avertissement** |
 | Frontend — build | `cd frontend && npm run build` | **réussi**, aucun avertissement |
-| Service — unitaires + intégration | `cd robot-service && python -m pytest -q` | **165 tests, tous passants** |
+| Service — unitaires + intégration | `cd robot-service && python -m pytest -q` | **285 tests, tous passants** |
 
-**Total : 246 tests automatisés.**
+**Total : 498 tests automatisés.**
 
 > Un `StarletteDeprecationWarning` (concernant `httpx`) peut apparaître dans la
 > sortie pytest. Il provient de la bibliothèque tierce `starlette`, pas du code
@@ -29,26 +29,52 @@
 - Simulateur, y compris ses pannes injectées
 - Parcours d'interface dans un vrai navigateur
 
+### Testé sur le robot réel (21/10/2026, autorisation adulte explicite)
+
+Uniquement des **postures**, aucun déplacement :
+
+| Essai | Résultat |
+|---|---|
+| Programme « s'asseoir » (robot debout) | `1006` puis `1007`, hauteur 0,31 m → 0,22 m ; **le chien reste assis 20 s après la fin du programme** ; aucun arrêt de sécurité |
+| Programme « se relever » (robot assis) | `1002` puis `100`, hauteur 0,22 m → 0,31 m ; **aucun arrêt de sécurité** (c'est le faux « trop penché » qui est corrigé) |
+| Enchaînement assis → programme suivant | le robot se relève, `safetyReason` reste `null` |
+| Branchement du robot (lecture seule) | état, batterie, efforts aux pieds, code d'état lus |
+| « Se coucher » (robot debout) | le corps passe de 0,32 m à 0,05 m ; **le chien reste allongé**, aucun relevé automatique (le lidar tourne librement) |
+| Lidar réellement bloqué (13:55, rotation en baisse) | la rotation tombe à 0,56 de la médiane → le chien **se relève tout seul** 2,4 s après |
+| Lidar réellement bloqué (14:14, rotation en hausse) | la rotation monte à 1,64 de la médiane → **non détecté** avant la correction ; le critère regarde désormais les deux sens |
+
 ### ❌ NON testé — jamais
 
-> **Aucune commande n'a été envoyée à un Unitree Go2.**
+> **Aucune commande de MOUVEMENT n'a été exécutée par le service sur un
+> Unitree Go2.** (Des déplacements ont été lancés à la main depuis
+> l'interface, hors de cette campagne.)
 
-- Aucune connexion au robot.
+- Connexion WebRTC réelle établie et état lu (sans mouvement).
 - Aucun déplacement physique.
 - Aucun test du comportement d'arrêt réel.
 - Aucune mesure de précision.
 - Aucun test de coupure réseau sur un robot réel.
+- **Aucun test réel de portage** : la décision, l'envoi de `Damp` et le
+  verrouillage sont testés sur des topics simulés, pas en soulevant le
+  robot. Le `Damp` de sécurité n'a donc **jamais** été envoyé au robot.
+- L'assiette n'est plus un critère d'arrêt : le seuil de 45° a été retiré
+  après un faux arrêt pendant « s'asseoir » puis « se relever ».
 
-L'adaptateur `UnitreeAdapter` est **écrit** d'après l'API officielle lue dans
-le dépôt Unitree, mais il est **désactivé** (`physical_commands_enabled =
-False`) et n'a jamais été exécuté.
+Les préflight des gestes `Hello` et `Stretch` ont été refusés sans autorisation
+adulte (HTTP 403), donc aucune commande n'est partie.
 
-Conséquence : le mode robot réel est **refusé par le service**, même si un
-adulte l'autorise. C'est testé (`test_rejects_real_mode_even_with_authorisation`).
+L'adaptateur `UnitreeAdapter` (DDS) est **écrit** d'après l'API officielle lue
+dans le dépôt Unitree, mais il est **désactivé** (`physical_commands_enabled =
+False`) et n'a jamais été exécuté. Le chemin réel utilisé est `WebRTCAdapter`,
+qui a été connecté au robot pour lire son état, sans mouvement.
+
+Conséquence : le mode robot réel reste refusé par le service en l'absence de la
+procédure de validation physique, même si un adulte l'autorise. C'est testé
+(`test_even_with_an_adult_real_mode_is_not_available`).
 
 ---
 
-## 3. Tests frontend (79)
+## 3. Tests frontend (213)
 
 ### `tests/commands.test.ts` — modèle de commandes
 - Acceptation de chaque genre de commande
@@ -116,7 +142,7 @@ Espace de travail Blockly *headless*, sans rendu DOM.
 
 ---
 
-## 4. Tests du service (165)
+## 4. Tests du service (285)
 
 ### `test_validation.py` (35) — configuration et validation autoritative
 - Le fichier partagé est bien lu, et les **cohérences** vérifiées :
@@ -142,8 +168,82 @@ Espace de travail Blockly *headless*, sans rendu DOM.
 - `request_stop()` appelé à la fin, même sur exception
 - Chien de garde : pas de déclenchement sans exécution, pas avec battements,
   **déclenchement à l'expiration du bail**
+- **Arrêt de sécurité** : `SafetyInterrupt` termine le programme en `safety`,
+  sans instruction suivante ; la préparation est aussi couverte
+- **Verrouillage** : le chien de garde lit `safety_stop_reason` et demande
+  l'arrêt en `safety`
+- **Branchement** : `adopt_robot_adapter` arrête l'ancien chien de garde puis
+  en démarre un nouveau ; `release_robot_adapter` fait de même en simulation
 - Arrêt d'urgence, mesure de l'âge du bail
 - `StopSignal` : première raison conservée, réinitialisation
+
+### `test_state_safety.py` (11) — décisions pures de portage
+- Quatre pieds chargés → aucun arrêt ; somme < 60 → arrêt
+- Seuil exact : 60 accepté, 56 refusé
+- Un seul pied vide ne suffit pas ; mesure absente, incomplète ou périmée
+  → aucune conclusion
+- `Sit`/`Damp` volontaire exclu, même avec pieds à zéro
+- Réarmement : quatre appuis pendant 1 s ; une mesure absente ne réarme pas
+- Réarmement possible **allongé** après `Damp`, dès que les pieds portent
+- Un nouveau portage après réarmement redéclenche
+
+### `test_webrtc_safety.py` (13) — intégration aux topics réels
+- `foot_force` lu dans `rt/lf/lowstate`
+- Portage debout → `Move(0,0,0)` + `StopMove` + `Damp`, verrouillage visible
+  dans `get_status().safety_reason` et `state=error`
+- La fin du programme (`request_stop`) ne lève pas ce verrouillage et ne
+  renvoie pas `Move` après `Damp`
+- Robot assis ou mesure absente → aucun arrêt
+- Mesure réelle au repos `[86, 97, 86, 89]` → aucun arrêt
+- Deux échantillons d'IMU à 50° → **aucun arrêt** (régression du faux arrêt
+  « trop penché »)
+- Fenêtre de grâce après une posture volontaire, y compris le relèvement,
+  puis détection après la fenêtre
+- Préparation et commande de mouvement refusées par `SafetyInterrupt` ;
+  `STOP` accepté sans renvoyer de commande
+
+### `test_posture.py` (21) — postures : rester assis, repartir sur quatre pattes
+- Un robot **assis** ne reçoit ni `Move` ni `StopMove` à l'arrêt : les deux
+  le relèvent
+- Un robot qui **publie 1007** (assis) ne reçoit rien non plus, même si le
+  dernier ordre envoyé était « debout »
+- Un robot debout reçoit la consigne nulle et `StopMove`
+- Le code d'état prime sur la hauteur ; sans mesure ni ordre, on ne suppose
+  pas qu'il soit debout
+- Un bond (0,52 m d'odométrie) ne pollue pas la hauteur de référence
+- Le robot n'est prêt à bouger qu'en `100` ; en transition (`1002`) aucune
+  consigne de mouvement ne part
+- Un programme commence toujours par un `StandUp` si le robot n'est pas
+  debout
+- Une posture refusée est réessayée une fois, puis signalée
+- **Acquittement perdu** : la posture **publiée** par le robot (`1007`) fait
+  foi — l'instruction est alors acquittée, sans réponse du robot
+- Sans acquittement **ni** posture publiée, le résultat est un échec, jamais
+  un « réussi » inventé
+- « Se coucher » : vérifié sur l'état publié (`1001`) et **renvoyé** si le
+  robot n'a pas obéi
+- Un robot en train de se poser (`1006`) ne reçoit **aucune** consigne de
+  vitesse à l'arrêt : `Move` le relèverait
+
+### `test_recovery.py` (21) — relevé automatique
+- Allongé + lidar bloqué + « se coucher » demandé → le robot se relève
+- La confirmation est obligatoire (0,6 s)
+- Lidar libre → **rien** : c'est le cas le plus fréquent
+- Lidar inconnu, ou pas assez de mesures → aucune conclusion
+- Robot **tombé** (nous ne l'avons pas allongé) → pas de relevé
+- Programme en cours → pas de relevé
+- Robot debout → pas de relevé
+- Une situation interrompue repart de zéro
+- Mesure : `dirty_percentage` à 63 % **ne** signifie pas « bloqué » ; c'est
+  la rotation réelle qui compte
+- **Un pic de mesure ne bouge pas l'échelle** (régression : le maximum
+  faisait passer l'échelle de 3,6× et tout paraissait bloqué)
+- Un relèvement (−10 % de la médiane) n'est pas un blocage
+- Lidar bloqué **en dessous** (−44 %) → bloqué
+- Lidar bloqué **au-dessus** (+64 %) → bloqué (l'autre forme du blocage)
+- Un blocage durable ne déplace pas la référence
+- Le `Damp` du bloc « se coucher » arme le relevé
+- Le relevé part quand le lidar est bloqué, et **seulement** alors
 
 ### `test_motion_safety.py` — conditions d'arrêt
 - **Dépassement** : le robot s'arrête au lieu de continuer
