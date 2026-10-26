@@ -147,6 +147,48 @@ class SimulatedAdapter:
         if self._posture == Posture.SIT:
             self._posture = Posture.STAND
 
+    async def manual_prepare(self) -> None:
+        """Le simulateur accepte le mode manuel, sans mouvement réel."""
+        await self.prepare_run()
+
+    def manual_velocity(
+        self, direction: str, speed_mps: float, turn_speed_rps: float
+    ) -> None:
+        """Aucun déplacement simulé : le mode manuel sert à tester l'écran."""
+        if direction not in (
+            "forward",
+            "backward",
+            "left",
+            "right",
+            "turn_left",
+            "turn_right",
+            "forward+turn_left",
+            "forward+turn_right",
+            "backward+turn_left",
+            "backward+turn_right",
+        ):
+            raise AdapterError(f"Direction manuelle inconnue : {direction}")
+        self._state = RobotState.MOVING
+
+    def manual_stop(self) -> None:
+        self._state = RobotState.IDLE
+
+    async def manual_jump(self) -> None:
+        """Simule un saut en mode manuel."""
+        await asyncio.sleep(0.2)
+
+    async def enter_standby(self) -> None:
+        """Simule le passage en mode veille."""
+        self._posture = Posture.LIE_DOWN
+        self._state = RobotState.IDLE
+        await asyncio.sleep(0.3)
+
+    async def exit_standby(self) -> None:
+        """Simule le réveil du robot."""
+        self._posture = Posture.STAND
+        self._state = RobotState.IDLE
+        await asyncio.sleep(0.3)
+
     async def execute_command(
         self, command: RobotCommand, index: int, should_stop: StopSignal
     ) -> CommandOutcome:
@@ -222,6 +264,10 @@ class SimulatedAdapter:
 
     async def lidar_volume(self) -> dict[str, Any] | None:
         """Le simulateur n'a pas de lidar : aucun volume, jamais inventé."""
+        return None
+
+    async def clearance_m(self, direction: str) -> float | None:
+        """Pas de carte : la distance libre n'est pas mesurée."""
         return None
 
     # -- Internes ----------------------------------------------------------

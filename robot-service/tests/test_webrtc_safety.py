@@ -27,6 +27,7 @@ from go2_service.adapters.base import (  # noqa: E402
     SafetyInterrupt,
     StopSignal,
 )
+from go2_service.adapters.motion import plan_command  # noqa: E402
 from go2_service.adapters.webrtc import WebRTCAdapter  # noqa: E402
 from go2_service.config import load_limits  # noqa: E402
 from go2_service.validation import CommandKind, RobotCommand  # noqa: E402
@@ -257,6 +258,90 @@ class TestCommandesVerrouillees:
         # Le déclencheur a déjà envoyé Move/StopMove/Damp ; un second Move
         # relèverait le robot. L'arrêt reste « accepté » sans rien renvoyer.
         assert commandes(connexion) == []
+
+
+class TestClearanceLidar:
+    """La distance libre lue dans la carte, sans robot."""
+
+    def _pret(self) -> WebRTCAdapter:
+        adaptateur, _ = build_adapter()
+        adaptateur._pose_robot = {"x": 0.0, "y": 0.0, "cap": 0.0}  # noqa: SLF001
+        adaptateur._pose_robot_at = time.monotonic()  # noqa: SLF001
+        adaptateur._obstacles_lidar = [(1.0, 0.0)]  # noqa: SLF001
+        adaptateur._obstacles_lidar_at = time.monotonic()  # noqa: SLF001
+        return adaptateur
+
+    def test_un_mur_droit_devant(self):
+        adaptateur = self._pret()
+        assert _run(adaptateur.clearance_m("forward")) == pytest.approx(0.95)
+
+    def test_securite_desactivee_ne_mesure_plus_la_place(self):
+        adaptateur = self._pret()
+        adaptateur.obstacle_safety_enabled = False
+        assert _run(adaptateur.clearance_m("forward")) is None
+
+    def test_une_action_bloquee_avant_le_premier_pas_n_envoie_aucun_move(self):
+        adaptateur, connexion = build_adapter()
+        adaptateur._pose_robot = {"x": 0.0, "y": 0.0, "cap": 0.0}  # noqa: SLF001
+        adaptateur._pose_robot_at = time.monotonic()  # noqa: SLF001
+        adaptateur._obstacles_lidar = [(0.5, 0.0)]  # noqa: SLF001
+        adaptateur._obstacles_lidar_at = time.monotonic()  # noqa: SLF001
+        plan = plan_command(
+            RobotCommand(
+                kind=CommandKind.MOVE_FORWARD, speed=0.3, duration_s=5.0
+            ),
+            adaptateur._limits,  # noqa: SLF001
+        )
+        assert plan is not None
+
+        resultat = _run(adaptateur._translater(plan, 3, StopSignal()))  # noqa: SLF001
+
+        assert resultat.outcome == "blocked"
+        assert resultat.index == 3
+        assert "Pas assez de place devant" in (resultat.detail or "")
+        assert commandes(connexion) == []
+
+    def test_sans_pose_la_distance_n_est_pas_mesuree(self):
+        adaptateur = self._pret()
+        adaptateur._pose_robot = None  # noqa: SLF001
+        assert _run(adaptateur.clearance_m("forward")) is None
+
+    def test_une_pose_perimee_n_est_pas_utilisee(self):
+        adaptateur = self._pret()
+        adaptateur._pose_robot_at = time.monotonic() - 5.0  # noqa: SLF001
+        assert _run(adaptateur.clearance_m("forward")) is None
+
+    def test_une_carte_perimee_n_est_pas_utilisee(self):
+        adaptateur = self._pret()
+        adaptateur._obstacles_lidar_at = time.monotonic() - 5.0  # noqa: SLF001
+        assert _run(adaptateur.clearance_m("forward")) is None
+
+    def test_le_maillage_3d_retire_le_sol_et_le_plafond(self):
+        adaptateur, _ = build_adapter()
+        # Un sol de trois cases, un mur à 1 m et 0,50 m de haut, un objet
+        # bas, et le plafond. Les positions sont des triplets d'indices,
+        # comme les sommets du maillage du SDK.
+        donnees = {
+            "data": {
+                "positions": [
+                    0, 0, 0,
+                    1, 0, 0,
+                    2, 0, 0,
+                    20, 0, 10,
+                    5, 5, 2,
+                    0, 0, 50,
+                ]
+            },
+            "origin": [0.0, 0.0, 0.0],
+            "resolution": 0.05,
+            "width": [128, 128, 38],
+        }
+
+        maillage = adaptateur._maillage_3d(donnees)  # noqa: SLF001
+
+        assert maillage is not None
+        assert adaptateur._obstacles_lidar == [(1.0, 0.0)]  # noqa: SLF001
+        assert adaptateur._obstacles_lidar_at > 0.0  # noqa: SLF001
 
 
 def _run(coro):

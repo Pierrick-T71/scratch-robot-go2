@@ -58,8 +58,8 @@ class TestLimitsIsolation:
         app_b = create_app(SimulatedAdapter(limits, tick_multiplier=50.0))
         apply_settings(app_a.state.service.limits, {"max_linear_speed": 0.12})
         assert app_a.state.service.limits.motion.max_linear_speed == 0.12
-        assert app_b.state.service.limits.motion.max_linear_speed == 0.30
-        assert limits.motion.max_linear_speed == 0.30
+        assert app_b.state.service.limits.motion.max_linear_speed == 0.50
+        assert limits.motion.max_linear_speed == 0.50
 
 
 class TestSharedFileUnchanged:
@@ -82,7 +82,7 @@ class TestSharedFileUnchanged:
     def test_file_is_not_mutated_by_a_test_run(self, limits):
         """`load_limits` est mis en cache : le module de tests ne doit pas
         pouvoir modifier le réglage d'un autre test."""
-        assert limits.motion.max_linear_speed == 0.30
+        assert limits.motion.max_linear_speed == 0.50
 
 
 class TestApplySettings:
@@ -99,16 +99,16 @@ class TestApplySettings:
     def test_rejects_value_above_ceiling(self, fresh_limits):
         """Le point capital : impossible de dépasser le plafond du code."""
         with pytest.raises(SettingsError):
-            apply_settings(fresh_limits, {"max_linear_speed": 0.5})
-        assert fresh_limits.motion.max_linear_speed == 0.30, "aucune écriture partielle"
+            apply_settings(fresh_limits, {"max_linear_speed": 1.0})
+        assert fresh_limits.motion.max_linear_speed == 0.50, "aucune écriture partielle"
 
     def test_rejects_value_below_floor(self, fresh_limits):
         with pytest.raises(SettingsError):
             apply_settings(fresh_limits, {"max_linear_speed": 0.01})
 
     def test_accepts_exact_ceiling(self, fresh_limits):
-        apply_settings(fresh_limits, {"max_linear_speed": 0.30})
-        assert fresh_limits.motion.max_linear_speed == 0.30
+        apply_settings(fresh_limits, {"max_linear_speed": 0.50})
+        assert fresh_limits.motion.max_linear_speed == 0.50
 
     def test_rejects_unknown_field(self, fresh_limits):
         with pytest.raises(SettingsError):

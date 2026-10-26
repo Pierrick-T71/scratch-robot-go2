@@ -26,6 +26,8 @@ export interface RobotStatus {
   /** Capacites offertes par l'adaptateur actif. */
   capabilities: Capability[];
   executing: boolean;
+  /** Le mode manuel est-il ouvert côté service ? */
+  manualActive: boolean;
   /** Explication si le robot refuse une action, sinon null. */
   blockedReason: string | null;
   /**
@@ -52,10 +54,43 @@ export interface RobotStatus {
   posture: RobotPosture | null;
   /** Incrémenté par le service à chaque changement de limites. */
   settingsRevision: number;
+  /**
+   * La sécurité lidar du SERVICE est-elle active ?
+   *
+   * Elle empêche un pas quand la carte montre trop peu de place. Elle ne
+   * remplace pas l'anti-obstacle interne du Go2, qui reste actif.
+   */
+  obstacleSafetyEnabled: boolean;
+  /** La sécurité lidar est réglable seulement sur un robot réel connecté. */
+  obstacleSafetyAvailable: boolean;
+  /** Le robot est-il en veille prolongée (moteurs relâchés, lidar coupé) ? */
+  standby: boolean;
+  /** Transition en cours ('entering' | 'waking' | null). */
+  standbyTransition: 'entering' | 'waking' | null;
 }
 
 /** Postures que le service sait demander au robot. */
 export type RobotPosture = 'stand' | 'sit' | 'balance' | 'lie_down';
+
+/** Directions du pilotage manuel, dans le repère du robot. */
+export type ManualDirection =
+  | 'forward'
+  | 'backward'
+  | 'left'
+  | 'right'
+  | 'turn_left'
+  | 'turn_right'
+  | 'forward+turn_left'
+  | 'forward+turn_right'
+  | 'backward+turn_left'
+  | 'backward+turn_right';
+
+export interface ManualMoveResult {
+  active: boolean;
+  /** La touche est ignorée : le robot n'est pas prêt ou sa sécurité est active. */
+  blocked: boolean;
+  message: string | null;
+}
 
 /** Cases occupées de la carte du lidar, vues du dessus, en mètres. */
 export interface LidarResult {
@@ -123,9 +158,12 @@ export type ExecutionEvent =
       type: 'step_finished';
       index: number;
       label: string;
-      /** 'exact' = mesure confirmee ; 'timeout' = delai atteint sans mesure. */
-      outcome: 'exact' | 'timeout';
+      /** 'exact' = mesure confirmee ; 'timeout' = delai atteint sans mesure ;
+       *  'blocked' = action NON faite, pas assez de place. */
+      outcome: 'exact' | 'timeout' | 'stopped' | 'failed' | 'blocked';
       measured: { distanceCm?: number; angleDeg?: number } | null;
+      /** Explication du service, quand il y en a une (obstacle, sécurité). */
+      message?: string | null;
     }
   /**
    * Photographie des variables.
@@ -210,6 +248,36 @@ export const api = {
   stop: (): Promise<{ stopping: boolean }> =>
     request('/api/execution/stop', { method: 'POST' }),
 
+  /** Ouvre le mode manuel (ZQSD et flèches). Aucun mouvement n'est envoyé ici. */
+  startManual: (adultAuthorised: boolean): Promise<{ active: boolean }> =>
+    request('/api/manual/start', {
+      method: 'POST',
+      body: JSON.stringify({ adult_authorised: adultAuthorised }),
+    }),
+
+  /**
+   * Renouvelle une direction, ou arrête le mouvement si `null`.
+   *
+   * `seq` croît à chaque requête : le service ignore une requête ancienne
+   * arrivée après l'arrêt, ce qui évite un redémarrage fantôme.
+   */
+  moveManual: (
+    direction: ManualDirection | null,
+    seq: number,
+  ): Promise<ManualMoveResult> =>
+    request('/api/manual/move', {
+      method: 'POST',
+      body: JSON.stringify({ direction, seq }),
+    }),
+
+  /** Ferme le mode manuel et arrête le robot. */
+  stopManual: (): Promise<{ active: boolean }> =>
+    request('/api/manual/stop', { method: 'POST' }),
+
+  /** Déclenche un saut en mode manuel (barre espace). */
+  jumpManual: (): Promise<{ ok: boolean; blocked: boolean; message: string | null }> =>
+    request('/api/manual/jump', { method: 'POST' }),
+
   /**
    * Carte du lidar, vue du dessus, en mètres autour du robot.
    */
@@ -238,6 +306,25 @@ heartbeat: (runId: string): Promise<{ ok: boolean }> =>
     request<RobotStatus>('/api/mode', {
       method: 'POST',
       body: JSON.stringify({ mode, adult_authorised: adultAuthorised }),
+    }),
+
+  /**
+   * Active ou coupe la sécurité lidar du service.
+   *
+   * `adultAuthorised` n'est exigé par le service que pour la COUPER. Le
+   * champ est envoyé sous le nom exact `adult_authorised` : `extra="forbid"`
+   * côté service refuse toute autre casse.
+   */
+  setObstacleSafety: (
+    enabled: boolean,
+    adultAuthorised: boolean,
+  ): Promise<RobotStatus> =>
+    request<RobotStatus>('/api/safety/obstacles', {
+      method: 'POST',
+      body: JSON.stringify({
+        enabled,
+        adult_authorised: adultAuthorised,
+      }),
     }),
 
   /** Réglages en vigueur et bornes autorisées. */
@@ -288,6 +375,18 @@ heartbeat: (runId: string): Promise<{ ok: boolean }> =>
       method: 'POST',
       body: JSON.stringify({}),
     }),
+
+  /** Active ou désactive le mode veille prolongée du robot. */
+  setStandby: (
+    enabled: boolean,
+  ): Promise<{ standby: boolean; standbyTransition: 'entering' | 'waking' | null }> =>
+    request<{ standby: boolean; standbyTransition: 'entering' | 'waking' | null }>(
+      '/api/robot/standby',
+      {
+        method: 'POST',
+        body: JSON.stringify({ enabled }),
+      },
+    ),
 };
 
 /** Connexion aux evenements du service, avec reconnexion espacee. */

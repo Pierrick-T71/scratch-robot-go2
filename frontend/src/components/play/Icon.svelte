@@ -56,6 +56,11 @@
     <path d="M8 5.2v13.6L19 12z" fill="currentColor" stroke="none" />
   {:else if name === 'stop'}
     <rect x="6" y="6" width="12" height="12" rx="2.4" fill="currentColor" stroke="none" />
+  {:else if name === 'gamepad'}
+    <path d="M7 8.5h10a4.4 4.4 0 0 1 4.3 5.3l-.7 3.5a2.4 2.4 0 0 1-4.1 1.2L14.8 17H9.2l-1.7 1.5a2.4 2.4 0 0 1-4.1-1.2l-.7-3.5A4.4 4.4 0 0 1 7 8.5z" />
+    <path d="M7.5 11.5v3.2M5.9 13.1H9.1" />
+    <circle cx="16" cy="12" r="0.9" fill="currentColor" stroke="none" />
+    <circle cx="18.2" cy="14.2" r="0.9" fill="currentColor" stroke="none" />
   {:else if name === 'save'}
     <path d="M5 4h11l3 3v13H5z" />
     <path d="M8 4v6h7V4" />
@@ -147,6 +152,9 @@
     <path
       d="M8.2 12.4V6.3a1.55 1.55 0 0 1 3.1 0v4.9m0 .6V4.9a1.55 1.55 0 0 1 3.1 0v6.9m0 .4V6.6a1.55 1.55 0 0 1 3.1 0v7.2c0 4.1-2.6 6.8-6.4 6.8-3.2 0-5.4-2-6-5.1l-.7-3.3a1.55 1.55 0 0 1 2.8-1.2l1 2.2"
     />
+  {:else if name === 'sun'}
+    <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />
+    <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
   {:else if name === 'home'}
     <path d="M4 11l8-7 8 7v9h-6v-6h-4v6H4z" />
   {:else}

@@ -78,6 +78,7 @@ garanties.
 | État toujours affiché | progression et état du robot visibles en permanence |
 | **Portage / pieds dans le vide** | `foot_force` (état bas) : somme sous 60 → `Move(0)`, `StopMove`, `Damp` au prochain message (≈ 0,5 s) et verrouillage |
 | **Relevage automatique** | robot allongé **par nous** + lidar bloqué (rotation réelle en chute) → il se relève tout seul |
+| **Obstacle sur le trajet** | carte du lidar : pas assez de place → l'action est sautée ; obstacle apparu pendant le pas → arrêt immédiat. L'interrupteur « Sécurité » peut couper **ce contrôle du service** (voir §4) ; le reste des protections reste actif. |
 
 ### Détection de portage
 
@@ -123,6 +124,126 @@ chargés, n'est **pas** arrêté automatiquement. L'adulte doit intervenir.
    garde le constate aussi.
 6. L'interface affiche un bandeau rouge avec la raison et la consigne
    « repose-le au sol ».
+
+### Les murs et les obstacles
+
+Avant chaque translation (avancer, reculer, aller à gauche, aller à droite), et
+pendant toute sa durée, le service lit la carte du lidar. Ce n'est pas un
+capteur supplémentaire : c'est la même carte que celle affichée dans la vue
+lidar.
+
+**Géométrie retenue**
+
+| Élément | Valeur | Pourquoi |
+|---|---|---|
+| Couloir avant / arrière | ± 0,30 m | demi-largeur du Go2 (0,155 m) + marge |
+| Couloir latéral | ± 0,45 m | le corps est **en travers** : il faut couvrir sa longueur |
+| Longueur du robot | 0,40 m | 0,35 m du centre au museau + 0,05 m |
+| Largeur du robot | 0,25 m | 0,155 m du centre au flanc + marge |
+| Marge de trajet | 0,05 m | temps de réaction et arrondis de la carte |
+| Hauteur prise en compte | 0,25 m à 1,60 m au-dessus d'un niveau de sol robuste (médiane) | ignore le sol cartographié, les pattes, le plafond et les voxels aberrants sous le sol |
+
+Le niveau du sol n'est **pas** la case la plus basse : quelques voxels
+aberrants sous le plancher suffisent à abaisser le seuil et à faire considérer
+le sol comme un mur. Un percentile bas ne suffit pas non plus : le sol
+cartographié s'étale sur plusieurs couches et son dessus peut rester au-dessus
+du seuil. On prend la **médiane** des hauteurs, qui donne le niveau dominant
+du sol, puis on écarte tout ce qui est à moins de 0,25 m au-dessus.
+
+La distance libre est celle de la case occupée la plus proche dans le couloir,
+moins une case de 5 cm. La distance nécessaire vaut :
+
+`marge du corps + distance du pas + 0,05 m`
+
+où la marge du corps est **0,40 m** pour un pas avant ou arrière, et **0,25 m**
+pour un pas latéral (le chien présente alors sa largeur, pas son museau).
+
+Exemples avec la vitesse de 0,30 m/s :
+
+| Action | Distance parcourue | Place nécessaire |
+|---|---|---|
+| 1 s | 0,30 m | 0,75 m |
+| 2 s | 0,60 m | 1,05 m |
+| 3 s | 0,90 m | 1,35 m |
+| 5 s | 1,50 m | 1,95 m |
+
+Un mur à 1,00 m autorise donc un pas de 1 s, mais pas un pas de 5 s : le chien
+aurait besoin de 1,95 m et toucherait le mur en chemin.
+
+Pour un pas **latéral** (« aller à gauche » ou « aller à droite »), la place
+nécessaire vaut `0,25 m + distance + 0,05 m` : 0,60 m pour 1 s, 1,80 m pour
+5 s. Le couloir regardé est plus large (± 0,45 m), parce que le corps du chien
+est en travers du déplacement.
+
+Cette marge est celle du **service**. Elle ne désactive pas l'anti-obstacle
+interne du Go2, qui peut arrêter le robot plus tôt : dans un passage étroit, un
+pas peut donc être refusé par le robot alors que la carte du service le déclare
+libre. L'essai réel du 22/10/2026 l'a montré : 3 s demandées, environ 37,5 cm
+parcourus, puis arrêt sans `safetyReason` du service.
+
+**Ce qui se passe si la place manque**
+
+- L'action n'est **pas** raccourcie : elle n'est pas faite du tout. Le
+  programme continue avec l'instruction suivante. Par exemple « avancer 5 s »
+  puis « tourner à gauche » : l'avance est sautée, la rotation est faite.
+- L'étape est affichée en orange avec « Pas assez de place devant : il reste
+  0,8 m libres. » et le bilan final le rappelle.
+- Si un obstacle apparaît **pendant** le pas (une personne passe), la carte est
+  relue à 10 Hz ; dès que la place restante ne suffit plus, le service envoie
+  l'arrêt, l'étape est marquée arrêtée et le programme s'arrête.
+
+**Quand la vérification n'a pas lieu**
+
+Si la carte ou la pose du robot dans la carte manque, ou date de plus de 2 s,
+la distance n'est pas mesurée. Le service ne bloque alors **pas** l'action : il
+ne peut ni affirmer un mur, ni affirmer que la voie est libre. Ce choix évite
+de rendre l'application inutilisable quand le lidar est momentanément absent,
+mais il ne faut pas le confondre avec une garantie.
+
+**L'interrupteur « Sécurité »**
+
+En haut à droite, à côté de l'état du robot, un interrupteur nommé
+**« Sécurité »** permet à un adulte de couper la vérification de place du
+**service**.
+
+| État | Effet |
+|---|---|
+| **Activée** (défaut) | Avant chaque pas, et pendant le pas, le service lit la carte et peut sauter l'action ou arrêter le robot. |
+| **Désactivée** | `clearance_m()` renvoie « aucune mesure » : le service ne bloque plus et ne vérifie plus la distance. **L'anti-obstacle interne du Go2 reste actif.** |
+
+Règles de fonctionnement :
+
+- L'interrupteur n'est disponible que sur un **robot réel connecté**, et
+  seulement **hors exécution** (le service répond `409` pendant un programme).
+- Il est **réarmé sur « activée » à chaque nouveau branchement** : un robot
+  reconnecté n'hérite jamais d'un réglage laissé coupé.
+- Le couper demande une **confirmation d'adulte** dans l'interface
+  (`POST /api/safety/obstacles` avec `adult_authorised: true`) ; le remettre
+  ne demande aucune autorisation.
+- L'interface garde l'**interrupteur en rouge** tant que la sécurité est
+  coupée ; aucun bandeau supplémentaire ne s'affiche.
+- La coupure ne touche **que** le contrôle lidar du service. Le bail, le
+  chien de garde, l'arrêt, les limites de vitesse, le contrôle de portage, le
+  relevage automatique et l'anti-obstacle interne du Go2 restent actifs.
+- Le réglage est **en mémoire** : un redémarrage du service le remet à
+  « activée ».
+
+> ⚠️ **Ne pas confondre « sécurité coupée » avec « robot sans protection ».**
+> L'anti-obstacle du constructeur est indépendant et peut arrêter le robot
+> plus tôt. Il ne voit cependant ni les vitres, ni les objets très bas, et ne
+> remplace pas la surveillance d'un adulte. Couper l'interrupteur ne doit se
+> faire que pour un diagnostic, dans une zone dégagée, avec la télécommande en
+> main.
+
+**Limites assumées**
+
+- Le lidar ne voit pas les **vitres**, les objets **transparents**, les objets
+  très **bas** (moins de 25 cm) ni ce qui est hors de la carte.
+- La carte peut être périmée ou décalée si le robot a glissé ; la marge de
+  0,05 m absorbe les petits écarts, pas une dérive importante.
+- Le contrôle ne s'applique **pas** aux rotations ni aux postures.
+- Un obstacle qui apparaît et disparaît entre deux messages (10 Hz) peut ne
+  pas être vu. L'adulte et l'arrêt physique restent la référence.
 
 ### Le robot s'est allongé et son lidar frotte le sol
 
@@ -347,6 +468,13 @@ solderont par « temps écoulé ». C'est acceptable, et c'est honnête.
 - Il ne dispense **pas** de la surveillance d'un adulte.
 - Il n'empêche **pas** le robot de tomber ou de glisser.
 - Il ne certifie **pas** la précision d'un déplacement.
+- Il ne **garantit pas** de voir tous les obstacles : ni les vitres, ni les
+  objets transparents, ni les objets très bas (moins de 25 cm), ni ce qui est
+  hors de la carte lidar.
+- Il ne **désactive pas** l'anti-obstacle interne du Go2, même avec
+  l'interrupteur « Sécurité » sur « désactivée ». Inversement, couper
+  l'interrupteur ne rend pas le robot sûr : le service ne vérifie simplement
+  plus la distance.
 
 ---
 

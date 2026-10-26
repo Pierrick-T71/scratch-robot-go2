@@ -323,6 +323,45 @@ renverrait l'utilisateur à sa position de départ à chaque balayage.
 Le rendu est allégé : 12 000 cubes au maximum, et un pixel ratio plafonné à
 1,5 — au-delà, un rendu logiciel ne suit plus.
 
+#### La même carte sert à éviter les murs
+
+Depuis le 22/10/2026, la carte n'est plus seulement une vue : elle décide si
+une translation a la place de se faire.
+
+- Le service ne garde que les voxels situés entre **0,25 m et 1,60 m** au-dessus
+  d'un **niveau de sol robuste**, estimé par la **médiane des hauteurs**.
+  Le minimum absolu est volontairement écarté : le 22/10/2026, un unique voxel
+  aberrant à -0,275 m sous le plancher avait fait passer tout le sol pour un
+  mur et refusé une avance de 1 s alors que la voie était libre sur 1,45 m.
+  Un percentile bas restait insuffisant : le sol s'étale sur ~0,35 m de haut
+  et sa couche supérieure réapparaissait comme obstacle (mesuré à 0,025 m
+  avec un 10e percentile à -0,225 m). La médiane donne le niveau du sol ;
+  les couches basses sont ensuite écartées par la marge de 0,25 m.
+  Le sol cartographié, les pattes et le plafond sont donc écartés.
+- Il regarde un couloir de **± 0,30 m** autour de la direction du pas et prend
+  la case la plus proche. La distance nécessaire vaut
+  `0,40 m + vitesse × durée + 0,05 m` (0,25 m au lieu de 0,40 m pour un pas
+  latéral, et un couloir de ± 0,45 m car le corps est en travers).
+- Si la place manque, l'action n'est **pas** faite (elle n'est pas raccourcie)
+  et le programme continue. Pendant le pas, la mesure est refaite à 10 Hz ;
+  un obstacle qui apparaît arrête le robot.
+- Sans carte ou sans pose de moins de 2 s, aucune décision n'est prise :
+  `clearance_m()` renvoie `None`. On ne prouve pas un mur avec une carte
+  absente.
+
+Le 21/10/2026, la carte 2D comptait environ **2 100 cases** : elle contient
+très probablement le sol, d'où le filtre de hauteur. **À vérifier sur le robot
+réel** lors de la prochaine session :
+
+1. le chien ne doit pas se voir lui-même (aucun cube sur ses pattes ni sur son
+   dos) ; s'il se voit, exclure son empreinte dans `obstacles.py` ;
+2. le niveau de sol estimé (médiane) doit rester le sol, même en présence
+   d'un voxel aberrant sous le plancher ou d'un sol épais ;
+3. comparer la distance annoncée (message « il reste X m libres ») à une mesure
+   au mètre ruban, robot cap vers un mur ;
+4. vérifier qu'une avance de 1 s passe devant un mur à 1 m, et qu'une avance de
+   5 s est refusée.
+
 ### Les gestes du corps
 
 Quatre gestes, tous des commandes officielles du SDK, sont exposés à l'enfant :

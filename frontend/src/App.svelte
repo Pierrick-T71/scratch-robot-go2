@@ -3,9 +3,12 @@
    * Go2 Play — écran principal.
    *
    * Trois zones :
-   *  1. la barre du haut     (PlayHeader) : identité, Lancer / Arrêter / Sauvegarder ;
+   *  1. la barre du haut     (PlayHeader) : identité, mode manuel / Arrêter / Sauvegarder ;
    *  2. la bibliothèque      (BlockLibrary) et « Mon Programme » (ProgramTimeline) ;
    *  3. la vue du robot      (RobotStage), à droite, sur toute la hauteur.
+   *
+   * Le programme se lance avec le drapeau de « Mon Programme ». Le mode manuel
+   * remplace l'ancien bouton « Lancer » de la barre du haut.
    *
    * L'interface n'accède jamais au robot : tout passe par `app` (lib/stores),
    * qui parle au service. Les douze blocs sont traduits en `Program` par
@@ -15,6 +18,9 @@
   import PlayHeader from './components/play/PlayHeader.svelte';
   import BlockLibrary from './components/play/BlockLibrary.svelte';
   import ProgramTimeline from './components/play/ProgramTimeline.svelte';
+  import BlockedPopup from './components/play/BlockedPopup.svelte';
+import StandbyOverlay from './components/play/StandbyOverlay.svelte';
+  import ManualPanel from './components/play/ManualPanel.svelte';
   import RobotStage from './components/play/RobotStage.svelte';
   import RobotConnect from './components/RobotConnect.svelte';
   import SettingsPanel from './components/SettingsPanel.svelte';
@@ -40,6 +46,8 @@
   let showMode = $state(false);
   let showSettings = $state(false);
   let showRobot = $state(false);
+  let showSafetyOffConfirm = $state(false);
+  let manualMode = $state(false);
 
   /** Ce que voit l'enfant EST ce qui part : une seule source de vérité. */
   const program = $derived(toProgram(blocks));
@@ -70,6 +78,17 @@
       app.setProgram(next);
       app.syncSteps(next.statements);
     });
+  });
+
+  $effect(() => {
+    if (!manualMode) return;
+    const unsafe = Boolean(app.status.safetyReason);
+    const disconnected = app.status.mode === 'real' && !app.status.connected;
+    const executionStarted = app.execution === 'starting' || app.execution === 'running';
+    const standbyActive = app.status.standby || app.status.standbyTransition !== null;
+    if (unsafe || disconnected || executionStarted || standbyActive) {
+      closeManual();
+    }
   });
 
   onMount(() => {
@@ -134,6 +153,24 @@
     blocks = [];
     clearSavedBlocks();
     app.notice = null;
+    app.closeBlockedNotice();
+  }
+
+  /**
+   * Le switch ne coupe que la vérification de place du service.
+   * Le couper est une décision d'adulte : on demande confirmation.
+   */
+  function toggleSafety(enabled: boolean): void {
+    if (enabled) {
+      void app.setObstacleSafety(true);
+      return;
+    }
+    showSafetyOffConfirm = true;
+  }
+
+  function confirmSafetyOff(): void {
+    showSafetyOffConfirm = false;
+    void app.setObstacleSafety(false);
   }
 
   /**
@@ -154,7 +191,28 @@
   }
 
   function stop(): void {
+    if (manualMode) {
+      closeManual();
+      return;
+    }
     void app.requestStop();
+  }
+
+  async function openManual(): Promise<void> {
+    if (app.isBusy || app.status.safetyReason) return;
+    if (await app.startManual()) {
+      manualMode = true;
+    }
+  }
+
+  function closeManual(): void {
+    manualMode = false;
+    void app.stopManual();
+  }
+
+  function openRobot(): void {
+    if (manualMode) closeManual();
+    showRobot = true;
   }
 
   function save(): void {
@@ -179,12 +237,13 @@
 <div class="app">
   <PlayHeader
     status={app.status}
-    busy={app.isBusy}
-    blockCount={blocks.length}
-    onStart={start}
+    busy={app.isBusy || manualMode}
+    onManual={() => void openManual()}
     onStop={stop}
     onSave={save}
-    onOpenRobot={() => (showRobot = true)}
+    onOpenRobot={openRobot}
+    onToggleSafety={toggleSafety}
+    onToggleStandby={(enabled) => void app.setStandby(enabled)}
   />
 
   {#if app.status.safetyReason}
@@ -204,7 +263,7 @@
     </div>
   {/if}
 
-  <main class="app__main">
+  <main class="app__main" class:app__main--manual={manualMode}>
     <div class="app__library">
       <BlockLibrary
         onAdd={(kind) => addBlock(kind)}
@@ -217,7 +276,7 @@
       <ProgramTimeline
         {blocks}
         {runningIndex}
-        busy={app.isBusy}
+        busy={app.isBusy || manualMode}
         blocked={Boolean(app.status.safetyReason)}
         notice={app.notice}
         onAdd={addBlock}
@@ -234,9 +293,21 @@
       <RobotStage
         status={app.status}
         {walking}
-        onOpenRobot={() => (showRobot = true)}
+        onOpenRobot={openRobot}
       />
     </div>
+
+    {#if manualMode}
+      <div class="app__manual">
+        <ManualPanel
+          robotReady={app.status.mode === 'real' && app.status.connected}
+          onMove={(direction, seq) => app.moveManual(direction, seq)}
+          onRelease={(seq) => void app.moveManual(null, seq)}
+          onJump={() => app.jumpManual()}
+          onClose={closeManual}
+        />
+      </div>
+    {/if}
   </main>
 </div>
 
@@ -287,6 +358,63 @@
       </div>
     </div>
   </div>
+{/if}
+
+{#if app.blockedNotice}
+  <BlockedPopup
+    title={app.blockedNotice.title}
+    message={app.blockedNotice.message}
+    kind={app.blockedNotice.kind}
+    onClose={() => app.closeBlockedNotice()}
+  />
+{/if}
+
+{#if showSafetyOffConfirm}
+  <div class="modal-backdrop" role="presentation">
+    <div
+      class="modal"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="confirm-safety-off"
+    >
+      <div class="modal__header">
+        <span class="modal__emoji" aria-hidden="true">⚠️</span>
+        <div>
+          <h2 class="modal__title" id="confirm-safety-off">Désactiver la sécurité ?</h2>
+          <p class="modal__subtitle">Décision d’adulte</p>
+        </div>
+      </div>
+      <div class="modal__body">
+        <p>
+          Le service ne vérifiera plus la distance avant un pas. Le robot
+          pourrait donc avancer vers un obstacle.
+        </p>
+        <p>
+          L’anti-obstacle interne du Go2 reste actif, mais il ne suffit pas à
+          garantir une zone dégagée. Garde la main sur l’arrêt.
+        </p>
+      </div>
+      <div class="modal__footer">
+        <button
+          type="button"
+          class="btn btn--ghost"
+          onclick={() => (showSafetyOffConfirm = false)}
+        >
+          Annuler
+        </button>
+        <button type="button" class="btn btn--danger" onclick={confirmSafetyOff}>
+          Désactiver
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if app.status.standby || app.status.standbyTransition !== null}
+  <StandbyOverlay
+    status={app.status}
+    onWake={() => void app.setStandby(false)}
+  />
 {/if}
 
 <style>
@@ -382,6 +510,33 @@
     flex: 1;
   }
 
+  /* Le flou est appliqué aux blocs eux-mêmes : il reste net même dans les
+     navigateurs qui ignorent `backdrop-filter`. */
+  .app__main--manual .app__library,
+  .app__main--manual .app__program {
+    filter: blur(9px);
+    pointer-events: none;
+    user-select: none;
+  }
+
+  /* Le mode manuel recouvre la bibliothèque et le programme, pas le robot :
+     l'adulte garde la vue du chien pendant qu'il le pilote. */
+  .app__manual {
+    grid-area: 1 / 1 / 3 / 2;
+    z-index: 8;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    min-height: 0;
+    padding: 20px;
+    overflow: auto;
+    border-radius: 24px;
+    background: rgb(20 23 30 / 58%);
+    backdrop-filter: blur(9px);
+    -webkit-backdrop-filter: blur(9px);
+  }
+
   /* Fenêtre de branchement : étroite, elle ne prend pas l'écran des blocs. */
   .modal--etroit {
     max-width: 380px;
@@ -425,6 +580,10 @@
       min-height: 0;
       aspect-ratio: 1 / 1;
     }
+
+    .app__manual {
+      align-items: flex-start;
+    }
   }
 
   @media (max-width: 640px) {
@@ -438,6 +597,10 @@
 
     .app__library {
       min-height: 380px;
+    }
+
+    .app__manual {
+      padding: 12px;
     }
   }
 </style>

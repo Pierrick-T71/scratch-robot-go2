@@ -16,7 +16,11 @@
   let { onCheck, onStart }: Props = $props();
 
   const steps = $derived(app.steps);
-  const doneCount = $derived(steps.filter((s) => s.state === 'done').length);
+  // Une étape bloquée a été traitée par le programme (elle n'a pas été
+  // faite, mais elle ne sera pas rejouée) : elle compte dans l'avancement.
+  const doneCount = $derived(
+    steps.filter((s) => s.state === 'done' || s.state === 'blocked').length,
+  );
   const percent = $derived(
     steps.length === 0 ? 0 : Math.round((doneCount / steps.length) * 100),
   );
@@ -116,11 +120,20 @@
           {#each steps as step (step.index)}
             <li class="steps__item steps__item--{step.state}">
               <span class="steps__index">
-                {step.state === 'done' ? '✓' : step.state === 'running' ? '▶' : step.index + 1}
+                {step.state === 'done'
+                  ? '✓'
+                  : step.state === 'blocked'
+                    ? '!'
+                    : step.state === 'running'
+                      ? '▶'
+                      : step.index + 1}
               </span>
               <span class="grow">{step.label}</span>
               {#if step.outcome}
-                <span class="steps__outcome">{step.outcome}</span>
+                <span
+                  class="steps__outcome"
+                  class:steps__outcome--long={step.outcome.length > 28}
+                >{step.outcome}</span>
               {/if}
             </li>
           {/each}

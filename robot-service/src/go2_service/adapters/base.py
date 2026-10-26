@@ -93,9 +93,11 @@ class CommandOutcome:
     index: int
     #: `exact` = cible atteinte d'après l'état mesuré.
     #: `timeout` = délai atteint sans confirmation mesurée.
-    #: `stopped` = interrompu sur demande.
+    #: `stopped` = interrompu sur demande, ou par un obstacle apparu.
+    #: `blocked` = action NON faite : la place libre ne suffisait pas.
+    #: Le programme continue avec l'instruction suivante.
     #: `failed` = erreur de l'adaptateur.
-    outcome: Literal["exact", "timeout", "stopped", "failed"]
+    outcome: Literal["exact", "timeout", "stopped", "blocked", "failed"]
     measured_distance_cm: float | None = None
     measured_angle_deg: float | None = None
     detail: str | None = None
@@ -178,6 +180,16 @@ class RobotAdapter(Protocol):
         """
         ...
 
+    async def clearance_m(self, direction: str) -> float | None:
+        """Distance libre dans une direction, en mètres.
+
+        `direction` vaut `forward`, `backward`, `left` ou `right`, dans le
+        repère du robot. `None` signifie « pas mesurée » (pas de lidar, carte
+        ou pose périmée) : le service ne doit pas en déduire que la voie est
+        libre, ni qu'elle est bloquée.
+        """
+        ...
+
     async def prepare_run(self) -> None:
         """Préparation avant le PREMIER ordre d'un programme.
 
@@ -193,6 +205,14 @@ class RobotAdapter(Protocol):
 
     def supports(self, capability: Capability) -> bool:
         """Indique si une capacité est réellement disponible."""
+        ...
+
+    async def enter_standby(self) -> None:
+        """Passe le robot en mode veille économique (coucher, coupure LiDAR)."""
+        ...
+
+    async def exit_standby(self) -> None:
+        """Sort le robot du mode veille (rallume LiDAR, relève le robot)."""
         ...
 
 

@@ -438,6 +438,7 @@ body {
   color: var(--ink-700);
   border-left: 3px solid var(--line-strong);
   transition: background 0.15s ease;
+  flex-wrap: wrap;
 }
 
 .steps__item--running {
@@ -454,6 +455,18 @@ body {
 
 .steps__item--stopped {
   border-left-color: var(--warn-700);
+}
+
+/* L'action n'a PAS été faite : la place libre manquait. */
+.steps__item--blocked {
+  border-left-color: var(--warn-700);
+  background: var(--warn-100);
+  color: var(--warn-text);
+}
+
+.steps__item--blocked .steps__index {
+  background: var(--warn-700);
+  color: #1b1408;
 }
 
 .steps__index {
@@ -488,6 +501,14 @@ body {
   background: rgb(255 255 255 / 8%);
   color: var(--ink-500);
   white-space: nowrap;
+}
+
+/* Explication longue (obstacle, sécurité) : elle passe à la ligne. */
+.steps__outcome--long {
+  flex-basis: 100%;
+  margin-left: 33px;
+  white-space: normal;
+  line-height: 1.35;
 }
 
 /* =========================================================================

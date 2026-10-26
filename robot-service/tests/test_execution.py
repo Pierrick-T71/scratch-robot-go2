@@ -56,13 +56,22 @@ class FakeAdapter:
     name = "fake"
     physical_commands_enabled = False
 
-    def __init__(self, *, posture=Posture.STAND, battery=80.0) -> None:
+    def __init__(
+        self,
+        *,
+        posture=Posture.STAND,
+        battery=80.0,
+        clearance: float | None = None,
+    ) -> None:
         self.executed: list[RobotCommand] = []
         self.stop_calls = 0
         self.prepare_calls = 0
         self.fail_on: RobotCommand | None = None
         self.outcome = "exact"
         self.connected = True
+        #: Distance libre annoncée pour chaque direction. `None` = pas de lidar.
+        self.clearance = clearance
+        self.clearance_directions: list[str] = []
         self._posture = posture
         self._battery = battery
         self.state = RobotState.IDLE
@@ -105,6 +114,16 @@ class FakeAdapter:
 
     async def lidar_volume(self) -> dict[str, Any] | None:
         return None
+
+    async def clearance_m(self, direction: str) -> float | None:
+        self.clearance_directions.append(direction)
+        return self.clearance
+
+    async def enter_standby(self) -> None:
+        self._posture = Posture.LIE_DOWN
+
+    async def exit_standby(self) -> None:
+        self._posture = Posture.STAND
 
     def supports(self, capability: Capability) -> bool:
         return capability in ALWAYS_AVAILABLE
@@ -204,6 +223,124 @@ class TestSimplePlan:
         engine = ExecutionEngine(adapter, LIMITS)
         run(engine, parse_program(SIMPLE_PLAN))
         assert adapter.executed[1].angle_deg == pytest.approx(90.0)
+
+
+class TestObstacleClearance:
+    """La carte du lidar décide si une translation a la place de se faire."""
+
+    def test_too_little_room_skips_only_that_action(self):
+        # 0,5 m libres devant : une avance de 5 s (1,5 m) ne tient pas.
+        # Le geste qui suit doit quand même être exécuté.
+        adapter = FakeAdapter(clearance=0.5)
+        engine = ExecutionEngine(adapter, LIMITS)
+        events = run(
+            engine,
+            parse_program(
+                {
+                    "statements": [
+                        {"kind": "move", "direction": "forward", "seconds": 5},
+                        {"kind": "gesture", "gesture": "salute"},
+                    ]
+                }
+            ),
+        )
+
+        assert kinds(adapter) == ["salute"]
+        assert adapter.clearance_directions == ["forward"]
+        blocked = [
+            event
+            for event in events
+            if event.type == "step_finished" and event.outcome == "blocked"
+        ]
+        assert len(blocked) == 1
+        assert blocked[0].index == 0
+        assert "Pas assez de place devant" in (blocked[0].message or "")
+        assert "0,5 m" in (blocked[0].message or "")
+        assert events[-1].reason == FINISH_COMPLETED
+
+    def test_a_blocked_step_is_not_announced_as_completed(self):
+        adapter = FakeAdapter(clearance=0.1)
+        engine = ExecutionEngine(adapter, LIMITS)
+        events = run(
+            engine,
+            parse_program(
+                {"statements": [{"kind": "move", "direction": "forward", "seconds": 1}]}
+            ),
+        )
+
+        completed = [e for e in events if e.type == "step_completed"]
+        assert completed == []
+        assert events[-1].reason == FINISH_COMPLETED
+
+    def test_enough_room_lets_the_move_run(self):
+        adapter = FakeAdapter(clearance=10.0)
+        engine = ExecutionEngine(adapter, LIMITS)
+        run(
+            engine,
+            parse_program(
+                {"statements": [{"kind": "move", "direction": "forward", "seconds": 1}]}
+            ),
+        )
+
+        assert kinds(adapter) == ["move_forward"]
+
+    def test_without_measurement_the_move_is_not_blocked(self):
+        # Simulateur, ou carte absente : on ne peut ni affirmer un mur, ni
+        # affirmer que la voie est libre. Le déplacement reste possible.
+        adapter = FakeAdapter(clearance=None)
+        engine = ExecutionEngine(adapter, LIMITS)
+        run(
+            engine,
+            parse_program(
+                {"statements": [{"kind": "move", "direction": "forward", "seconds": 1}]}
+            ),
+        )
+
+        assert kinds(adapter) == ["move_forward"]
+
+    def test_each_direction_is_checked_with_its_own_name(self):
+        adapter = FakeAdapter(clearance=10.0)
+        engine = ExecutionEngine(adapter, LIMITS)
+        run(
+            engine,
+            parse_program(
+                {
+                    "statements": [
+                        {"kind": "move", "direction": "forward", "seconds": 1},
+                        {"kind": "move", "direction": "backward", "seconds": 1},
+                        {"kind": "move", "direction": "left", "seconds": 1},
+                        {"kind": "move", "direction": "right", "seconds": 1},
+                    ]
+                }
+            ),
+        )
+
+        assert adapter.clearance_directions == [
+            "forward",
+            "backward",
+            "left",
+            "right",
+        ]
+        assert kinds(adapter) == [
+            "move_forward",
+            "move_backward",
+            "move_left",
+            "move_right",
+        ]
+
+    def test_a_rotation_is_not_checked(self):
+        # Tourner sur place ne translate pas le chien vers un mur.
+        adapter = FakeAdapter(clearance=0.0)
+        engine = ExecutionEngine(adapter, LIMITS)
+        run(
+            engine,
+            parse_program(
+                {"statements": [{"kind": "turn", "direction": "left", "degrees": 90}]}
+            ),
+        )
+
+        assert adapter.clearance_directions == []
+        assert kinds(adapter) == ["turn_left"]
 
 
 class TestRepeat:
@@ -498,14 +635,21 @@ class TestSafety:
         premier = etat.watchdog
 
         try:
+            # Un ancien réglage « sécurité coupée » ne doit jamais survivre à
+            # un nouveau branchement.
+            simulation.obstacle_safety_enabled = False
             await etat.adopt_robot_adapter(simulation)
             assert premier.running is False
             assert etat.watchdog.running is True
             assert etat.mode == "real"
+            assert etat.obstacle_safety_enabled is True
+            assert simulation.obstacle_safety_enabled is True
 
+            etat.set_obstacle_safety(False)
             await etat.release_robot_adapter()
             assert etat.mode == "simulation"
             assert etat.watchdog.running is True
+            assert etat.obstacle_safety_enabled is True
         finally:
             await etat.watchdog.stop()
 

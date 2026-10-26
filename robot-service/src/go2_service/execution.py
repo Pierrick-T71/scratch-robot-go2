@@ -31,6 +31,12 @@ from typing import AsyncIterator
 
 from .adapters.base import AdapterError, CommandOutcome, RobotAdapter, SafetyInterrupt, StopSignal
 from .interpreter import Interpreter, ProgramError, RobotTruth
+from .obstacles import (
+    direction_of,
+    obstacle_message,
+    required_clearance_m,
+    travel_distance_m,
+)
 from .validation import RobotCommand
 
 log = logging.getLogger(__name__)
@@ -190,6 +196,18 @@ class ExecutionEngine:
         except Exception as exc:  # noqa: BLE001
             log.warning("Préparation du robot impossible : %s", exc)
 
+    async def _clearance(self, direction: str) -> float | None:
+        """Distance libre annoncée par l'adaptateur, ou `None` si inconnue.
+
+        Une mesure qui échoue ne doit ni inventer un mur, ni inventer une voie
+        libre : on la traite comme absente.
+        """
+        try:
+            return await self._adapter.clearance_m(direction)
+        except Exception:  # noqa: BLE001 - une mesure absente n'arrête pas tout
+            log.exception("La distance libre n'a pas pu être mesurée.")
+            return None
+
     async def _run(
         self, commands: list[RobotCommand], active: ActiveExecution
     ) -> AsyncIterator[ExecutionEvent]:
@@ -212,6 +230,37 @@ class ExecutionEngine:
                 return
 
             yield ExecutionEvent(type="step_started", index=index, label=command.label())
+
+            # Assez de place ? La carte du lidar est lue AVANT de donner la
+            # moindre consigne. Sans mesure (simulateur, carte ou pose
+            # périmée), on ne bloque pas : le déplacement se fait comme avant,
+            # et le contrôle permanent de l'adaptateur reste la barrière.
+            direction = direction_of(command.kind)
+            if direction is not None:
+                libre = await self._clearance(direction)
+                if libre is not None:
+                    requis = required_clearance_m(
+                        travel_distance_m(command), direction
+                    )
+                    if libre < requis:
+                        detail = obstacle_message(direction, libre)
+                        log.info(
+                            "Étape %d non faite : %s (libre %.2f m, requis %.2f m)",
+                            index,
+                            detail,
+                            libre,
+                            requis,
+                        )
+                        yield ExecutionEvent(
+                            type="step_finished",
+                            index=index,
+                            label=command.label(),
+                            outcome="blocked",
+                            message=detail,
+                        )
+                        # On saute SEULEMENT cette action : la suite du
+                        # programme peut très bien être un demi-tour.
+                        continue
 
             try:
                 result: CommandOutcome = await self._adapter.execute_command(
@@ -240,7 +289,8 @@ class ExecutionEngine:
                 yield ExecutionEvent(type="execution_finished", reason=FINISH_ERROR)
                 return
 
-            yield ExecutionEvent(type="step_completed", index=index, label=command.label())
+            if result.outcome != "blocked":
+                yield ExecutionEvent(type="step_completed", index=index, label=command.label())
 
             measured: dict[str, float] = {}
             if result.measured_distance_cm is not None:

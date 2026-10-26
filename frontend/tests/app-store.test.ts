@@ -21,7 +21,10 @@ const apiMock = {
   getSettings: vi.fn(),
   saveSettings: vi.fn(),
   setMode: vi.fn(),
+  setObstacleSafety: vi.fn(),
   connectRobot: vi.fn(),
+  jumpManual: vi.fn(),
+  setStandby: vi.fn(),
 };
 
 vi.mock('../src/lib/api/client', async (importOriginal) => {
@@ -39,7 +42,7 @@ vi.mock('../src/lib/api/client', async (importOriginal) => {
   };
 });
 
-const { app } = await import('../src/lib/stores/app.svelte');
+const { app, describeOutcome } = await import('../src/lib/stores/app.svelte');
 
 function programmeAssis() {
   return {
@@ -47,11 +50,10 @@ function programmeAssis() {
   };
 }
 
-beforeEach(() => {
-  vi.clearAllMocks();
-  apiMock.getStatus.mockResolvedValue({
+function statutDeBase() {
+  return {
     connected: true,
-    mode: 'simulation',
+    mode: 'simulation' as const,
     capabilities: [],
     executing: false,
     blockedReason: null,
@@ -62,7 +64,18 @@ beforeEach(() => {
     batteryPercent: 100,
     posture: 'sit',
     settingsRevision: 0,
-  });
+    obstacleSafetyEnabled: true,
+    obstacleSafetyAvailable: true,
+    standby: false,
+    standbyTransition: null,
+  };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  app.blockedNotice = null;
+  app.notice = null;
+  apiMock.getStatus.mockResolvedValue(statutDeBase());
   app.connect();
 });
 
@@ -102,5 +115,124 @@ describe('fin avant la réponse', () => {
 
     expect(app.isBusy).toBe(false);
     expect(app.notice?.message).toContain('Terminé');
+  });
+});
+
+describe('action bloquée par un obstacle', () => {
+  it('garde la trace de l’étape non faite et le dit à la fin', async () => {
+    apiMock.start.mockResolvedValue({ runId: 'run-3' });
+    const programme = {
+      statements: [
+        {
+          kind: 'move' as const,
+          direction: 'forward' as const,
+          seconds: 5,
+          line: 1,
+        },
+        { kind: 'posture' as const, posture: 'sit' as const, line: 2 },
+      ],
+    };
+
+    app.requestStart(programme);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const message = 'Pas assez de place devant : il reste 0,5 m libres.';
+    recoir?.({ type: 'step_started', index: 0, label: 'avancer' });
+    recoir?.({
+      type: 'step_finished',
+      index: 0,
+      label: 'avancer',
+      outcome: 'blocked',
+      measured: null,
+      message,
+    } as ExecutionEvent);
+    recoir?.({ type: 'execution_finished', reason: 'completed' });
+
+    expect(app.steps[0].state).toBe('blocked');
+    expect(app.steps[0].outcome).toBe(message);
+    expect(app.notice?.tone).toBe('warn');
+    expect(app.notice?.message).toContain('pas assez de place');
+    expect(app.blockedNotice?.title).toBe('Le robot ne peut pas avancer');
+    expect(app.blockedNotice?.kind).toBe('blocked');
+    expect(app.blockedNotice?.message).toBe(message);
+
+    app.closeBlockedNotice();
+    expect(app.blockedNotice).toBeNull();
+  });
+
+  it('sait nommer une étape bloquée quand le service ne détaille pas', () => {
+    expect(describeOutcome('blocked', null)).toBe('pas assez de place');
+  });
+
+  it('affiche aussi la fenêtre quand un obstacle apparaît pendant le pas', () => {
+    const message =
+      'Un obstacle est trop proche devant : je me suis arrêté.';
+
+    recoir?.({
+      type: 'step_finished',
+      index: 0,
+      label: 'avancer',
+      outcome: 'stopped',
+      measured: null,
+      message,
+    } as ExecutionEvent);
+
+    expect(app.blockedNotice?.title).toBe('Un obstacle est trop proche');
+    expect(app.blockedNotice?.kind).toBe('stopped');
+    expect(app.blockedNotice?.message).toBe(message);
+  });
+});
+
+describe('interrupteur de sécurité lidar', () => {
+  it('coupe puis réactive la vérification de place du service', async () => {
+    apiMock.setObstacleSafety
+      .mockResolvedValueOnce({
+        ...statutDeBase(),
+        mode: 'real' as const,
+        obstacleSafetyEnabled: false,
+      })
+      .mockResolvedValueOnce({
+        ...statutDeBase(),
+        mode: 'real' as const,
+        obstacleSafetyEnabled: true,
+      });
+
+    const coupe = await app.setObstacleSafety(false);
+
+    expect(coupe).toBe(true);
+    expect(apiMock.setObstacleSafety).toHaveBeenLastCalledWith(false, true);
+    expect(app.status.obstacleSafetyEnabled).toBe(false);
+    expect(app.notice?.tone).toBe('warn');
+    expect(app.notice?.message).toContain('désactivée');
+
+    const remis = await app.setObstacleSafety(true);
+
+    expect(remis).toBe(true);
+    expect(apiMock.setObstacleSafety).toHaveBeenLastCalledWith(true, true);
+    expect(app.status.obstacleSafetyEnabled).toBe(true);
+    expect(app.notice?.message).toContain('activée');
+  });
+});
+
+describe('interrupteur de veille', () => {
+  it('active puis coupe le mode veille', async () => {
+    apiMock.setStandby
+      .mockResolvedValueOnce({ standby: true, standbyTransition: null })
+      .mockResolvedValueOnce({ standby: false, standbyTransition: null });
+    apiMock.getStatus
+      .mockResolvedValueOnce({ ...statutDeBase(), standby: true })
+      .mockResolvedValueOnce({ ...statutDeBase(), standby: false });
+
+    const actif = await app.setStandby(true);
+    expect(actif).toBe(true);
+    expect(apiMock.setStandby).toHaveBeenCalledWith(true);
+    expect(app.status.standby).toBe(true);
+    expect(app.isBusy).toBe(true);
+
+    const reveil = await app.setStandby(false);
+    expect(reveil).toBe(true);
+    expect(apiMock.setStandby).toHaveBeenCalledWith(false);
+    expect(app.status.standby).toBe(false);
+    expect(app.isBusy).toBe(false);
   });
 });

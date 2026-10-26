@@ -78,7 +78,30 @@ Clique sur **⛔ Arrêter**.
 
 Si le robot bouge encore, **préviens l'adulte tout de suite**.
 
-### 5. Si le robot est soulevé
+### 5. Si un mur est trop près
+
+Le robot regarde devant lui avec son **lidar**. S'il n'y a pas assez de place
+pour faire **toute** l'action, il ne la fait pas :
+
+- l'étape devient **orange** avec « Pas assez de place devant » ;
+- le programme **continue** avec les autres étapes ;
+- il ne raccourcit pas l'action : il préfère ne rien faire plutôt que de foncer
+  dans le mur.
+
+Un mur à 1 m laisse passer un pas de **1 seconde**, mais pas un pas de
+**5 secondes** : en 5 secondes, le chien parcourt 1,50 m et toucherait le mur.
+
+Si quelqu'un passe devant lui **pendant** un déplacement, il s'arrête.
+
+Quand une action est refusée, une **fenêtre au milieu de l'écran** affiche le
+message complet (par exemple « Pas assez de place devant : il reste 0,8 m
+libres »). Clique sur **Fermer** après avoir lu. Si tu ne comprends pas,
+**demande à l'adulte**.
+
+Il ne voit pas les **vitres**, ni les objets **très bas** (moins de 25 cm) :
+l'adulte regarde toujours le robot.
+
+### 6. Si le robot est soulevé
 
 Le robot s'arrête **tout seul** et relâche ses pattes. Un bandeau rouge
 s'affiche.
@@ -89,7 +112,7 @@ s'affiche.
 
 Ne le relance pas pendant que tu le tiens.
 
-### 6. Si le robot s'est allongé tout seul
+### 7. Si le robot s'est allongé tout seul
 
 Si le robot s'est allongé **et** que son lidar (le petit capteur devant sa
 tête) est coincé contre le sol, il **se relève tout seul**. Un bandeau vert
@@ -98,7 +121,7 @@ te le dit.
 S'il n'y arrive pas, **demande à l'adulte** : il faut le redresser à la
 main.
 
-### 7. Voir le robot
+### 8. Voir le robot
 
 La petite fenêtre montre le robot **de dos**, comme si tu étais juste
 derrière lui : ce qui est devant lui est au fond de l'image, et le chien ne
@@ -215,6 +238,7 @@ Quand je clique sur Démarrer
 | ⛔ **« Un déplacement doit faire entre 5 et 200 cm. »** | Ton nombre est trop grand ou trop petit |
 | ⛔ **« Le programme n’est pas prêt. »** | Clique d'abord sur « Vérifier mon programme » |
 | ⚠️ **« Le programme a été arrêté. »** | Quelqu'un a appuyé sur Arrêter, ou la sécurité a bloqué |
+| 🚧 **« Le robot ne peut pas avancer »** | Il n'y a pas assez de place : lis la fenêtre, puis clique sur **Fermer** |
 | ⛔ **« Le robot n'est pas connecté. »** | Demande de l'aide à l'adulte |
 | **« mesuré · 45 cm »** | Le robot a **vraiment** mesuré son déplacement |
 | **« temps écoulé »** | Le robot n'a pas réussi à arriver : demande à l'adulte |
@@ -237,6 +261,30 @@ distance d’un déplacement, la durée d’une attente, la longueur d’un prog
 
 Si les réglages ont changé, clique à nouveau sur **🔍 Vérifier mon programme**
 avant de relancer.
+
+---
+
+## L'interrupteur « Sécurité » (pour les adultes)
+
+En haut à droite, à côté de « Go2 Connecté », un interrupteur **Sécurité**
+affiche l'état de la vérification de place du service :
+
+- **activée** (vert, par défaut) : le service refuse un pas qui ne tient pas
+  dans l'espace libre vu par le lidar, et arrête le robot si un obstacle
+  apparaît pendant le pas ;
+- **désactivée** (rouge) : le service **ne vérifie plus** la distance ;
+  l’interrupteur reste rouge.
+
+Pour la couper, il faut confirmer dans une fenêtre « Désactiver la sécurité ? ».
+L'interrupteur n'est disponible que si le **robot réel est connecté** et
+qu'aucun programme ne tourne. Il revient automatiquement sur **activée** à
+chaque nouveau branchement.
+
+> ⚠️ L'interrupteur ne coupe **que** le contrôle lidar du service. Le bouton
+> Arrêter, le bail de sécurité, le chien de garde, les limites de vitesse, la
+> protection de portage et l'anti-obstacle interne du Go2 restent actifs. Il
+> ne faut le désactiver que pour un diagnostic, dans une zone dégagée, avec la
+> télécommande en main.
 
 ---
 

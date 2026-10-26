@@ -45,6 +45,14 @@ from collections import deque
 from typing import Any
 
 from ..config import Limits
+from ..obstacles import (
+    free_distance_m,
+    motion_direction,
+    obstacle_cells,
+    obstacle_message,
+    obstacle_stop_message,
+    required_clearance_m,
+)
 from ..recovery import AutoRecovery, RecoverySample
 from ..state_safety import SafetySample, StateSafety
 from ..validation import Capability, CommandKind, RobotCommand
@@ -232,9 +240,28 @@ class WebRTCAdapter:
     #: de saturer le processeur du service.
     CAMERA_PERIODE_S = 0.2
 
+    #: Duree pendant laquelle la camera reste active apres la derniere
+    #: requete. Le flux MJPEG est ouvert par l'interface ; quand elle le
+    #: ferme, on cesse d'encoder pour ne pas bruler le processeur.
+    CAMERA_ACTIVE_S = 5.0
+
+    #: Periode de traitement des cartes du lidar (secondes).
+    #:
+    #: Le lidar publie plusieurs cartes par seconde. Les convertir a chaque
+    #: message monopolisait le processeur et retardait les requetes HTTP du
+    #: mode manuel de plusieurs centaines de millisecondes. Deux cartes par
+    #: seconde suffisent pour la vue et pour le controle d'obstacle.
+    LIDAR_TRAITEMENT_S = 0.5
+
     #: Au-dela de cette anciennete, la carte du lidar est consideree
     #: comme perimee : mieux vaut une vue vide qu'une carte trompeuse.
     LIDAR_PERIME_S = 2.0
+
+    #: Periode du controle d'obstacle pendant un deplacement, en secondes.
+    #:
+    #: 10 Hz : a 0,30 m/s, le chien avance de 3 cm entre deux mesures. La
+    #: marge de `BODY_CLEARANCE_M` couvre largement ce delai.
+    OBSTACLE_CHECK_S = 0.1
 
     def __init__(
         self,
@@ -246,6 +273,12 @@ class WebRTCAdapter:
         self._robot_ip = robot_ip
         self._aes_key = aes_key
         self.physical_commands_enabled = False
+        #: Sécurité lidar du service : quand elle est active, `clearance_m`
+        #: mesure la place libre et l'exécution refuse un pas qui ne tient pas.
+        #: Désactivée par un adulte, elle renvoie `None` (aucune mesure) : le
+        #: service ne bloque plus, mais l'anti-obstacle interne du Go2 reste
+        #: actif et peut toujours arrêter le robot.
+        self.obstacle_safety_enabled = True
 
         self._connexion: Any = None
         self._rtc: Any = None
@@ -298,9 +331,15 @@ class WebRTCAdapter:
         self._dernier_jpeg: bytes | None = None
         self._dernier_jpeg_at: float = 0.0
         self._tache_video: asyncio.Task[None] | None = None
+        #: Derniere demande de l'interface pour la camera.
+        self._camera_demande_at: float = 0.0
+        #: Le canal video a-t-il deja ete ouvert ?
+        self._video_demarre = False
         #: Derniere carte du lidar recue.
         self._points_lidar: list[list[float]] | None = None
         self._points_lidar_at: float = 0.0
+        #: Derniere conversion complete d'une carte du lidar.
+        self._lidar_traite_at: float = 0.0
         self._lidar_vus: set[str] = set()
         self._lidar_raison: str | None = None
         self._lidar_compte_at: float | None = None
@@ -311,6 +350,11 @@ class WebRTCAdapter:
         self._pose_vue = False
         #: Pose du robot dans la carte du lidar : position et cap.
         self._pose_robot: dict[str, float] | None = None
+        #: Horodatage (monotonic) de la dernière pose reçue.
+        self._pose_robot_at: float = 0.0
+        #: Cases d'obstacles du lidar, SANS le sol, vues du dessus.
+        self._obstacles_lidar: list[tuple[float, float]] | None = None
+        self._obstacles_lidar_at: float = 0.0
         #: Roulis de l'IMU, en radians. Sert au relevage automatique : un
         #: chien couché sur le flanc a un roulis de l'ordre de 90°.
         self._roullis: float | None = None
@@ -321,6 +365,8 @@ class WebRTCAdapter:
         #: Un programme est-il en cours ? Pendant un programme, c'est lui
         #: qui prépare le robot (`prepare_run` le relève).
         self._programme_en_cours = False
+        #: Mode veille actif (robot couché, LiDAR coupé pour économie de batterie).
+        self._en_veille = False
         #: Décision de relevage automatique (module `recovery.py`).
         self._relever_auto = AutoRecovery()
         #: Tâche de relevage en cours, et dernier examen de la situation.
@@ -466,11 +512,10 @@ class WebRTCAdapter:
         self._connected = True
         self._state = RobotState.IDLE
 
-        # La camera du robot, si elle existe : c'est une degradee, pas une
-        # condition de pilotage.
-        await self._demarrer_video()
-
-        # Le lidar : de meme, sa vue est un bonus, pas une condition.
+        # La camera n'est ouverte QUE si l'interface la demande : la decoder
+        # en permanence monopolisait un coeur pour rien et retardait le
+        # pilotage manuel. Le lidar, lui, reste utile au contrôle d'obstacle
+        # des programmes.
         await self._demarrer_lidar()
 
     async def disconnect(self) -> None:
@@ -484,6 +529,9 @@ class WebRTCAdapter:
             self._tache_video.cancel()
             self._tache_video = None
         self._dernier_jpeg = None
+        self._dernier_jpeg_at = 0.0
+        self._camera_demande_at = 0.0
+        self._video_demarre = False
 
         connexion = self._connexion
         if connexion is not None:
@@ -689,9 +737,9 @@ class WebRTCAdapter:
         tache = self._tache_relever
         if tache is not None and not tache.done():
             return
-        if self._securite.latched:
-            # Le robot est porte (ou a ete arrete pour une autre raison) :
-            # on ne fait aucune maneuver physique.
+        if self._securite.latched or self._en_veille:
+            # Le robot est porte, ou en veille volontaire :
+            # on ne fait aucune manoeuvre physique.
             return
 
         try:
@@ -725,10 +773,10 @@ class WebRTCAdapter:
         """Relève le robot allongé, pour qu'il ne frotte pas sur son lidar.
 
         On utilise `StandUp`, la même commande que la préparation d'un
-        programme : elle a été vérifiée depuis la position allongée (le
-        chien passe de 0,05 m à 0,32 m de haut). L'état publié par le robot
-        fait foi : il peut se relever même si l'acquittement se perd.
+        programme : elle a été vérifiée depuis la position allongée.
         """
+        if self._en_veille:
+            return
         for essai in range(2):
             if self._securite.latched:
                 return
@@ -1182,6 +1230,283 @@ class WebRTCAdapter:
         )
         await self._relever()
 
+    # -- Pilotage manuel ----------------------------------------------------
+
+    async def manual_prepare(self) -> None:
+        """Prépare le robot pour le pilotage manuel.
+
+        Le robot peut être assis quand l'adulte ouvre le mode manuel : il faut
+        le relever avant la première consigne de vitesse. La préparation est
+        faite une seule fois par session, pas à chaque touche.
+        """
+        if not self.physical_commands_enabled:
+            raise AdapterError(
+                "L’adaptateur WebRTC n’est pas activé : commande refusée."
+            )
+        if not self._connected or self._connexion is None:
+            raise AdapterError("Le robot n’est pas connecté.", recoverable=True)
+
+        self._programme_en_cours = True
+        self._allonge_demande = False
+        self._recovery_reason = None
+        self._refuser_si_secours()
+        await self._se_preparer_a_bouger()
+        self._refuser_si_secours()
+
+    def manual_velocity(
+        self, direction: str, speed_mps: float, turn_speed_rps: float
+    ) -> None:
+        """Envoie une consigne de vitesse manuelle, sans durée.
+
+        La vitesse est fixée par le service, jamais par le navigateur. Le
+        contrôleur `ManualControl` renouvelle l'ordre tant que la touche est
+        tenue et envoie un arrêt immédiat au relâchement.
+        """
+        valid_directions = (
+            "forward",
+            "backward",
+            "left",
+            "right",
+            "turn_left",
+            "turn_right",
+            "forward+turn_left",
+            "forward+turn_right",
+            "backward+turn_left",
+            "backward+turn_right",
+        )
+        if direction not in valid_directions:
+            raise AdapterError(f"Direction manuelle inconnue : {direction}")
+        if not self.physical_commands_enabled:
+            raise AdapterError(
+                "L’adaptateur WebRTC n’est pas activé : commande refusée."
+            )
+        if not self._connected or self._connexion is None:
+            raise AdapterError("Le robot n’est pas connecté.", recoverable=True)
+        self._refuser_si_secours()
+
+        vx = 0.0
+        vy = 0.0
+        vyaw = 0.0
+
+        if "forward" in direction:
+            vx = speed_mps
+        elif "backward" in direction:
+            vx = -speed_mps
+
+        if "left" in direction and "turn" not in direction:
+            vy = speed_mps
+        elif "right" in direction and "turn" not in direction:
+            vy = -speed_mps
+
+        if "turn_left" in direction:
+            vyaw = turn_speed_rps
+        elif "turn_right" in direction:
+            vyaw = -turn_speed_rps
+
+        self._programme_en_cours = True
+        self._state = RobotState.MOVING
+        self._envoyer_move(vx, vy, vyaw)
+
+    def manual_stop(self) -> None:
+        """Arrête la vitesse manuelle sans terminer la session.
+
+        Contrairement à `request_stop()`, on ne touche pas au drapeau
+        `_programme_en_cours` : le relevage automatique reste désactivé tant
+        que l'adulte n'a pas quitté le mode manuel.
+        """
+        if self._connexion is None:
+            return
+        if self._securite.latched or self._est_au_sol():
+            return
+        try:
+            self._envoyer_move(0.0, 0.0, 0.0)
+            self._envoyer_sans_reponse("StopMove")
+        except Exception:  # noqa: BLE001
+            pass
+        self._state = RobotState.IDLE
+
+    async def manual_jump(self) -> None:
+        """Exécute un saut en mode manuel (sans flux de vitesse parasite)."""
+        if not self.physical_commands_enabled:
+            raise AdapterError(
+                "L’adaptateur WebRTC n’est pas activé : commande refusée."
+            )
+        if not self._connected or self._connexion is None:
+            raise AdapterError("Le robot n’est pas connecté.", recoverable=True)
+        self._refuser_si_secours()
+
+        if not self._est_debout():
+            await self._relever()
+        self._refuser_si_secours()
+
+        # Fenêtre de grâce pour que la perte d'appuis pendant le saut ne coupe pas les moteurs
+        self._posture_grace_until = time.monotonic() + 3.5
+
+        code = await self._commander("FrontJump", timeout_s=self.POSTURE_TIMEOUT_S)
+        if code != 0:
+            log.info("FrontJump code=%s, tentative FrontPounce", code)
+            code = await self._commander("FrontPounce", timeout_s=self.POSTURE_TIMEOUT_S)
+
+        await asyncio.sleep(0.5)
+        self._prendre_la_main()
+
+    # -- Mode Veille -------------------------------------------------------
+
+    def _eteindre_lumiere(self) -> None:
+        """Éteint les voyants / phares (VUI) si disponibles pour économiser l'énergie."""
+        connexion = self._connexion
+        if connexion is None:
+            return
+        try:
+            import json
+            connexion.datachannel.pub_sub.publish_without_callback(
+                topic=self._rtc["VUI"],
+                data={"header": {"identity": {"id": 0, "api_id": 1005}}, "parameter": json.dumps({"brightness": 0})},
+                msg_type=self._types_canal["REQUEST"],
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def _eteindre_lidar(self) -> None:
+        """Éteint le LiDAR et coupe les flux de données pour la veille."""
+        connexion = self._connexion
+        if connexion is None:
+            return
+        try:
+            canal = connexion.datachannel.pub_sub
+
+            # 1. Couper le trafic de voxels
+            try:
+                await connexion.datachannel.disableTrafficSaving(False)
+            except Exception:  # noqa: BLE001
+                pass
+
+            # 2. Se désabonner des topics LiDAR pour arrêter la réception
+            for topic_name in ("ULIDAR_ARRAY", "ULIDAR", "ULIDAR_STATE", "ROBOTODOM"):
+                t = self._rtc.get(topic_name)
+                if t:
+                    try:
+                        canal.unsubscribe(t)
+                    except Exception:  # noqa: BLE001
+                        pass
+
+            # 3. Demander l'extinction du LiDAR physique sur rt/utlidar/switch
+            t_switch = self._rtc.get("ULIDAR_SWITCH", "rt/utlidar/switch")
+            for charge in ("off", {"data": "off"}, {"enable": False}):
+                try:
+                    canal.publish_without_callback(topic=t_switch, data=charge)
+                except Exception:  # noqa: BLE001
+                    pass
+
+            # 4. Couper l'anti-obstacle interne Unitree
+            t_oa = self._rtc.get("OBSTACLES_AVOID", "rt/api/obstacles_avoid/request")
+            try:
+                canal.publish_without_callback(
+                    topic=t_oa,
+                    data={
+                        "header": {"identity": {"id": 0, "api_id": 1001}},
+                        "parameter": json.dumps({"enable": False}),
+                    },
+                    msg_type=self._types_canal["REQUEST"],
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+            self._obstacles_lidar = []
+            self._volume_lidar = None
+            log.info("LiDAR éteint et flux arrêtés pour la veille.")
+        except Exception as exc:  # noqa: BLE001
+            log.info("Extinction du LiDAR impossible : %s", exc)
+
+    async def enter_standby(self) -> None:
+        """Passe le robot en mode veille économique (mode couché).
+
+        1. Coupe toute vitesse résiduelle.
+        2. Fait coucher doucement le robot sous contrôle moteur via StandDown (1005).
+           (On n'utilise PAS Damp pour éviter que le robot ne tombe).
+        3. Attend que le robot soit totalement posé au sol et stable (z < 0.12m).
+        4. Éteint le LiDAR et coupe les voyants/capteurs superflus.
+        """
+        if not self.physical_commands_enabled:
+            raise AdapterError(
+                "L’adaptateur WebRTC n’est pas activé : commande refusée."
+            )
+        if not self._connected or self._connexion is None:
+            raise AdapterError("Le robot n’est pas connecté.", recoverable=True)
+        self._refuser_si_secours()
+
+        self._en_veille = True
+        log.info("Début de la mise en veille progressive du robot (mode couché)...")
+
+        # Arrêt immédiat de toute marche en cours
+        try:
+            self._envoyer_move(0.0, 0.0, 0.0)
+            self._envoyer_sans_reponse("StopMove")
+        except Exception:  # noqa: BLE001
+            pass
+
+        # 1. Coucher en douceur sous contrôle moteur (StandDown 1005)
+        # StandDown plie les pattes de manière synchronisée et dépose le corps au sol en douceur sans aucune chute.
+        self._posture_grace_until = time.monotonic() + 10.0
+        self._allonge_demande = True
+        try:
+            log.info("Coucher en douceur du robot via StandDown (1005)...")
+            await self._commander("StandDown", timeout_s=self.POSTURE_TIMEOUT_S)
+        except Exception as exc:
+            log.warning("Erreur commande StandDown : %s", exc)
+
+        # 2. Attente que le robot soit bien au sol (couché)
+        await self._attendre_alleonge(timeout_s=6.0)
+        await asyncio.sleep(1.0)
+        self._posture = Posture.LIE_DOWN
+
+        # 3. Éteindre le LiDAR et couper la lumière une fois complètement au sol
+        await self._eteindre_lidar()
+        self._eteindre_lumiere()
+        log.info("Robot passé en mode couché veille avec succès (corps au sol, LiDAR éteint).")
+
+    async def exit_standby(self) -> None:
+        """Sort le robot du mode veille et le remet debout.
+
+        1. Rallume le LiDAR et réactive les capteurs.
+        2. Relève le robot avec StandUp.
+        3. Attend qu'il soit debout et stable.
+        4. Reprend la main pour le rendre prêt à recevoir des commandes.
+        """
+        if not self.physical_commands_enabled:
+            raise AdapterError(
+                "L’adaptateur WebRTC n’est pas activé : commande refusée."
+            )
+        if not self._connected or self._connexion is None:
+            raise AdapterError("Le robot n’est pas connecté.", recoverable=True)
+        self._refuser_si_secours()
+
+        log.info("Début du réveil progressif du robot...")
+
+        # 1. Réactivation du LiDAR
+        await self._demarrer_lidar()
+
+        # 2. Relever le robot
+        self._posture_grace_until = time.monotonic() + 4.0
+        try:
+            code = await self._commander("StandUp", timeout_s=self.POSTURE_TIMEOUT_S)
+            if code != 0:
+                log.info("StandUp code=%s, attente de l'état debout...", code)
+        except Exception as exc:
+            log.exception("Erreur lors de la commande StandUp : %s", exc)
+
+        # 3. Attente que le robot soit debout
+        await self._attendre_debout(timeout_s=self.PRET_TIMEOUT_S)
+        await asyncio.sleep(0.5)
+
+        # 4. Reprise de la main (Move 0,0,0) pour quitter la transition (code 1002)
+        self._prendre_la_main()
+        await self._attendre_stable()
+
+        self._posture = Posture.STAND
+        self._en_veille = False
+        log.info("Robot réveillé avec succès : debout, LiDAR réactivé, prêt.")
+
     # -- Execution ---------------------------------------------------------
 
     def _refuser_si_secours(self) -> None:
@@ -1231,13 +1556,14 @@ class WebRTCAdapter:
             case CommandKind.STRETCH:
                 return await self._do_geste("Stretch", index)
             case CommandKind.FRONT_JUMP:
-                # `FrontPounce` : la commande SDK qui donne la vraie
-                # impulsion (`FrontJump` ne fait qu'accroupir et pousser).
-                #
-                # Le geste n'est exécuté que si l'on parle au robot en
-                # vitesse pendant ce temps (voir `_flux_vitesse`), comme
-                # le fait l'application mobile.
-                return await self._do_geste("FrontPounce", index)
+                # Saut : pas de flux de vitesse (qui écraserait l'impulsion motrice par
+                # des Move(0,0,0) concurrents) et grâce temporelle pour les appuis.
+                self._posture_grace_until = time.monotonic() + 3.5
+                outcome = await self._do_geste("FrontJump", index, flux_vitesse=False)
+                if outcome.outcome != "exact":
+                    log.info("FrontJump non exact (%s), repli sur FrontPounce", outcome.outcome)
+                    outcome = await self._do_geste("FrontPounce", index, flux_vitesse=False)
+                return outcome
             case CommandKind.LIE_DOWN:
                 # `Damp` : le robot s'allonge (il ne se déplace plus).
                 # Pas de flux de vitesse : on veut qu'il se pose.
@@ -1501,13 +1827,16 @@ class WebRTCAdapter:
         if lever_si_assis and not self._est_debout():
             await self._relever()
         self._refuser_si_secours()
-        if nom == "Damp":
-            # « Se coucher » : le robot se relâche et ses pieds peuvent se
-            # décharger avant que le code d'état ne passe à « allongé ».
-            self._posture_grace_until = time.monotonic() + self.POSTURE_GRACE_S
-            # C'est nous qui l'allongeons : le relevage automatique s'y
-            # applique (le lidar peut frotter le sol).
-            self._allonge_demande = True
+        if nom in ("Damp", "FrontJump", "FrontPounce"):
+            # « Se coucher » ou saut : le robot se relâche ou décolle, ses pieds
+            # se déchargent temporairement sans qu'il ne s'agisse d'un portage.
+            self._posture_grace_until = time.monotonic() + (
+                3.5 if nom in ("FrontJump", "FrontPounce") else self.POSTURE_GRACE_S
+            )
+            if nom == "Damp":
+                # C'est nous qui l'allongeons : le relevage automatique s'y
+                # applique (le lidar peut frotter le sol).
+                self._allonge_demande = True
 
         flux: asyncio.Task[None] | None = None
         if flux_vitesse:
@@ -1664,6 +1993,40 @@ class WebRTCAdapter:
         une consigne de 1 s pouvait être tenue 5,7 s. L'horloge murale, elle,
         ne dérive pas.
         """
+        direction = motion_direction(
+            plan.linear_speed_mps, plan.lateral_speed_mps
+        )
+        vitesse = abs(plan.linear_speed_mps) + abs(plan.lateral_speed_mps)
+
+        # Un relevé peut avoir lieu juste avant ce bloc : le lidar ne publie
+        # sa carte que debout. On lui laisse le temps de republier, puis on
+        # refait le contrôle ici, APRÈS la remise sur pattes. Le moteur a déjà
+        # fait un premier contrôle, mais il pouvait manquer de carte.
+        # Sécurité lidar coupée : on ne dépend plus de la carte pour partir.
+        if self.obstacle_safety_enabled:
+            await self._attendre_carte_lidar()
+        if (
+            self.obstacle_safety_enabled
+            and direction is not None
+            and vitesse > 0.0
+        ):
+            libre = await self.clearance_m(direction)
+            if libre is not None:
+                requis = required_clearance_m(
+                    vitesse * plan.nominal_duration_s, direction
+                )
+                if libre < requis:
+                    detail = obstacle_message(direction, libre)
+                    log.info(
+                        "Translation non faite : %s (libre %.2f m, requis %.2f m)",
+                        detail,
+                        libre,
+                        requis,
+                    )
+                    return CommandOutcome(
+                        index=index, outcome="blocked", detail=detail
+                    )
+
         depart_xy = (
             (self._position[0], self._position[1]) if self._position else None
         )
@@ -1674,6 +2037,11 @@ class WebRTCAdapter:
             plan.lateral_speed_mps,
             plan.nominal_duration_s,
         )
+
+        # Le contrôle initial a eu lieu ci-dessus, avant la première consigne.
+        # On laisse ensuite 0,1 s s'écouler avant de revérifier : inutile de
+        # relire la même carte deux fois de suite.
+        dernier_controle = time.monotonic()
 
         debut: float | None = None
         dernier_envoi = 0.0
@@ -1695,6 +2063,40 @@ class WebRTCAdapter:
                     break
 
                 maintenant = time.monotonic()
+
+                # La carte peut changer pendant le déplacement (une personne
+                # passe, une porte s'ouvre). On revérifie donc la place libre
+                # à 10 Hz, et on arrête AVANT le contact.
+                if (
+                    self.obstacle_safety_enabled
+                    and direction is not None
+                    and vitesse > 0.0
+                    and maintenant - dernier_controle >= self.OBSTACLE_CHECK_S
+                ):
+                    dernier_controle = maintenant
+                    libre = await self.clearance_m(direction)
+                    if libre is not None:
+                        restant = (
+                            plan.nominal_duration_s
+                            if debut is None
+                            else max(
+                                0.0,
+                                debut + plan.nominal_duration_s - maintenant,
+                            )
+                        )
+                        requis = required_clearance_m(vitesse * restant, direction)
+                        if libre < requis:
+                            resultat = "stopped"
+                            motif = obstacle_stop_message(direction)
+                            log.warning(
+                                "Obstacle %s : %.2f m libres, %.2f m "
+                                "nécessaires pour finir le déplacement.",
+                                direction,
+                                libre,
+                                requis,
+                            )
+                            break
+
                 if debut is None:
                     self._envoyer_move(
                         plan.linear_speed_mps,
@@ -1931,7 +2333,19 @@ class WebRTCAdapter:
 
         `None` quand la camera n'est pas branchée ou n'a encore rien
         envoyé. Jamais une image inventée.
+
+        Le canal video n'est ouvert qu'à la première demande : le décoder
+        en continu alors que personne ne regarde coûtait un coeur entier.
         """
+        self._camera_demande_at = time.monotonic()
+        if not self._video_demarre:
+            await self._demarrer_video()
+        if self._dernier_jpeg is None and self._video_demarre:
+            # La première image met quelques dixièmes de seconde à arriver.
+            for _ in range(20):
+                if self._dernier_jpeg is not None:
+                    break
+                await asyncio.sleep(0.1)
         return self._dernier_jpeg
 
     async def _demarrer_video(self) -> None:
@@ -1941,8 +2355,9 @@ class WebRTCAdapter:
         garde la derniere image recue, encodee en JPEG.
         """
         connexion = self._connexion
-        if connexion is None:
+        if connexion is None or self._video_demarre:
             return
+        self._video_demarre = True
         try:
             video = connexion.video
             video.add_track_callback(self._lire_video)
@@ -1951,6 +2366,7 @@ class WebRTCAdapter:
         except Exception as exc:  # noqa: BLE001
             # Pas de camera n'est une degradee, pas une panne : le service
             # continue a piloter le robot.
+            self._video_demarre = False
             log.info("Camera indisponible : %s", exc)
 
     async def _lire_video(self, track: Any) -> None:
@@ -1964,6 +2380,11 @@ class WebRTCAdapter:
             while True:
                 image = await track.recv()
                 maintenant = time.monotonic()
+                # Personne ne regarde : on laisse tomber l'image sans
+                # l'encoder. L'encodage JPEG etait le principal consommateur
+                # du processeur quand la camera restait ouverte.
+                if maintenant - self._camera_demande_at > self.CAMERA_ACTIVE_S:
+                    continue
                 if maintenant - self._dernier_jpeg_at < self.CAMERA_PERIODE_S:
                     continue
                 self._dernier_jpeg_at = maintenant
@@ -2014,23 +2435,42 @@ class WebRTCAdapter:
             return
         try:
             canal = connexion.datachannel.pub_sub
+
+            # 1. Réactiver la génération de trafic LiDAR
+            try:
+                await connexion.datachannel.disableTrafficSaving(True)
+            except Exception:  # noqa: BLE001
+                pass
+
+            # 2. Réabonner les flux
             canal.subscribe(self._rtc["ULIDAR_ARRAY"], self._sur_lidar)
             canal.subscribe(self._rtc["ULIDAR"], self._sur_lidar)
             canal.subscribe(self._rtc["ULIDAR_STATE"], self._sur_lidar)
-            # La pose du robot DANS le repere du lidar : c'est elle qui dit
-            # ou est le robot sur la carte, et dans quel sens il regarde.
             canal.subscribe(self._rtc["ROBOTODOM"], self._sur_pose)
-            # On demande l'allumage. Le SDK ne le fait pas tout seul : c'est
-            # ce que fait l'application quand on ouvre la vue capteur.
-            for charge in ({"enable": True}, "on", {"switch": "on"}):
+
+            # 3. Rallumer le LiDAR physique
+            t_switch = self._rtc.get("ULIDAR_SWITCH", "rt/utlidar/switch")
+            for charge in ("on", {"data": "on"}, {"enable": True}):
                 try:
-                    canal.publish_without_callback(
-                        topic=self._rtc["ULIDAR_SWITCH"], data=charge
-                    )
+                    canal.publish_without_callback(topic=t_switch, data=charge)
                 except Exception:  # noqa: BLE001
-                    break
-                await asyncio.sleep(1.0)
-            log.info("Lidar demande.")
+                    pass
+                await asyncio.sleep(0.5)
+
+            # 4. Rétablir l'anti-obstacle interne Unitree
+            t_oa = self._rtc.get("OBSTACLES_AVOID", "rt/api/obstacles_avoid/request")
+            try:
+                canal.publish_without_callback(
+                    topic=t_oa,
+                    data={
+                        "header": {"identity": {"id": 0, "api_id": 1001}},
+                        "parameter": json.dumps({"enable": True}),
+                    },
+                    msg_type=self._types_canal["REQUEST"],
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            log.info("Lidar rallumé.")
         except Exception as exc:  # noqa: BLE001
             log.info("Lidar indisponible : %s", exc)
 
@@ -2104,6 +2544,15 @@ class WebRTCAdapter:
             self._sur_etat_lidar(donnees)
             return
 
+        # Le lidar publie plusieurs cartes par seconde. Les convertir toutes
+        # monopolisait le processeur et retardait les requetes du mode
+        # manuel de plusieurs centaines de millisecondes. Deux cartes par
+        # seconde suffisent pour la vue et pour le controle d'obstacle.
+        maintenant = time.monotonic()
+        if maintenant - self._lidar_traite_at < self.LIDAR_TRAITEMENT_S:
+            return
+        self._lidar_traite_at = maintenant
+
         cells = self._cellules_2d(donnees)
         if cells:
             self._points_lidar = cells
@@ -2167,6 +2616,12 @@ class WebRTCAdapter:
         pas = float(resolution)
         # Ou est le robot, et vers quoi il regarde (pose « odom »).
         pose = self._pose_robot or {}
+
+        # Les memes cases, mais sans le sol : c'est ce que le service
+        # interroge avant chaque deplacement pour savoir s'il y a la place.
+        origine = (float(origin[0]), float(origin[1]), float(origin[2]))
+        self._obstacles_lidar = obstacle_cells(cases, origine, pas)
+        self._obstacles_lidar_at = time.monotonic()
 
         octets = bytes(v for case in cases for v in case)
         return {
@@ -2270,6 +2725,7 @@ class WebRTCAdapter:
             1 - 2 * (qy * qy + qz * qz),
         )
         self._pose_robot = {"x": x, "y": y, "cap": cap}
+        self._pose_robot_at = time.monotonic()
         if not self._pose_vue:
             self._pose_vue = True
             log.info(
@@ -2296,6 +2752,46 @@ class WebRTCAdapter:
         if time.monotonic() - self._points_lidar_at > self.LIDAR_PERIME_S:
             return None
         return self._points_lidar
+
+    async def clearance_m(self, direction: str) -> float | None:
+        """Distance libre dans une direction, d'après la carte du lidar.
+
+        `None` tant que la carte ou la pose manque, qu'elles sont trop
+        anciennes, ou que la sécurité lidar a été désactivée par un adulte :
+        une absence de mesure ne prouve pas que la voie est libre. L'appelant
+        décide alors de faire confiance ou non.
+        """
+        if not self.obstacle_safety_enabled:
+            return None
+        pose = self._pose_robot
+        if self._connexion is None or pose is None or self._obstacles_lidar is None:
+            return None
+        maintenant = time.monotonic()
+        if maintenant - self._pose_robot_at > self.LIDAR_PERIME_S:
+            return None
+        if maintenant - self._obstacles_lidar_at > self.LIDAR_PERIME_S:
+            return None
+        return free_distance_m(
+            self._obstacles_lidar,
+            (float(pose["x"]), float(pose["y"])),
+            float(pose["cap"]),
+            direction,
+        )
+
+    async def _attendre_carte_lidar(self, timeout_s: float = 1.2) -> None:
+        """Attend une carte fraîche, sans jamais bloquer indéfiniment.
+
+        Après un relèvement, le lidar met un instant à republier. On attend
+        au maximum `timeout_s`. Si aucune carte n'a jamais été reçue, on ne
+        perd pas de temps : le lidar n'est probablement pas disponible.
+        """
+        if self._obstacles_lidar is None:
+            return
+        fin = time.monotonic() + timeout_s
+        while time.monotonic() < fin:
+            if time.monotonic() - self._obstacles_lidar_at <= self.LIDAR_PERIME_S:
+                return
+            await asyncio.sleep(0.05)
 
     # -- Arret -------------------------------------------------------------
 

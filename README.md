@@ -19,13 +19,13 @@ dégagée, avec un moyen d'arrêt à portée de main.
 | Adaptateur simulé | ✅ Terminé et testé |
 | Service de communication (HTTP + WebSocket) | ✅ Terminé et testé |
 | Sécurité (bail, chien de garde, arrêt) | ✅ Terminé et testé |
-| **Intégration physique Unitree Go2** | ❌ **NON VALIDÉE — aucun test sur le robot** |
+| **Intégration physique Unitree Go2** | ⚠️ **Partiellement validée** — WebRTC, postures et déplacements courts testés ; contrôle d'obstacles non validé physiquement |
 
-**Aucune commande n'a été envoyée à un robot réel.** Le robot est piloté par
-un **simulateur**. L'adaptateur physique existe et est codé à partir de
-l'API officielle lue dans le dépôt Unitree, mais il est **volontairement
-désactivé** : le service refuse le mode robot réel tant que la campagne
-physique n'a pas eu lieu.
+**Le service démarre toujours en simulation.** Le mode réel exige une
+connexion WebRTC explicite et une autorisation adulte. Le 22/10/2026, le robot
+`172.16.8.11` a été connecté et a exécuté des postures et des déplacements
+courts ; le contrôle d'obstacles du service n'a pas encore été validé
+physiquement (voir `docs/TESTS.md`).
 
 Voir `docs/ROBOT_SETUP.md` pour la procédure et `docs/SAFETY.md` pour les
 consignes.
@@ -41,6 +41,9 @@ consignes.
 - **Arrêt immédiat** toujours visible, plus arrêt automatique si l'interface se déconnecte.
 - **Arrêt automatique si le robot est soulevé** : les efforts dans les pieds sont surveillés ; le robot s'arrête, relâche ses pattes et se verrouille.
 - **Relevage automatique** : si le robot s'est allongé et que son lidar frotte le sol, il se relève tout seul.
+- **Contrôle des obstacles** : avant chaque pas, le robot lit la carte du lidar ; s'il n'y a pas la place pour tout le pas, il ne le fait pas et le programme continue. Un obstacle qui apparaît pendant le pas l'arrête.
+- **Fenêtre d'obstacle** : le message complet s'affiche au centre de l'écran, avec un bouton **Fermer**.
+- **Interrupteur « Sécurité »** : en haut à droite, il coupe ou réactive la vérification de place du **service** (confirmation adulte). L'anti-obstacle interne du Go2 et les autres protections restent actifs.
 - **Mode simulation** par défaut, jamais confondu avec le pilotage réel.
 - **Panneau Configuration** : réglages du robot (réservés à un adulte) et préférences.
 
@@ -53,8 +56,8 @@ la colonne de droite.
 
 | Réglage | Plage |
 |---|---|
-| Vitesse maximale | 0,10 – 0,30 m/s |
-| Rotation maximale | 0,20 – 0,50 rad/s |
+| Vitesse maximale | 0,10 – 0,50 m/s |
+| Rotation maximale | 0,20 – 1,20 rad/s |
 | Distance par déplacement | 40 – 200 cm |
 | Rotation par déplacement | 45 – 180° |
 | Attente maximale | 3 – 10 s |
@@ -177,17 +180,17 @@ C'est le comportement attendu.
 ## Tests
 
 ```bash
-# Frontend — 46 tests unitaires
+# Frontend — 217 tests unitaires
 cd frontend && npm test
 
 # Frontend — vérification de types
 cd frontend && npm run check
 
-# Service — 131 tests (unitaires + intégration API)
+# Service — 332 tests (unitaires + intégration API)
 cd robot-service && python -m pytest -q
 ```
 
-État vérifié à la livraison : **46 + 131 = 177 tests, tous passants**,
+État vérifié à la livraison : **217 + 332 = 549 tests, tous passants**,
 0 erreur de typage, build de production réussi.
 
 Détails et protocole de test physique : `docs/TESTS.md`.
@@ -204,6 +207,14 @@ Détails et protocole de test physique : `docs/TESTS.md`.
 | `docs/SAFETY.md` | Risques, limites, procédures d'arrêt |
 | `docs/USER_GUIDE.md` | Guide simple pour enfants et animateurs |
 | `docs/TESTS.md` | Inventaire des tests et ce qui a été réellement testé |
+
+---
+
+## 📝 Suivi des développements (`compactage.md`)
+
+> [!IMPORTANT]
+> **Règle impérative de développement :**
+> À chaque fin d'intervention ou de modification de code, vous devez mettre à jour le fichier `compactage.md` à la racine du dépôt en réécrivant par-dessus ce qui a été fait (résumé concis des actions, configurations modifiées et état de validation).
 
 ---
 

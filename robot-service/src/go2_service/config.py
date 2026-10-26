@@ -97,8 +97,8 @@ class HardCeilings:
     code, et non en session pédagogique.
     """
 
-    max_linear_speed: float = 0.30
-    max_angular_speed: float = 0.50
+    max_linear_speed: float = 0.50
+    max_angular_speed: float = 1.20
     max_distance_per_step_cm: float = 200.0
     max_angle_per_step_deg: float = 180.0
     max_wait_seconds: float = 10.0

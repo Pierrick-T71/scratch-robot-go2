@@ -232,6 +232,7 @@
 
   .program__head {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 14px;
     min-height: 44px;
@@ -262,22 +263,27 @@
 
   .program__tools {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
+    justify-content: flex-end;
     gap: 10px;
     margin-left: auto;
     min-width: 0;
   }
 
   .notice {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: min(52ch, 100%);
     margin: 0;
     padding: 7px 13px;
-    border-radius: 999px;
+    border-radius: 14px;
     font-size: 13px;
     font-weight: 650;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 46ch;
+    line-height: 1.35;
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .notice--ok {

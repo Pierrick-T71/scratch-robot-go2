@@ -27,11 +27,9 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal
 
-from fastapi import HTTPException
-
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -53,6 +51,7 @@ from .execution import (
     ConcurrentExecutionError,
     ExecutionEngine,
 )
+from .manual import ManualControl, ManualNotActive
 from .safety import SafetyWatchdog
 from .program import (
     Program as StructuredProgram,
@@ -196,6 +195,66 @@ class ModeRequest(BaseModel):
     adult_authorised: bool = False
 
 
+class StandbyRequest(BaseModel):
+    """Demande d'activation ou de désactivation du mode veille."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+
+
+class ObstacleSafetyRequest(BaseModel):
+    """Active ou coupe la vérification de place du service.
+
+    `adult_authorised` n'est exigée que pour COUPER la sécurité : la remettre
+    en route ne doit jamais demander d'autorisation. Le champ est nommé comme
+    les autres requêtes (`adult_authorised`) et `extra="forbid"` refuse une
+    faute de casse.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    adult_authorised: bool = False
+
+
+class ManualStartRequest(BaseModel):
+    """Ouverture du mode manuel.
+
+    L'autorisation adulte n'est exigée qu'en mode réel. Le pilotage manuel
+    reste disponible en simulation pour vérifier l'interface sans robot.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    adult_authorised: bool = False
+
+
+class ManualMoveRequest(BaseModel):
+    """Touche maintenue (`direction`) ou relâchée (`direction: null`).
+
+    `seq` croît à chaque requête de l'interface. Le service ignore une requête
+    plus ancienne qu'une autre : un renouvellement lent qui arrive après le
+    relâchement ne peut donc pas relancer le robot.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    direction: Literal[
+        "forward",
+        "backward",
+        "left",
+        "right",
+        "turn_left",
+        "turn_right",
+        "forward+turn_left",
+        "forward+turn_right",
+        "backward+turn_left",
+        "backward+turn_right",
+    ] | None = None
+    seq: int = Field(default=0, ge=0)
+
+
 class SettingsRequest(BaseModel):
     """Modification des limites pédagogiques.
 
@@ -262,12 +321,19 @@ class ServiceState:
         # pouvoir re-borner une valeur calculée à l'exécution.
         self.engine = ExecutionEngine(self.adapter, limits=self.limits)
         self.watchdog = SafetyWatchdog(self.engine, self.adapter, self.limits)
+        self.manual = ManualControl(self.adapter)
         #: Incrémenté à chaque changement de limites, pour que le frontend
         #: sache que son rapport de vérification est caduc.
         self.settings_revision = 0
         # La simulation est le mode INITIAL, jamais le mode réel.
         self._mode: str = "simulation"
         self._real_mode_enabled: bool = False
+        #: Sécurité lidar du service. Réarmée à chaque nouveau branchement :
+        #: un robot reconnecté ne doit pas hériter d'un réglage « coupé ».
+        self.obstacle_safety_enabled: bool = True
+        #: Mode veille économique (robot couché, LiDAR éteint).
+        self.standby: bool = False
+        self.standby_transition: str | None = None
         self._status_task: asyncio.Task[None] | None = None
         self._run_task: asyncio.Task[None] | None = None
 
@@ -278,6 +344,21 @@ class ServiceState:
         validation qu'il affiche est encore valable.
         """
         self.settings_revision += 1
+
+    def _apply_obstacle_safety(self) -> None:
+        """Reporte le réglage du service sur l'adaptateur actif.
+
+        Le simulateur n'a pas de lidar et n'a donc pas cette propriété : il
+        n'y a rien à lui appliquer. Le `getattr` évite de coupler le service à
+        un adaptateur particulier.
+        """
+        if hasattr(self.adapter, "obstacle_safety_enabled"):
+            self.adapter.obstacle_safety_enabled = self.obstacle_safety_enabled
+
+    def set_obstacle_safety(self, enabled: bool) -> None:
+        """Active ou coupe la sécurité lidar du service (pas celle du robot)."""
+        self.obstacle_safety_enabled = enabled
+        self._apply_obstacle_safety()
 
     @property
     def mode(self) -> str:
@@ -296,6 +377,7 @@ class ServiceState:
                 status_code=409,
                 detail="Un programme est déjà en cours : arrêtez-le d’abord.",
             )
+        await self.manual.stop()
         await self.watchdog.emergency_stop()
 
     async def adopt_robot_adapter(self, adapter: Any) -> None:
@@ -308,10 +390,17 @@ class ServiceState:
         DÉMARRÉ explicitement : sans cela, après un branchement, plus aucun
         bail n'était surveillé.
         """
+        await self.manual.stop()
         await self.watchdog.stop()
         self.adapter = adapter
+        # Nouveau robot, nouvelle session : la sécurité lidar repart active.
+        self.obstacle_safety_enabled = True
+        self.standby = False
+        self.standby_transition = None
+        self._apply_obstacle_safety()
         self.engine = ExecutionEngine(self.adapter, limits=self.limits)
         self.watchdog = SafetyWatchdog(self.engine, self.adapter, self.limits)
+        self.manual = ManualControl(self.adapter)
         await self.watchdog.start()
         self._mode = "real"
         self.last_robot_ip = getattr(adapter, "robot_ip", None)
@@ -324,6 +413,7 @@ class ServiceState:
         consigne de vitesse encore publiée quand le canal se ferme laisserait
         le robot partir tout seul.
         """
+        await self.manual.stop()
         await self.watchdog.emergency_stop()
         await self.watchdog.stop()
         ancien = self.adapter
@@ -332,6 +422,11 @@ class ServiceState:
         except Exception:
             pass
         self.adapter = SimulatedAdapter(self.limits)
+        # La simulation n'a pas de lidar ; on réarme tout de même le réglage
+        # pour que le prochain robot réel ne récupère jamais une sécurité
+        # laissée coupée.
+        self.obstacle_safety_enabled = True
+        self._apply_obstacle_safety()
         # Le simulateur doit être BRANCHÉ : sans cela, le service revient en
         # simulation en annonçant « non connecté », et l'interface croirait
         # que le robot est hors ligne.
@@ -341,6 +436,7 @@ class ServiceState:
             pass
         self.engine = ExecutionEngine(self.adapter, limits=self.limits)
         self.watchdog = SafetyWatchdog(self.engine, self.adapter, self.limits)
+        self.manual = ManualControl(self.adapter)
         await self.watchdog.start()
         self._mode = "simulation"
 
@@ -355,8 +451,63 @@ class ServiceState:
         self.last_robot_error = message
         self._mode = "simulation"
 
+    async def set_standby(self, enabled: bool) -> dict[str, Any]:
+        """Active ou coupe le mode veille économique du robot."""
+        if enabled:
+            if self.standby:
+                return {"standby": True, "transition": None}
+            if self.standby_transition is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Une transition de veille est déjà en cours.",
+                )
+            self.standby_transition = "entering"
+            await self.hub.broadcast(
+                {"type": "status", "status": await self.status_payload()}
+            )
+            try:
+                if self.engine.is_running:
+                    await self.engine.stop()
+                if self.manual.active:
+                    await self.manual.stop()
+
+                entrer = getattr(self.adapter, "enter_standby", None)
+                if callable(entrer):
+                    await entrer()
+                self.standby = True
+            finally:
+                self.standby_transition = None
+                await self.hub.broadcast(
+                    {"type": "status", "status": await self.status_payload()}
+                )
+            return {"standby": True, "transition": None}
+        else:
+            if not self.standby:
+                return {"standby": False, "transition": None}
+            if self.standby_transition is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Une transition de veille est déjà en cours.",
+                )
+            self.standby_transition = "waking"
+            await self.hub.broadcast(
+                {"type": "status", "status": await self.status_payload()}
+            )
+            try:
+                sortir = getattr(self.adapter, "exit_standby", None)
+                if callable(sortir):
+                    await sortir()
+                self.standby = False
+            finally:
+                self.standby_transition = None
+                await self.hub.broadcast(
+                    {"type": "status", "status": await self.status_payload()}
+                )
+            return {"standby": False, "transition": None}
+
     async def set_mode(self, mode: str, adult_authorised: bool) -> None:
         """Bascule de mode. Le mode réel est refusé si non validé."""
+        await self.manual.stop()
         if mode == "simulation":
             await self.release_robot_adapter()
             return
@@ -384,6 +535,10 @@ class ServiceState:
             "mode": self._mode,
             "capabilities": sorted(c.value for c in status.capabilities),
             "executing": self.engine.is_running,
+            # Le mode manuel n'est pas un programme : il a son propre drapeau
+            # pour que l'interface puisse bloquer les réglages pendant qu'il
+            # est ouvert.
+            "manualActive": self.manual.active,
             "blockedReason": status.blocked_reason,
             "safetyReason": status.safety_reason,
             "recoveryReason": status.recovery_reason,
@@ -398,6 +553,15 @@ class ServiceState:
             # le SDK ne publie pas la posture réelle. `null` = inconnue.
             "posture": status.posture.value if status.posture else None,
             "settingsRevision": self.settings_revision,
+            # Sécurité lidar du SERVICE (pas l'anti-obstacle interne du Go2).
+            "obstacleSafetyEnabled": self.obstacle_safety_enabled,
+            "obstacleSafetyAvailable": (
+                self._mode == "real"
+                and status.connected
+                and hasattr(self.adapter, "obstacle_safety_enabled")
+            ),
+            "standby": self.standby,
+            "standbyTransition": self.standby_transition,
         }
 
 
@@ -435,6 +599,7 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
         try:
             yield
         finally:
+            await state.manual.stop()
             await state.watchdog.emergency_stop()
             await state.watchdog.stop()
             for task in (state._run_task, state._status_task):
@@ -500,14 +665,12 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
         Refuser en cours d'exécution évite qu'un programme soit validé avec
         d'autres limites que celles qui seront appliquées à son exécution.
         """
-        from fastapi import HTTPException
-
         if not payload.adult_authorised:
             raise HTTPException(
                 status_code=403,
                 detail="Seul un adulte peut modifier les réglages.",
             )
-        if state.engine.is_running:
+        if state.engine.is_running or state.manual.active:
             raise HTTPException(
                 status_code=409,
                 detail="Attends la fin du programme avant de modifier les réglages.",
@@ -530,21 +693,214 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
 
     @app.post("/api/mode")
     async def set_mode(payload: ModeRequest) -> dict[str, Any]:
+        if state.standby or state.standby_transition:
+            raise HTTPException(
+                status_code=409,
+                detail="Impossible de changer de mode pendant la veille.",
+            )
         try:
             await state.set_mode(payload.mode, payload.adult_authorised)
         except PermissionError as exc:
-            from fastapi import HTTPException
-
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
         return await state.status_payload()
+
+    @app.post("/api/safety/obstacles")
+    async def set_obstacle_safety(payload: ObstacleSafetyRequest) -> dict[str, Any]:
+        if state.standby or state.standby_transition:
+            raise HTTPException(
+                status_code=409,
+                detail="Impossible de modifier la sécurité lidar pendant la veille.",
+            )
+        """Active/coupe la vérification de place du service.
+
+        Ce réglage ne touche QUE le contrôle lidar du service. Le chien de
+        garde, l'arrêt, les limites de vitesse, le contrôle de portage et
+        l'anti-obstacle interne du Go2 restent actifs.
+        """
+        if state.mode != "real" or not hasattr(
+            state.adapter, "obstacle_safety_enabled"
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="La sécurité lidar n’est disponible que sur un robot réel.",
+            )
+        if state.engine.is_running or state.manual.active:
+            raise HTTPException(
+                status_code=409,
+                detail="Attends la fin du programme avant de changer la sécurité.",
+            )
+        if not payload.enabled and not payload.adult_authorised:
+            raise HTTPException(
+                status_code=403,
+                detail="Seul un adulte peut désactiver la sécurité lidar.",
+            )
+        statut = await state.adapter.get_status()
+        if not statut.connected:
+            raise HTTPException(
+                status_code=409,
+                detail="Le robot n’est pas connecté.",
+            )
+        state.set_obstacle_safety(payload.enabled)
+        if payload.enabled:
+            log.info("Sécurité lidar activée par un adulte.")
+        else:
+            log.warning(
+                "Sécurité lidar DÉSACTIVÉE par un adulte : le service ne "
+                "vérifie plus la place libre. L’anti-obstacle interne du Go2 "
+                "reste actif."
+            )
+        return await state.status_payload()
+
+    # -- Pilotage manuel ---------------------------------------------------
+
+    @app.post("/api/manual/start")
+    async def manual_start(payload: ManualStartRequest) -> dict[str, Any]:
+        """Ouvre le mode manuel. Aucun mouvement n'est envoyé ici."""
+        if state.standby or state.standby_transition:
+            raise HTTPException(
+                status_code=409,
+                detail="Le robot est en veille. Réveille-le avant de le piloter.",
+            )
+        if state.engine.is_running:
+            raise HTTPException(
+                status_code=409,
+                detail="Un programme est déjà en cours.",
+            )
+        if state.mode == "real":
+            if not payload.adult_authorised:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Le pilotage réel doit être autorisé par un adulte.",
+                )
+            statut = await state.adapter.get_status()
+            if not statut.connected:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Le robot n’est pas connecté.",
+                )
+            if statut.safety_reason:
+                raise HTTPException(
+                    status_code=409,
+                    detail=statut.safety_reason,
+                )
+            if not callable(getattr(state.adapter, "manual_velocity", None)):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Le pilotage manuel n’est pas disponible sur ce robot.",
+                )
+
+        state.manual.start()
+        await state.hub.broadcast(
+            {"type": "status", "status": await state.status_payload()}
+        )
+        return {"active": state.manual.active}
+
+    @app.post("/api/manual/move")
+    async def manual_move(payload: ManualMoveRequest) -> dict[str, Any]:
+        """Touche maintenue ou relâchée : consigne de vitesse ou arrêt."""
+        if state.standby or state.standby_transition:
+            raise HTTPException(
+                status_code=409,
+                detail="Le robot est en veille. Réveille-le avant de le piloter.",
+            )
+        if not state.manual.active:
+            raise HTTPException(
+                status_code=409,
+                detail="Le mode manuel n’est pas ouvert.",
+            )
+        if state.engine.is_running:
+            await state.manual.stop()
+            raise HTTPException(
+                status_code=409,
+                detail="Un programme a pris la main : mode manuel arrêté.",
+            )
+        if state.mode == "real":
+            statut = await state.adapter.get_status()
+            if not statut.connected:
+                await state.manual.stop()
+                raise HTTPException(
+                    status_code=409,
+                    detail="Le robot n’est pas connecté : pilotage manuel arrêté.",
+                )
+
+        try:
+            blocked, message = await state.manual.set_direction(
+                payload.direction, payload.seq
+            )
+        except ManualNotActive as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        return {
+            "active": state.manual.active,
+            "blocked": blocked,
+            "message": message,
+        }
+
+    @app.post("/api/manual/jump")
+    async def manual_jump() -> dict[str, Any]:
+        """Déclenche un saut en mode manuel (barre espace)."""
+        if state.standby or state.standby_transition:
+            raise HTTPException(
+                status_code=409,
+                detail="Le robot est en veille. Réveille-le avant de le piloter.",
+            )
+        if not state.manual.active:
+            raise HTTPException(
+                status_code=409,
+                detail="Le mode manuel n’est pas ouvert.",
+            )
+        if state.engine.is_running:
+            await state.manual.stop()
+            raise HTTPException(
+                status_code=409,
+                detail="Un programme a pris la main : mode manuel arrêté.",
+            )
+        if state.mode == "real":
+            statut = await state.adapter.get_status()
+            if not statut.connected:
+                await state.manual.stop()
+                raise HTTPException(
+                    status_code=409,
+                    detail="Le robot n’est pas connecté : pilotage manuel arrêté.",
+                )
+
+        try:
+            blocked, message = await state.manual.jump()
+        except ManualNotActive as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        return {
+            "ok": not blocked,
+            "blocked": blocked,
+            "message": message,
+        }
+
+    @app.post("/api/manual/stop")
+    async def manual_stop() -> dict[str, Any]:
+        """Ferme le mode manuel et immobilise le robot."""
+        await state.manual.stop()
+        await state.hub.broadcast(
+            {"type": "status", "status": await state.status_payload()}
+        )
+        return {"active": False}
 
     @app.post("/api/execution/start")
     async def start(payload: StartRequest) -> dict[str, Any]:
-        from fastapi import HTTPException
-
+        if state.standby or state.standby_transition:
+            raise HTTPException(
+                status_code=409,
+                detail="Le robot est en veille. Réveille-le d’abord pour lancer un programme.",
+            )
         if state.engine.is_running:
             raise HTTPException(
                 status_code=409, detail="Un programme est déjà en cours."
+            )
+        if state.manual.active:
+            raise HTTPException(
+                status_code=409,
+                detail="Quitte d’abord le mode manuel avant de lancer un programme.",
             )
 
         # 1. Validation de la FORME. Une donnée forgée est refusée ici.
@@ -604,7 +960,7 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
         """
         from .adapters.webrtc import WebRTCAdapter
 
-        state.reject_real_execution()
+        await state.reject_real_execution()
 
         # Un seul canal à la fois : le robot refuse un second client. Sans ce
         # relâchement, un deuxième essai échouerait alors que le robot est
@@ -669,10 +1025,15 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
         await state.adopt_robot_adapter(candidat)
         return rapport
 
+    @app.post("/api/robot/standby")
+    async def robot_standby(payload: StandbyRequest) -> dict[str, Any]:
+        """Active ou coupe le mode veille du robot."""
+        return await state.set_standby(payload.enabled)
+
     @app.post("/api/robot/disconnect")
     async def robot_disconnect() -> dict[str, Any]:
         """Revient en simulation et immobilise le robot."""
-        state.release_robot_adapter()
+        await state.release_robot_adapter()
         return {"simulation": True}
 
     @app.get("/api/robot/lidar")
@@ -704,8 +1065,6 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
         Réponse `503` quand il n'y a pas de caméra (simulation, robot non
         branché) : l'interface montre alors son illustration, et le dit.
         """
-        from fastapi import HTTPException
-
         async def generateur():
             derniere = b""
             while True:
@@ -737,6 +1096,8 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
 
     @app.post("/api/execution/stop")
     async def stop() -> dict[str, Any]:
+        if state.manual.active:
+            await state.manual.stop()
         if not state.engine.request_stop():
             # Aucun programme en cours : on demande tout de même l'arrêt de
             # l'adaptateur, pour ne jamais laisser une consigne résiduelle.

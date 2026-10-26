@@ -1,9 +1,10 @@
 <script lang="ts">
   /**
-   * Barre supérieure : identité, commandes principales, état de la liaison.
+   * Barre supérieure : identité, pilotage manuel, arrêt et état de la liaison.
    *
-   * « Lancer » et « Arrêter » restent distincts et toujours visibles : arrêter
-   * un robot ne doit jamais demander de chercher un menu.
+   * Le programme se lance avec le drapeau de « Mon Programme ». Ici, le gros
+   * bouton ouvre le mode manuel : ZQSD pour déplacer le robot, relâcher une
+   * touche pour l'arrêter.
    */
   import Icon from './Icon.svelte';
   import type { RobotStatus } from '../../lib/api/client';
@@ -11,21 +12,25 @@
   interface Props {
     status: RobotStatus;
     busy: boolean;
-    blockCount: number;
-    onStart: () => void;
+    onManual: () => void;
     onStop: () => void;
     onSave: () => void;
     onOpenRobot: () => void;
+    /** Active/coupe la sécurité lidar du service. */
+    onToggleSafety: (enabled: boolean) => void;
+    /** Active/coupe la veille prolongée du robot. */
+    onToggleStandby: (enabled: boolean) => void;
   }
 
   let {
     status,
     busy,
-    blockCount,
-    onStart,
+    onManual,
     onStop,
     onSave,
     onOpenRobot,
+    onToggleSafety,
+    onToggleStandby,
   }: Props = $props();
 
   const label = $derived(
@@ -45,6 +50,58 @@
         : status.connected
           ? 'on'
           : 'off',
+  );
+
+  const safetyAvailable = $derived(Boolean(status.obstacleSafetyAvailable));
+  const safetyOn = $derived(status.obstacleSafetyEnabled !== false);
+  const safetyState = $derived(
+    !safetyAvailable
+      ? 'indisponible'
+      : safetyOn
+        ? 'activée'
+        : 'désactivée',
+  );
+  const standbyOn = $derived(Boolean(status.standby));
+  const standbyState = $derived(
+    status.standbyTransition === 'entering'
+      ? 'mise en veille…'
+      : status.standbyTransition === 'waking'
+        ? 'réveil en cours…'
+        : standbyOn
+          ? 'activée'
+          : 'éteinte',
+  );
+  const standbyTitle = $derived(
+    status.standbyTransition !== null
+      ? 'Transition de veille en cours…'
+      : standbyOn
+        ? 'Réveiller le robot (relever et rallumer les capteurs)'
+        : 'Passer en veille économique (allonger et couper le LiDAR)',
+  );
+
+  const safetyTitle = $derived(
+    !safetyAvailable
+      ? 'La sécurité lidar est disponible quand le robot réel est connecté'
+      : busy
+        ? 'Attends la fin du programme ou du mode manuel pour changer la sécurité'
+        : safetyOn
+          ? 'Couper la vérification de place du service (l’anti-obstacle du robot reste actif)'
+          : 'Réactiver la vérification de place du service',
+  );
+
+  const manualDisabled = $derived(
+    busy ||
+      Boolean(status.safetyReason) ||
+      (status.mode === 'real' && !status.connected),
+  );
+  const manualTitle = $derived(
+    busy
+      ? 'Attends la fin du programme en cours'
+      : status.safetyReason
+        ? 'Repose le robot au sol et attends qu’il soit stable'
+        : status.mode === 'real' && !status.connected
+          ? 'Branche le robot réel pour piloter à la main'
+          : 'Déplacer le robot avec les touches ZQSD',
   );
 </script>
 
@@ -76,19 +133,15 @@
   <div class="actions" role="group" aria-label="Commandes du programme">
     <button
       type="button"
-      class="action action--run"
-      disabled={busy || blockCount === 0 || Boolean(status.safetyReason)}
-      onclick={onStart}
-      title={status.safetyReason
-        ? 'Repose le robot au sol et attends qu’il soit stable avant de relancer'
-        : blockCount === 0
-          ? 'Ajoute d’abord un bloc'
-          : 'Lancer le programme'}
+      class="action action--manual"
+      disabled={manualDisabled}
+      onclick={onManual}
+      title={manualTitle}
     >
-      <span class="action__icon action__icon--run">
-        <Icon name="play" size={20} />
+      <span class="action__icon action__icon--manual">
+        <Icon name="gamepad" size={21} />
       </span>
-      Lancer
+      Mode manuel
     </button>
 
     <button
@@ -117,15 +170,59 @@
     </button>
   </div>
 
-  <button
-    type="button"
-    class="status status--{tone}"
-    onclick={onOpenRobot}
-    title="Brancher ou régler le robot"
-  >
-    <span class="status__dot" aria-hidden="true"></span>
-    {label}
-  </button>
+  <div class="topright">
+    <button
+      type="button"
+      class="safety-switch standby-switch"
+      class:standby-switch--on={standbyOn}
+      class:standby-switch--transition={status.standbyTransition !== null}
+      role="switch"
+      aria-checked={standbyOn}
+      aria-label="Mode veille"
+      disabled={status.standbyTransition !== null}
+      title={standbyTitle}
+      onclick={() => onToggleStandby(!standbyOn)}
+    >
+      <span class="safety-switch__copy">
+        <span class="safety-switch__label">Veille</span>
+        <span class="safety-switch__state">{standbyState}</span>
+      </span>
+      <span class="safety-switch__track" aria-hidden="true">
+        <span class="safety-switch__thumb"></span>
+      </span>
+    </button>
+
+    <button
+      type="button"
+      class="safety-switch"
+      class:safety-switch--off={safetyAvailable && !safetyOn}
+      class:safety-switch--unavailable={!safetyAvailable}
+      role="switch"
+      aria-checked={safetyOn}
+      aria-label="Sécurité lidar"
+      disabled={busy || !safetyAvailable}
+      title={safetyTitle}
+      onclick={() => onToggleSafety(!safetyOn)}
+    >
+      <span class="safety-switch__copy">
+        <span class="safety-switch__label">Sécurité</span>
+        <span class="safety-switch__state">{safetyState}</span>
+      </span>
+      <span class="safety-switch__track" aria-hidden="true">
+        <span class="safety-switch__thumb"></span>
+      </span>
+    </button>
+
+    <button
+      type="button"
+      class="status status--{tone}"
+      onclick={onOpenRobot}
+      title="Brancher ou régler le robot"
+    >
+      <span class="status__dot" aria-hidden="true"></span>
+      {label}
+    </button>
+  </div>
 </header>
 
 <style>
@@ -230,15 +327,15 @@
     flex: none;
   }
 
-  .action--run {
-    background: rgb(47 157 92 / 16%);
-    border-color: rgb(88 196 128 / 42%);
-    color: #9fe3b6;
+  .action--manual {
+    background: rgb(113 96 210 / 16%);
+    border-color: rgb(151 132 235 / 42%);
+    color: #c9bdf5;
   }
 
-  .action__icon--run {
-    background: linear-gradient(180deg, #49c479, #2f9d5c);
-    box-shadow: 0 4px 12px rgb(47 157 92 / 45%);
+  .action__icon--manual {
+    background: linear-gradient(180deg, #8570e6, #6650c4);
+    box-shadow: 0 4px 12px rgb(102 80 196 / 45%);
   }
 
   .action--stop {
@@ -261,6 +358,157 @@
   .action__icon--save {
     background: linear-gradient(180deg, #5b86d6, #3f68b8);
     box-shadow: 0 4px 12px rgb(63 104 184 / 42%);
+  }
+
+  .topright {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .standby-switch {
+    border-color: #434959;
+    background: #1e222d;
+    color: #9da6b9;
+  }
+
+  .standby-switch:hover:not(:disabled) {
+    background: #252b38;
+    color: #cbd5e1;
+  }
+
+  .standby-switch--on {
+    border-color: rgb(129 140 248 / 45%);
+    background: rgb(99 102 241 / 18%);
+    color: #c7d2fe;
+  }
+
+  .standby-switch--on:hover:not(:disabled) {
+    background: rgb(99 102 241 / 28%);
+  }
+
+  .standby-switch[aria-checked='true'] .safety-switch__track {
+    background: #6366f1;
+  }
+
+  .standby-switch--transition {
+    opacity: 0.8;
+    cursor: wait;
+    animation: standby-pulse 1.5s infinite ease-in-out;
+  }
+
+  @keyframes standby-pulse {
+    0%, 100% { opacity: 0.7; }
+    50% { opacity: 1; }
+  }
+
+  .safety-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 52px;
+    padding: 6px 12px 6px 14px;
+    border-radius: 999px;
+    border: 1px solid rgb(88 196 128 / 42%);
+    background: rgb(47 157 92 / 12%);
+    color: #a6e6bb;
+    font-family: inherit;
+    cursor: pointer;
+    transition:
+      background 0.15s ease,
+      border-color 0.15s ease,
+      opacity 0.15s ease;
+  }
+
+  .safety-switch:hover:not(:disabled) {
+    background: rgb(47 157 92 / 20%);
+  }
+
+  .safety-switch--off {
+    border-color: rgb(226 100 110 / 48%);
+    background: rgb(198 62 74 / 16%);
+    color: #f3a7ae;
+  }
+
+  .safety-switch--off:hover:not(:disabled) {
+    background: rgb(198 62 74 / 24%);
+  }
+
+  .safety-switch--unavailable {
+    border-color: #454b59;
+    background: #2a2e39;
+    color: #8f97a8;
+    opacity: 0.72;
+    cursor: not-allowed;
+  }
+
+  .safety-switch--unavailable .safety-switch__track {
+    background: #3a3f4a;
+  }
+
+  .safety-switch--unavailable .safety-switch__thumb {
+    background: #c7ccd6;
+  }
+
+  .safety-switch:focus-visible {
+    outline: 2px solid #cfe0f5;
+    outline-offset: 3px;
+  }
+
+  .safety-switch__copy {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    line-height: 1.08;
+    min-width: 0;
+  }
+
+  .safety-switch__label {
+    font-size: 11.5px;
+    font-weight: 850;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+  }
+
+  .safety-switch__state {
+    margin-top: 2px;
+    font-size: 11px;
+    font-weight: 650;
+    opacity: 0.9;
+  }
+
+  .safety-switch__track {
+    position: relative;
+    width: 40px;
+    height: 23px;
+    flex: none;
+    border-radius: 999px;
+    border: 1px solid rgb(255 255 255 / 16%);
+    background: rgb(0 0 0 / 26%);
+    transition: background 0.15s ease;
+  }
+
+  .safety-switch[aria-checked='true'] .safety-switch__track {
+    background: #3fbf72;
+  }
+
+  .safety-switch__thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 17px;
+    height: 17px;
+    border-radius: 50%;
+    background: #f4f6fb;
+    box-shadow: 0 1px 4px rgb(0 0 0 / 35%);
+    transition: transform 0.16s ease;
+  }
+
+  .safety-switch[aria-checked='true'] .safety-switch__thumb {
+    transform: translateX(17px);
   }
 
   .status {
@@ -323,10 +571,6 @@
       width: 100%;
       margin: 0;
     }
-
-    .status {
-      margin-left: auto;
-    }
   }
 
   @media (max-width: 720px) {
@@ -354,6 +598,19 @@
       min-height: 44px;
       font-size: 15px;
       padding: 0 16px;
+    }
+
+    .safety-switch {
+      min-height: 44px;
+      padding: 4px 10px 4px 12px;
+    }
+
+    .safety-switch__label {
+      font-size: 10.5px;
+    }
+
+    .safety-switch__state {
+      font-size: 10px;
     }
   }
 </style>

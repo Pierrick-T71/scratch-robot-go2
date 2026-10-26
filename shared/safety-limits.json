@@ -3,9 +3,9 @@
   "version": 1,
 
   "motion": {
-    "$comment": "Valeurs derivees des exemples officiels unitree_sdk2 (Move(0.3,0,0.3) et Move(0,0,0.5)). Vitesse lineaire en m/s, angulaire en rad/s.",
-    "maxLinearSpeed": 0.3,
-    "maxAngularSpeed": 0.5,
+    "$comment": "Limites de vitesse : 0,5 m/s en translation pour une marche fluide et un trot dynamique du Go2, 1,2 rad/s en rotation pour tourner franchement sans glisser.",
+    "maxLinearSpeed": 0.5,
+    "maxAngularSpeed": 1.2,
     "maxDistancePerStepCm": 200,
     "maxAnglePerStepDeg": 180,
     "minDistancePerStepCm": 5,
@@ -39,9 +39,13 @@
   },
 
   "service": {
-    "host": "127.0.0.1",
+    "host": "0.0.0.0",
     "port": 8765,
-    "$comment": "Ecoute sur la boucle locale uniquement. Pour un acces depuis un autre poste, voir docs/INSTALLATION.md (regle pare-feu explicite).",
-    "allowedOrigin": ["http://localhost:5173", "http://127.0.0.1:5173"]
+    "$comment": "Ecoute sur TOUTES les interfaces pour que le navigateur du poste de l'enseignant atteigne le service depuis le conteneur. Acces restreint par une regle nftables a un seul poste. Sans authentification, ne jamais retirer cette restriction : ce service peut commander un robot.",
+    "allowedOrigin": [
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+      "http://172.16.13.41:5173"
+    ]
   }
 }

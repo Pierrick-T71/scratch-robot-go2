@@ -28,8 +28,9 @@ go2-scratch/
 │     ├─ safety.py            Chien de garde et bail
 │     ├─ state_safety.py      Détection de portage (appuis des pieds)
 │     ├─ recovery.py          Relevage automatique si le lidar frotte
+│     ├─ obstacles.py         Distance libre devant le robot (carte lidar)
 │     ├─ config.py            Lecture de shared/safety-limits.json
-│     └─ adapters/            base · motion · simulated · unitree
+│     └─ adapters/            base · motion · simulated · unitree · webrtc
 └─ docs/
 ```
 
@@ -177,8 +178,9 @@ Un client modifié reçoit exactement le même refus du service. C'est testé da
 
 | Transport | Usage |
 |---|---|
-| `GET /api/status` | état du robot et du service |
+| `GET /api/status` | état du robot et du service (dont `obstacleSafetyEnabled` / `obstacleSafetyAvailable`) |
 | `POST /api/mode` | bascule simulation / réel |
+| `POST /api/safety/obstacles` | active/coupe la vérification de place du service (adulte pour couper) |
 | `GET /api/settings` | réglages en vigueur + bornes autorisées |
 | `POST /api/settings` | applique des réglages (adulte, borné par les plafonds) |
 | `POST /api/execution/start` | démarre un programme (renvoie `runId` immédiatement) |
@@ -295,6 +297,42 @@ d'échec, l'interface l'annonce (`recoveryReason`).
 
 Les détails et les limites sont dans `docs/SAFETY.md`.
 
+### 5.3 quater Contrôle des obstacles
+
+`obstacles.py` est, comme `state_safety.py` et `recovery.py`, une décision
+**pure** : on lui donne des cases occupées, la pose du robot et une direction ;
+il rend une distance libre. Aucun SDK, aucun accès réseau.
+
+Le contrôle est fait à deux endroits :
+
+1. **Avant l'action** — `execution.py` appelle
+   `adapter.clearance_m(direction)` pour chaque translation. Si la valeur est
+   mesurée et inférieure à `marge du corps + vitesse × durée + 0,05 m`
+   (0,40 m devant/derrière, 0,25 m sur le côté), l'étape n'est pas exécutée :
+   `step_finished` avec `outcome="blocked"`, puis le programme continue avec
+   l'instruction suivante. Une valeur `None` (simulateur, carte ou pose
+   absente) ne bloque pas.
+2. **Pendant l'action** — `webrtc.py` refait la mesure à 10 Hz. Si la place
+   restante ne suffit plus, il envoie l'arrêt et renvoie `stopped` ; le
+   programme s'arrête.
+
+Côté WebRTC, les cases viennent du **même maillage de voxels** que la vue 3D.
+Le sol est retiré en ne gardant que 0,25 m à 1,60 m au-dessus d'un **niveau
+de sol robuste**, estimé par la **médiane des hauteurs**. Le sol cartographié
+s'étale sur plusieurs couches ; prendre un point bas (minimum ou percentile
+bas) laisserait son dessus passer pour un mur. La pose du robot dans la carte
+(`rt/uslam/frontend/odom`) sert à se placer dans le repère du chien. Les
+rotations ne sont pas contrôlées.
+
+Le service peut couper ce contrôle sans toucher au reste : l'interrupteur
+« Sécurité » de l'interface appelle `POST /api/safety/obstacles`. Le drapeau
+est porté par l'adaptateur WebRTC (`obstacle_safety_enabled`) ; quand il est
+faux, `clearance_m()` renvoie `None` et `_do_move()` ne fait ni contrôle
+initial ni contrôle à 10 Hz. Le drapeau est réarmé à `true` à chaque nouveau
+branchement. L'anti-obstacle interne du Go2 n'est pas concerné.
+
+Voir `docs/SAFETY.md` pour la géométrie, les valeurs et les limites assumées.
+
 ### 5.4 Distinguer « terminé » de « temps écoulé »
 
 `CommandOutcome.outcome` :
@@ -303,7 +341,8 @@ Les détails et les limites sont dans `docs/SAFETY.md`.
 |---|---|
 | `exact` | cible atteinte d'après l'état **mesuré** |
 | `timeout` | délai atteint **sans** confirmation mesurée |
-| `stopped` | interrompu sur demande |
+| `stopped` | interrompu sur demande, ou par un obstacle apparu |
+| `blocked` | action **non faite** : la place libre ne suffisait pas ; le programme continue |
 | `failed` | erreur de l'adaptateur |
 
 `measured_distance_cm` / `measured_angle_deg` ne sont renseignés que si une

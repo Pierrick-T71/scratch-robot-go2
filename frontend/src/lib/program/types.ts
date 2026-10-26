@@ -1,6 +1,6 @@
 /** Types de l'affichage de la progression d'un programme. */
 
-export type StepState = 'pending' | 'running' | 'done' | 'stopped';
+export type StepState = 'pending' | 'running' | 'done' | 'stopped' | 'blocked';
 
 export interface ProgramStep {
   index: number;

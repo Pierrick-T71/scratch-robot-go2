@@ -46,6 +46,8 @@ class TestStatus:
         assert body["mode"] == "simulation"
         assert body["executing"] is False
         assert body["safetyReason"] is None
+        assert body["obstacleSafetyEnabled"] is True
+        assert body["obstacleSafetyAvailable"] is False
 
     def test_simulation_offers_the_sensor_the_robot_does_not_have(self, client):
         # Le simulateur propose la détection d'obstacle ; l'adaptateur
@@ -280,6 +282,66 @@ class TestEndToEndExecution:
         assert abs(status["yawRad"]) > 1.0, f"le robot n'a pas tourné : {status['yawRad']}"
 
 
+class TestObstacleSafetySwitch:
+    """Le commutateur de sécurité lidar, côté service.
+
+    Il ne coupe QUE la mesure de place du service. Le portage, le bail et
+    l'anti-obstacle interne du robot ne sont pas concernés.
+    """
+
+    def test_unavailable_in_simulation(self, client):
+        response = client.post(
+            "/api/safety/obstacles",
+            json={"enabled": False, "adult_authorised": True},
+        )
+        assert response.status_code == 409
+        assert client.get("/api/status").json()["obstacleSafetyEnabled"] is True
+
+    def test_refuses_a_typo_in_the_field_name(self, client):
+        response = client.post(
+            "/api/safety/obstacles",
+            json={"enabled": True, "adultAuthorised": True},
+        )
+        assert response.status_code == 422
+
+    def test_an_adult_can_cut_then_restore_it_on_a_real_adapter(self, client):
+        service = client.app.state.service
+        # Le simulateur est branché ; on lui donne les deux propriétés que
+        # porte un vrai adaptateur pour tester le contrat HTTP sans robot.
+        service.adapter.physical_commands_enabled = True
+        service.adapter.obstacle_safety_enabled = True
+        assert (
+            client.post(
+                "/api/mode",
+                json={"mode": "real", "adult_authorised": True},
+            ).status_code
+            == 200
+        )
+
+        refuse = client.post(
+            "/api/safety/obstacles",
+            json={"enabled": False, "adult_authorised": False},
+        )
+        assert refuse.status_code == 403
+        assert client.get("/api/status").json()["obstacleSafetyEnabled"] is True
+
+        coupe = client.post(
+            "/api/safety/obstacles",
+            json={"enabled": False, "adult_authorised": True},
+        )
+        assert coupe.status_code == 200
+        assert coupe.json()["obstacleSafetyEnabled"] is False
+        assert service.adapter.obstacle_safety_enabled is False
+
+        remis = client.post(
+            "/api/safety/obstacles",
+            json={"enabled": True, "adult_authorised": False},
+        )
+        assert remis.status_code == 200
+        assert remis.json()["obstacleSafetyEnabled"] is True
+        assert service.adapter.obstacle_safety_enabled is True
+
+
 class TestRealModeStaysRefused:
     def test_switching_to_real_needs_an_adult(self, client):
         response = client.post(
@@ -367,7 +429,7 @@ class TestSettingsContract:
         )
         assert response.status_code in (200, 422)
         if response.status_code == 200:
-            assert response.json()["values"]["max_linear_speed"] <= 0.3
+            assert response.json()["values"]["max_linear_speed"] <= 0.5
 
     def test_settings_can_be_lowered(self, client):
         response = client.post(

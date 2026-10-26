@@ -809,6 +809,10 @@ class UnitreeAdapter:
         """Ce canal ne transporte pas de lidar : aucun point, jamais inventé."""
         return None
 
+    async def clearance_m(self, direction: str) -> float | None:
+        """Ce canal ne transporte pas de carte : distance non mesurée."""
+        return None
+
     def __del__(self) -> None:
         # Ne JAMAIS laisser une consigne de vitesse active en mémoire.
         self._publish_running = False
