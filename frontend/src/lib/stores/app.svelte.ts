@@ -370,9 +370,10 @@ class AppState {
     direction: ManualDirection | null,
     seq: number,
     source: 'keyboard' | 'mobile' = 'keyboard',
+    sprint: boolean = false,
   ): Promise<ManualMoveResult> {
     try {
-      return await api.moveManual(direction, seq, source);
+      return await api.moveManual(direction, seq, source, sprint);
     } catch (error) {
       return {
         active: false,

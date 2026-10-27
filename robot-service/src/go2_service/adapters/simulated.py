@@ -167,7 +167,7 @@ class SimulatedAdapter:
     def manual_velocity(
         self, direction: str, speed_mps: float, turn_speed_rps: float
     ) -> None:
-        """Aucun déplacement simulé : le mode manuel sert à tester l'écran."""
+        """Déplacement simulé en mode manuel pour tester et voir le robot avancer sur la scène 3D."""
         if direction not in (
             "forward",
             "backward",
@@ -182,6 +182,22 @@ class SimulatedAdapter:
         ):
             raise AdapterError(f"Direction manuelle inconnue : {direction}")
         self._state = RobotState.MOVING
+        vx = 0.0
+        vy = 0.0
+        vyaw = 0.0
+        if "forward" in direction:
+            vx = speed_mps
+        elif "backward" in direction:
+            vx = -speed_mps
+        if "left" in direction and "turn" not in direction:
+            vy = speed_mps
+        elif "right" in direction and "turn" not in direction:
+            vy = -speed_mps
+        if "turn_left" in direction:
+            vyaw = turn_speed_rps
+        elif "turn_right" in direction:
+            vyaw = -turn_speed_rps
+        self._advance(vx, vy, vyaw, 0.1)
 
     def manual_stop(self) -> None:
         self._state = RobotState.IDLE

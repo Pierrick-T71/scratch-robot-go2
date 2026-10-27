@@ -32,6 +32,7 @@
     onMove: (
       direction: ManualDirection,
       seq: number,
+      sprint?: boolean,
     ) => Promise<ManualMoveResult>;
     onRelease: (seq: number) => void;
     onJump?: () => Promise<{ ok: boolean; blocked: boolean; message: string | null }>;
@@ -52,7 +53,9 @@
   };
 
   const heldKeys = new SvelteSet<string>();
+  let isShiftHeld = $state(false);
   let activeDirection = $state<ManualDirection | null>(null);
+  let activeSprint = $state(false);
   let isJumping = $state(false);
   let message = $state<string | null>(null);
   let renewal: ReturnType<typeof setInterval> | null = null;
@@ -112,7 +115,9 @@
     clearRenewal();
     requestToken += 1;
     heldKeys.clear();
+    isShiftHeld = false;
     activeDirection = null;
+    activeSprint = false;
     message = reason ?? 'Le robot s’est arrêté.';
     onRelease(nextManualSequence());
   }
@@ -152,12 +157,29 @@
     return null;
   }
 
-  async function renew(direction: ManualDirection, token: number): Promise<void> {
-    if (inFlight || activeDirection !== direction || token !== requestToken) return;
+  async function renew(
+    direction: ManualDirection,
+    sprint: boolean,
+    token: number,
+  ): Promise<void> {
+    if (
+      inFlight ||
+      activeDirection !== direction ||
+      activeSprint !== sprint ||
+      token !== requestToken
+    ) {
+      return;
+    }
     inFlight = true;
     try {
-      const result = await onMove(direction, nextManualSequence());
-      if (token !== requestToken || activeDirection !== direction) return;
+      const result = await onMove(direction, nextManualSequence(), sprint);
+      if (
+        token !== requestToken ||
+        activeDirection !== direction ||
+        activeSprint !== sprint
+      ) {
+        return;
+      }
       if (result.blocked) {
         fail(result.message);
       }
@@ -170,24 +192,37 @@
     if (isJumping || hasOpenModal()) return;
 
     const nextDir = resolveDirection();
-    if (nextDir === activeDirection) return;
+    // Le sprint ne fonctionne qu'avec la touche Z (avancer), à la vitesse max (2,5 m/s)
+    const nextSprint = Boolean(
+      isShiftHeld && nextDir && nextDir.startsWith('forward'),
+    );
+
+    if (nextDir === activeDirection && nextSprint === activeSprint) return;
 
     if (nextDir === null) {
       clearRenewal();
       requestToken += 1;
       activeDirection = null;
+      activeSprint = false;
       onRelease(nextManualSequence());
       return;
     }
 
     activeDirection = nextDir;
+    activeSprint = nextSprint;
     message = null;
 
     if (!robotReady) return;
 
     const token = ++requestToken;
-    const result = await onMove(nextDir, nextManualSequence());
-    if (token !== requestToken || activeDirection !== nextDir) return;
+    const result = await onMove(nextDir, nextManualSequence(), nextSprint);
+    if (
+      token !== requestToken ||
+      activeDirection !== nextDir ||
+      activeSprint !== nextSprint
+    ) {
+      return;
+    }
 
     if (result.blocked) {
       fail(result.message);
@@ -195,7 +230,7 @@
     }
 
     clearRenewal();
-    renewal = setInterval(() => void renew(nextDir, token), 200);
+    renewal = setInterval(() => void renew(nextDir, nextSprint, token), 200);
   }
 
   async function triggerJump(): Promise<void> {
@@ -206,6 +241,7 @@
     clearRenewal();
     requestToken += 1;
     activeDirection = null;
+    activeSprint = false;
     onRelease(nextManualSequence());
 
     isJumping = true;
@@ -224,10 +260,12 @@
 
   function releaseAll(): void {
     heldKeys.clear();
+    isShiftHeld = false;
     clearRenewal();
     requestToken += 1;
-    if (activeDirection !== null) {
+    if (activeDirection !== null || activeSprint) {
       activeDirection = null;
+      activeSprint = false;
       onRelease(nextManualSequence());
     }
   }
@@ -235,6 +273,16 @@
   function onKeyDown(event: KeyboardEvent): void {
     if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
     if (isTypingTarget(event.target)) return;
+
+    if (event.key === 'Shift') {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!isShiftHeld) {
+        isShiftHeld = true;
+        void updateMotion();
+      }
+      return;
+    }
 
     const k = event.key.toLowerCase();
     if (event.code === 'Space' || k === ' ') {
@@ -247,12 +295,23 @@
     if (keyDirections[k]) {
       event.preventDefault();
       event.stopPropagation();
+      if (event.shiftKey) {
+        isShiftHeld = true;
+      }
       heldKeys.add(k);
       void updateMotion();
     }
   }
 
   function onKeyUp(event: KeyboardEvent): void {
+    if (event.key === 'Shift') {
+      event.preventDefault();
+      event.stopPropagation();
+      isShiftHeld = false;
+      void updateMotion();
+      return;
+    }
+
     const k = event.key.toLowerCase();
     if (event.code === 'Space' || k === ' ') {
       event.preventDefault();
@@ -264,6 +323,9 @@
       event.preventDefault();
       event.stopPropagation();
       heldKeys.delete(k);
+      if (!event.shiftKey && isShiftHeld) {
+        isShiftHeld = false;
+      }
       void updateMotion();
     }
   }
@@ -369,13 +431,15 @@
             type="button"
             class="key"
             class:key--on={heldKeys.has('z')}
+            class:key--sprint-active={activeSprint}
             aria-label="Avancer"
+            title={activeSprint ? 'Sprint en cours (2,5 m/s)' : 'Avancer (0,6 m/s)'}
             onpointerdown={(event) => onPointerDown(event, 'z')}
             onpointerup={(event) => onPointerUp(event, 'z')}
             onpointercancel={(event) => onPointerUp(event, 'z')}
             oncontextmenu={(event) => event.preventDefault()}
           >
-            Z
+            {activeSprint ? '⚡ Z' : 'Z'}
           </button>
         </div>
         <div class="keypad__row">
@@ -444,6 +508,34 @@
             →
           </button>
         </div>
+        <div class="keypad__row keypad__row--sprint">
+          <button
+            type="button"
+            class="key key--sprint"
+            class:key--on={isShiftHeld}
+            class:key--sprint-active={activeSprint}
+            aria-label="Sprint Shift"
+            title="Maintenir Shift (Maj) en avançant avec Z pour sprinter à 2,5 m/s"
+            onpointerdown={(event) => {
+              event.preventDefault();
+              isShiftHeld = true;
+              void updateMotion();
+            }}
+            onpointerup={(event) => {
+              event.preventDefault();
+              isShiftHeld = false;
+              void updateMotion();
+            }}
+            onpointercancel={(event) => {
+              event.preventDefault();
+              isShiftHeld = false;
+              void updateMotion();
+            }}
+            oncontextmenu={(event) => event.preventDefault()}
+          >
+            {activeSprint ? '⚡ SPRINT ACTIF (2,5 m/s)' : '⇧ Shift · Maintenir pour sprinter'}
+          </button>
+        </div>
         {#if onJump}
           <div class="keypad__row keypad__row--jump">
             <button
@@ -465,6 +557,7 @@
         <li><strong>Z</strong> avancer · <strong>S</strong> reculer</li>
         <li><strong>Q</strong> pas à gauche · <strong>D</strong> pas à droite</li>
         <li><strong>← / →</strong> tourner · <strong>Espace</strong> sauter</li>
+        <li><strong>Shift + Z</strong> sprinter (vitesse max 2,5 m/s)</li>
       </ul>
 
       {#if message}
@@ -685,6 +778,10 @@
     width: 220px;
   }
 
+  .keypad__row--sprint {
+    width: 220px;
+  }
+
   .key {
     display: grid;
     place-items: center;
@@ -722,6 +819,17 @@
     color: #e2e8f8;
   }
 
+  .key--sprint {
+    width: 100%;
+    height: 42px;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: #e0e7ff;
+    background: linear-gradient(180deg, #374151, #1f2937);
+    border-color: #4b5563;
+  }
+
   .key--on {
     transform: translateY(2px);
     border-color: #9b87f0;
@@ -729,6 +837,16 @@
     box-shadow:
       inset 0 2px 8px rgb(0 0 0 / 22%),
       0 0 18px rgb(126 108 232 / 35%);
+  }
+
+  .key--sprint-active {
+    border-color: #f59e0b !important;
+    background: linear-gradient(180deg, #f59e0b, #d97706) !important;
+    color: #ffffff !important;
+    box-shadow:
+      inset 0 2px 8px rgb(0 0 0 / 22%),
+      0 0 22px rgb(245 158 11 / 55%) !important;
+    transform: translateY(2px);
   }
 
   .manual__keys {
@@ -886,7 +1004,8 @@
     }
 
     .keypad__row--turns,
-    .keypad__row--jump {
+    .keypad__row--jump,
+    .keypad__row--sprint {
       width: 190px;
     }
 

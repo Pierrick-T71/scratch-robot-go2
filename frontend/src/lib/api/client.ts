@@ -102,6 +102,8 @@ export interface ManualMoveResult {
   /** La touche est ignorée : le robot n'est pas prêt ou sa sécurité est active. */
   blocked: boolean;
   message: string | null;
+  /** Vitesse maximale de sprint active. */
+  sprint?: boolean;
 }
 
 /** Cases occupées de la carte du lidar, vues du dessus, en mètres. */
@@ -278,10 +280,11 @@ export const api = {
     direction: ManualDirection | null,
     seq: number,
     source: 'keyboard' | 'mobile' = 'keyboard',
+    sprint: boolean = false,
   ): Promise<ManualMoveResult> =>
     request('/api/manual/move', {
       method: 'POST',
-      body: JSON.stringify({ direction, seq, source }),
+      body: JSON.stringify({ direction, seq, source, sprint }),
     }),
 
   /** Ferme le mode manuel et arrête le robot. */

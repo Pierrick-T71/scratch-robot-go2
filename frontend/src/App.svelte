@@ -432,7 +432,7 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
       <div class="app__manual">
         <ManualPanel
           robotReady={app.status.mode === 'real' && app.status.connected}
-          onMove={(direction, seq) => app.moveManual(direction, seq)}
+          onMove={(direction, seq, sprint) => app.moveManual(direction, seq, 'keyboard', sprint)}
           onRelease={(seq) => void app.moveManual(null, seq)}
           onJump={() => app.jumpManual()}
           onClose={closeManual}

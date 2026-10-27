@@ -277,6 +277,7 @@ class ManualMoveRequest(BaseModel):
     ] | None = None
     seq: int = Field(default=0, ge=0)
     source: Literal["keyboard", "mobile", "default"] = "keyboard"
+    sprint: bool = False
 
 
 class ManualJumpRequest(BaseModel):
@@ -899,7 +900,7 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
 
         try:
             blocked, message = await state.manual.set_direction(
-                payload.direction, payload.seq, payload.source
+                payload.direction, payload.seq, payload.source, sprint=payload.sprint
             )
         except ManualNotActive as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -910,6 +911,7 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
             "active": state.manual.active,
             "blocked": blocked,
             "message": message,
+            "sprint": state.manual.sprint,
         }
 
     @app.post("/api/manual/jump")

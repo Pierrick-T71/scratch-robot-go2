@@ -55,6 +55,9 @@ MANUAL_TICK_S = 0.1
 #: élargir les limites des programmes de l'enfant.
 MANUAL_SPEED_MPS = 0.6
 
+#: Vitesse de sprint en mode manuel (vitesse maximale du Go2, trot rapide / course).
+MANUAL_SPRINT_SPEED_MPS = 2.5
+
 #: Vitesse de rotation en mode manuel.
 #:
 #: 1,0 rad/s (~57°/s) offre le bon équilibre entre réactivité et précision :
@@ -78,6 +81,7 @@ class ManualControl:
 
         self._active = False
         self._direction: str | None = None
+        self._sprint = False
         self._active_source: str | None = None
         self._deadline = 0.0
         self._blocked_reason: str | None = None
@@ -125,7 +129,14 @@ class ManualControl:
         """Vitesse fixée par le service, jamais par le client."""
         if self._crouch_mode:
             return CRAWL_SPEED_MPS
+        if self._sprint and self._direction and "forward" in self._direction:
+            return MANUAL_SPRINT_SPEED_MPS
         return MANUAL_SPEED_MPS
+
+    @property
+    def sprint(self) -> bool:
+        """Indique si la consigne de sprint est actuellement active."""
+        return self._sprint
 
     @property
     def turn_speed_rps(self) -> float:
@@ -144,6 +155,7 @@ class ManualControl:
             self._task = asyncio.create_task(self._loop(), name="go2-manual")
         # Une nouvelle entrée dans le mode efface un ancien blocage.
         self._direction = None
+        self._sprint = False
         self._active_source = None
         self._blocked_reason = None
         self._deadline = 0.0
@@ -151,7 +163,11 @@ class ManualControl:
         log.info("Mode manuel ouvert.")
 
     async def set_direction(
-        self, direction: str | None, seq: int = 0, source: str = "keyboard"
+        self,
+        direction: str | None,
+        seq: int = 0,
+        source: str = "keyboard",
+        sprint: bool = False,
     ) -> tuple[bool, str | None]:
         """Démarre/renouvelle une direction, ou arrête le mouvement.
 
@@ -161,6 +177,7 @@ class ManualControl:
 
         ``seq`` est le numéro croissant de la requête pour chaque ``source``.
         ``source`` identifie le contrôleur ('keyboard', 'mobile').
+        ``sprint`` active la vitesse maximale (2,5 m/s) quand le robot avance.
         """
         if not self._active:
             raise ManualNotActive("Le mode manuel n’est pas ouvert.")
@@ -187,6 +204,7 @@ class ManualControl:
 
         if direction is None:
             self._direction = None
+            self._sprint = False
             self._active_source = None
             self._blocked_reason = None
             self._deadline = 0.0
@@ -203,6 +221,7 @@ class ManualControl:
             return True, self._blocked_reason
 
         self._direction = direction
+        self._sprint = bool(sprint) and ("forward" in direction)
         self._active_source = source
         self._deadline = now + MANUAL_TTL_S
         return False, None
@@ -229,6 +248,7 @@ class ManualControl:
 
         # Arrête d'abord toute consigne de déplacement continu
         self._direction = None
+        self._sprint = False
         self._active_source = source
         self._deadline = 0.0
         self._stop_motion()
@@ -262,6 +282,7 @@ class ManualControl:
 
         # Arrête d'abord toute consigne de déplacement en cours
         self._direction = None
+        self._sprint = False
         self._active_source = None
         self._deadline = 0.0
         self._stop_motion()
@@ -305,6 +326,7 @@ class ManualControl:
 
         self._active = False
         self._direction = None
+        self._sprint = False
         self._active_source = None
         self._blocked_reason = None
         self._deadline = 0.0
@@ -443,6 +465,7 @@ class ManualControl:
         """Arrête et empêche la reprise tant que la touche n'est pas relâchée."""
         self._blocked_reason = reason
         self._direction = None
+        self._sprint = False
         self._active_source = None
         self._deadline = 0.0
         self._stop_motion()

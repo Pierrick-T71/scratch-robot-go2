@@ -113,6 +113,42 @@ class TestManualControl:
         assert manual.speed_mps == 0.6
         assert manual.turn_speed_rps == 1.0
 
+    @pytest.mark.asyncio
+    async def test_sprint_forward_speeds(self, manual):
+        manual.start()
+        assert not manual.sprint
+        assert manual.speed_mps == 0.6
+
+        # Sprint forward activates 2.5 m/s
+        blocked, msg = await manual.set_direction("forward", seq=1, sprint=True)
+        assert not blocked
+        assert manual.sprint is True
+        assert manual.speed_mps == 2.5
+
+        # Releasing sprint while keeping forward reverts to 0.6 m/s
+        blocked, msg = await manual.set_direction("forward", seq=2, sprint=False)
+        assert not blocked
+        assert manual.sprint is False
+        assert manual.speed_mps == 0.6
+
+        # Sprint with backward is ignored (only forward sprints)
+        blocked, msg = await manual.set_direction("backward", seq=3, sprint=True)
+        assert not blocked
+        assert manual.sprint is False
+        assert manual.speed_mps == 0.6
+
+        # Sprint with forward+turn_left activates 2.5 m/s
+        blocked, msg = await manual.set_direction("forward+turn_left", seq=4, sprint=True)
+        assert not blocked
+        assert manual.sprint is True
+        assert manual.speed_mps == 2.5
+
+        # Release motion resets sprint
+        blocked, msg = await manual.set_direction(None, seq=5)
+        assert not blocked
+        assert manual.sprint is False
+        assert manual.direction is None
+
 
 class TestManualEndpoints:
     def test_jump_endpoint_requires_manual_active(self, client):
@@ -202,3 +238,30 @@ class TestManualEndpoints:
 
         status = client.get("/api/status").json()
         assert status["manualCrouchActive"] is False
+
+    def test_sprint_endpoint(self, client):
+        client.post("/api/manual/start", json={"adult_authorised": True})
+
+        # Sprint forward
+        resp = client.post(
+            "/api/manual/move",
+            json={"direction": "forward", "sprint": True, "seq": 1},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["sprint"] is True
+
+        # Stop sprint while continuing forward
+        resp = client.post(
+            "/api/manual/move",
+            json={"direction": "forward", "sprint": False, "seq": 2},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["sprint"] is False
+
+        # Release
+        resp = client.post(
+            "/api/manual/move",
+            json={"direction": None, "seq": 3},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["sprint"] is False
