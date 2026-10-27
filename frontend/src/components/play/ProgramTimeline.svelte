@@ -29,6 +29,8 @@
     onStart: () => void;
     onStop: () => void;
     onClear: () => void;
+    onImportFile?: (file: File) => void;
+    onChooseFile?: () => void;
   }
 
   let {
@@ -46,6 +48,8 @@
     onStart,
     onStop,
     onClear,
+    onImportFile,
+    onChooseFile,
   }: Props = $props();
 
   let stripEl = $state<HTMLDivElement | undefined>();
@@ -80,7 +84,8 @@
   function over(event: DragEvent): void {
     event.preventDefault();
     if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = dragging ? 'move' : 'copy';
+      const isFile = Array.from(event.dataTransfer.types || []).includes('Files');
+      event.dataTransfer.dropEffect = isFile || !dragging ? 'copy' : 'move';
     }
     insertion = indexAt(event.clientX);
   }
@@ -94,10 +99,19 @@
 
   function drop(event: DragEvent): void {
     event.preventDefault();
-    const payload = readDragPayload(event);
     const target = insertion ?? indexAt(event.clientX);
     insertion = null;
     dragging = null;
+
+    // Glisser-déposer d'un fichier JSON externe
+    const files = event.dataTransfer?.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      if (file) onImportFile?.(file);
+      return;
+    }
+
+    const payload = readDragPayload(event);
     if (!payload) return;
     if (payload.source === 'library') onAdd(payload.kind, target);
     else onMove(payload.id, target);
@@ -171,15 +185,21 @@
     ondragleave={leave}
     ondrop={drop}
   >
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div
       class="dropzone"
       class:dropzone--over={insertion !== null && blocks.length === 0}
+      role="button"
+      tabindex="0"
+      onclick={onChooseFile}
+      onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && onChooseFile?.()}
+      title="Cliquer pour choisir un fichier programme JSON, ou glisser-déposer un fichier ou des blocs ici"
     >
       <span class="dropzone__hand" aria-hidden="true">
         <Icon name="hand" size={28} />
       </span>
       <p class="dropzone__text">
-        Glisser-déposer les blocs<br />ici pour programmer
+        Glisser-déposer le fichier ou les blocs<br />ici pour programmer
       </p>
       <span class="dropzone__hand" aria-hidden="true">
         <Icon name="hand" size={28} />
@@ -450,6 +470,8 @@
   }
 
   .dropzone {
+    cursor: pointer;
+    user-select: none;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -466,6 +488,17 @@
       border-color 0.15s ease,
       background 0.15s ease,
       color 0.15s ease;
+  }
+
+  .dropzone:hover {
+    border-color: #5d677d;
+    background: rgb(255 255 255 / 3.5%);
+    color: #a4afc3;
+  }
+
+  .dropzone:focus-visible {
+    outline: 2px solid #7fa8dd;
+    outline-offset: 2px;
   }
 
   .dropzone--over {

@@ -273,11 +273,14 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
     fileInputEl?.click();
   }
 
-  async function handleFileImport(event: Event): Promise<void> {
-    const target = event.target as HTMLInputElement;
-    const file = target.files?.[0];
-    if (!file) return;
-
+  async function importFileDirect(file: File): Promise<void> {
+    if (app.isBusy) {
+      app.notice = {
+        tone: 'warn',
+        message: 'Attends la fin du programme avant d’importer.',
+      };
+      return;
+    }
     try {
       const text = await file.text();
       const imported = parseBlocksFromJson(text);
@@ -302,9 +305,16 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
             ? error.message
             : 'Fichier JSON invalide ou illisible.',
       };
-    } finally {
-      target.value = '';
     }
+  }
+
+  async function handleFileInputChange(event: Event): Promise<void> {
+    const target = event.target as HTMLInputElement;
+    const file = target.files?.[0];
+    if (file) {
+      await importFileDirect(file);
+    }
+    target.value = '';
   }
 </script>
 
@@ -313,7 +323,7 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
   bind:this={fileInputEl}
   accept=".json,application/json"
   style="display: none;"
-  onchange={handleFileImport}
+  onchange={handleFileInputChange}
 />
 
 {#if isRemoteMode}
@@ -326,7 +336,6 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
     onManual={() => void openManual()}
     onToggleAutonomous={() => void app.toggleAutonomous()}
     onSave={save}
-    onImport={triggerImport}
     onOpenRobot={openRobot}
     onToggleSafety={toggleSafety}
     onToggleStandby={(enabled) => void app.setStandby(enabled)}
@@ -374,6 +383,8 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
         onStart={start}
         onStop={stop}
         onClear={clearProgram}
+        onChooseFile={triggerImport}
+        onImportFile={(file) => void importFileDirect(file)}
       />
     </div>
 

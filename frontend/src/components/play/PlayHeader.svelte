@@ -15,7 +15,6 @@
     onManual: () => void;
     onToggleAutonomous: () => void;
     onSave: () => void;
-    onImport?: () => void;
     onOpenRobot: () => void;
     /** Active/coupe la sécurité lidar du service. */
     onToggleSafety: (enabled: boolean) => void;
@@ -29,7 +28,6 @@
     onManual,
     onToggleAutonomous,
     onSave,
-    onImport,
     onOpenRobot,
     onToggleSafety,
     onToggleStandby,
@@ -188,27 +186,13 @@
       type="button"
       class="action action--save"
       onclick={onSave}
-      title="Télécharger le programme en fichier JSON (dossier Téléchargements)"
+      title="Sauvegarder et télécharger le programme JSON (Téléchargements)"
     >
       <span class="action__icon action__icon--save">
-        <Icon name="download" size={19} />
+        <Icon name="save" size={19} />
       </span>
       Sauvegarder
     </button>
-
-    {#if onImport}
-      <button
-        type="button"
-        class="action action--import"
-        onclick={onImport}
-        title="Importer un programme JSON depuis votre ordinateur"
-      >
-        <span class="action__icon action__icon--import">
-          <Icon name="upload" size={19} />
-        </span>
-        Importer
-      </button>
-    {/if}
   </div>
 
   <div class="topright">
@@ -424,23 +408,6 @@
   .action__icon--save {
     background: linear-gradient(180deg, #5b86d6, #3f68b8);
     box-shadow: 0 4px 12px rgb(63 104 184 / 42%);
-  }
-
-  .action--import {
-    background: rgb(245 158 11 / 16%);
-    border-color: rgb(251 191 36 / 40%);
-    color: #fde68a;
-  }
-
-  .action--import:hover:not(:disabled) {
-    background: rgb(245 158 11 / 26%);
-    border-color: #fbbf24;
-    color: #ffffff;
-  }
-
-  .action__icon--import {
-    background: linear-gradient(180deg, #fbbf24, #d97706);
-    box-shadow: 0 4px 12px rgb(217 119 6 / 42%);
   }
 
   .topright {
