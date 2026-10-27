@@ -32,9 +32,16 @@
     walking?: boolean;
     /** La souris peut-elle tourner autour de la scène ? */
     interactive?: boolean;
+    /** Posture actuelle ou demandée ('stand' | 'sit' | 'lie_down' | 'balance' | null). */
+    posture?: string | null;
   }
 
-  let { volume, walking = false, interactive = true }: Props = $props();
+  let {
+    volume,
+    walking = false,
+    interactive = true,
+    posture = 'stand',
+  }: Props = $props();
 
   let canvas = $state<HTMLCanvasElement | undefined>();
 
@@ -91,6 +98,54 @@
   };
 
   let rig: Record<LegName, LegRig> | null = null;
+  let corps: THREE.Object3D | null = null;
+
+  interface PoseConfig {
+    bodyY: number;
+    pitch: number;
+    frontHip: number;
+    frontKnee: number;
+    frontAnkle: number;
+    rearHip: number;
+    rearKnee: number;
+    rearAnkle: number;
+  }
+
+  const POSE_STAND: PoseConfig = {
+    bodyY: 0.426,
+    pitch: 0,
+    frontHip: 0,
+    frontKnee: 0,
+    frontAnkle: 0,
+    rearHip: 0,
+    rearKnee: 0,
+    rearAnkle: 0,
+  };
+
+  const POSE_SIT: PoseConfig = {
+    bodyY: 0.255,
+    pitch: 27 * (Math.PI / 180),
+    frontHip: -0.31,
+    frontKnee: -1.06,
+    frontAnkle: 1.37,
+    rearHip: 0.82,
+    rearKnee: -2.35,
+    rearAnkle: 1.53,
+  };
+
+  const POSE_LIE: PoseConfig = {
+    bodyY: 0.125,
+    pitch: 0,
+    frontHip: 1.14,
+    frontKnee: -2.54,
+    frontAnkle: 1.40,
+    rearHip: 1.14,
+    rearKnee: -2.54,
+    rearAnkle: 1.40,
+  };
+
+  /** Posture demandée en interne ('stand' | 'sit' | 'lie_down'). */
+  let postureDemandee = $state<'stand' | 'sit' | 'lie_down'>('stand');
 
   /** Recopié depuis la prop : la boucle de rendu le lit à chaque image. */
   let marcheDemandee = $state(false);
@@ -287,6 +342,7 @@
         // matrices du modèle soient à jour.
         objet.updateMatrixWorld(true);
         const desc = objet.getObjectByName('go2_description_102');
+        corps = desc ?? null;
         rig = desc ? creerRig(desc) : null;
       },
       undefined,
@@ -314,6 +370,18 @@
     let phase = 0;
     let marche = 0;
 
+    // État courant de la pose pour une interpolation fluide vers la posture cible
+    const poseActuelle = {
+      bodyY: POSE_STAND.bodyY,
+      pitch: POSE_STAND.pitch,
+      frontHip: POSE_STAND.frontHip,
+      frontKnee: POSE_STAND.frontKnee,
+      frontAnkle: POSE_STAND.frontAnkle,
+      rearHip: POSE_STAND.rearHip,
+      rearKnee: POSE_STAND.rearKnee,
+      rearAnkle: POSE_STAND.rearAnkle,
+    };
+
     const animer = (): void => {
       cadre = requestAnimationFrame(animer);
 
@@ -321,28 +389,85 @@
       const delta = Math.min((maintenant - dernier) / 1000, 0.05);
       dernier = maintenant;
 
-      // La marche s'installe et s'arrête en douceur.
-      const cible = marcheDemandee ? 1 : 0;
-      marche += (cible - marche) * (1 - Math.exp(-delta * 6));
+      // Choix de la pose cible selon la posture demandée
+      const ciblePose =
+        postureDemandee === 'sit'
+          ? POSE_SIT
+          : postureDemandee === 'lie_down'
+            ? POSE_LIE
+            : POSE_STAND;
+
+      // Transition progressive vers la posture cible (~1,2 s, mouvement fluide et réaliste)
+      const facteur = 1 - Math.exp(-delta * 3.6);
+      poseActuelle.bodyY += (ciblePose.bodyY - poseActuelle.bodyY) * facteur;
+      poseActuelle.pitch += (ciblePose.pitch - poseActuelle.pitch) * facteur;
+      poseActuelle.frontHip += (ciblePose.frontHip - poseActuelle.frontHip) * facteur;
+      poseActuelle.frontKnee += (ciblePose.frontKnee - poseActuelle.frontKnee) * facteur;
+      poseActuelle.frontAnkle += (ciblePose.frontAnkle - poseActuelle.frontAnkle) * facteur;
+      poseActuelle.rearHip += (ciblePose.rearHip - poseActuelle.rearHip) * facteur;
+      poseActuelle.rearKnee += (ciblePose.rearKnee - poseActuelle.rearKnee) * facteur;
+      poseActuelle.rearAnkle += (ciblePose.rearAnkle - poseActuelle.rearAnkle) * facteur;
+
+      // La marche ne s'enclenche que si le robot est en posture debout
+      const estDebout = postureDemandee === 'stand' && poseActuelle.bodyY > 0.35;
+      const cibleMarche = marcheDemandee && estDebout ? 1 : 0;
+      marche += (cibleMarche - marche) * (1 - Math.exp(-delta * 6));
       if (marche > 0.005) phase += delta * Math.PI * 2 * 1.8;
 
       if (rig) {
         const balancement = Math.sin(phase) * marche;
         for (const nom of LEG_NAMES) {
           const patte = rig[nom];
-          // Les pattes en diagonale avancent ensemble.
+          const isFront = nom === 'FL' || nom === 'FR';
+          const baseHip = isFront ? poseActuelle.frontHip : poseActuelle.rearHip;
+          const baseKnee = isFront ? poseActuelle.frontKnee : poseActuelle.rearKnee;
+          const baseAnkle = isFront ? poseActuelle.frontAnkle : poseActuelle.rearAnkle;
+
+          // Les pattes en diagonale avancent ensemble pendant la marche
           const paire = nom === 'FL' || nom === 'RR' ? balancement : -balancement;
           const levee = Math.max(0, paire);
           const hanche = 0.38 * paire;
           const genou = -0.55 * levee;
-          patte.hip.rotation.z = hanche;
-          patte.knee.rotation.z = genou;
-          patte.ankle.rotation.z = -(hanche + genou);
+          const cheville = -(hanche + genou);
+
+          patte.hip.rotation.z = baseHip + hanche;
+          patte.knee.rotation.z = baseKnee + genou;
+          patte.ankle.rotation.z = baseAnkle + cheville;
         }
-        if (chien) {
-          // Petit balancement du corps, comme un vrai chien.
-          chien.position.y = 0.426 + 0.008 * Math.abs(Math.sin(phase)) * marche;
-        }
+      }
+
+      // Maintien au sol géométrique : les pattes ne s'enfoncent jamais sous la grille
+      const cosP = Math.cos(poseActuelle.pitch);
+      const sinP = Math.sin(poseActuelle.pitch);
+      const L1 = 0.213;
+      const L2 = 0.213;
+
+      const calcFootY = (hipX: number, thH: number, thK: number): number => {
+        const tx = L1 * Math.sin(thH);
+        const ty = -L1 * Math.cos(thH);
+        const cx = L2 * Math.sin(thH + thK);
+        const cy = -L2 * Math.cos(thH + thK);
+        const localX = hipX + tx + cx;
+        const localY = ty + cy;
+        return localX * sinP + localY * cosP + poseActuelle.bodyY;
+      };
+
+      const flY = calcFootY(0.1934, poseActuelle.frontHip, poseActuelle.frontKnee);
+      const rlY = calcFootY(-0.1934, poseActuelle.rearHip, poseActuelle.rearKnee);
+      const minFoot = Math.min(flY, rlY);
+      let hauteurChien = poseActuelle.bodyY;
+      if (minFoot < 0) {
+        hauteurChien -= minFoot;
+      }
+
+      if (chien) {
+        // Balancement léger du corps pendant la marche
+        chien.position.y = hauteurChien + 0.008 * Math.abs(Math.sin(phase)) * marche;
+      }
+
+      if (corps) {
+        // Tangage du corps (buste relevé en posture assise)
+        corps.rotation.z = poseActuelle.pitch;
       }
 
       controles?.update();
@@ -423,7 +548,8 @@
       const pose = donnees.robot ?? { x: 0, y: 0, cap: 0 };
       const x = pose.x ?? 0;
       const z = -(pose.y ?? 0);
-      chien.position.set(x, 0.426, z);
+      chien.position.x = x;
+      chien.position.z = z;
       // Le modele de Sketchfab a son avant vers +Z ; on le tourne d'un quart
       // de tour pour qu'il regarde vers l'avant du robot, puis on lui applique
       // le cap mesure.
@@ -446,6 +572,16 @@
 
   $effect(() => {
     marcheDemandee = walking;
+  });
+
+  $effect(() => {
+    if (posture === 'sit') {
+      postureDemandee = 'sit';
+    } else if (posture === 'lie_down') {
+      postureDemandee = 'lie_down';
+    } else {
+      postureDemandee = 'stand';
+    }
   });
 
   $effect(() => {

@@ -456,6 +456,7 @@
                 volume={lidarVolume}
                 walking={activeDirection !== null}
                 interactive={false}
+                posture={app.status.posture}
               />
             </div>
           {:else}

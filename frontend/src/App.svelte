@@ -78,6 +78,22 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
         runningKind === 'turn_right'),
   );
 
+  /** Posture active demandée au modèle 3D selon l'étape ou l'état du robot. */
+  const effectivePosture = $derived(
+    runningKind === 'sit'
+      ? 'sit'
+      : runningKind === 'lie_down'
+        ? 'lie_down'
+        : runningKind === 'stand' ||
+            runningKind === 'balance' ||
+            runningKind === 'forward' ||
+            runningKind === 'backward' ||
+            runningKind === 'turn_left' ||
+            runningKind === 'turn_right'
+          ? 'stand'
+          : (app.status.posture ?? 'stand'),
+  );
+
   $effect(() => {
     const next = program;
     // `syncSteps` lit et réécrit la liste des étapes : sans `untrack`, l'effet
@@ -392,6 +408,7 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
       <RobotStage
         status={app.status}
         {walking}
+        posture={effectivePosture}
         onOpenRobot={openRobot}
       />
     </div>

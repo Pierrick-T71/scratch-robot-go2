@@ -18,10 +18,12 @@
     status: RobotStatus;
     /** Un bloc de déplacement tourne : les pattes doivent marcher. */
     walking?: boolean;
+    /** Posture souhaitée ou active pour le modèle 3D. */
+    posture?: string | null;
     onOpenRobot: () => void;
   }
 
-  let { status, walking = false, onOpenRobot }: Props = $props();
+  let { status, walking = false, posture = null, onOpenRobot }: Props = $props();
 
   /** La caméra du robot est-elle à l'écran ? */
   let camera = $state(false);
@@ -82,13 +84,15 @@
       : `${Math.round(status.batteryPercent)} %`,
   );
 
+  const rawPosture = $derived(posture ?? status.posture ?? 'stand');
+
   /**
    * Posture du robot, en mots simples pour l'enfant.
    *
    * `null` quand le service ne la connaît pas : on n'invente pas un « debout »
    * qui n'a pas été demandé.
    */
-  const posture = $derived(
+  const postureTexte = $derived(
     status.posture === 'stand'
       ? 'Debout'
       : status.posture === 'sit'
@@ -118,7 +122,12 @@
 <aside class="robot" aria-label="État du robot">
   <div class="scene">
     <div class="scene__robot">
-      <LidarScene volume={lidar ? volume : null} {walking} interactive={lidar} />
+      <LidarScene
+        volume={lidar ? volume : null}
+        {walking}
+        interactive={lidar}
+        posture={rawPosture}
+      />
     </div>
 
     {#if camera}
@@ -190,10 +199,10 @@
     </div>
 
     <div class="robot__gauges">
-      {#if posture}
+      {#if postureTexte}
         <span class="gauge" title="Posture demandée au robot">
           <Icon name="balance" size={21} />
-          <span class="gauge__value">{posture}</span>
+          <span class="gauge__value">{postureTexte}</span>
         </span>
       {/if}
       <span class="gauge" title="Batterie">
