@@ -533,19 +533,21 @@
         const p = Math.min(1.0, gesteTemps / duree);
 
         if (gesteActif === 'salute') {
-          // Saluer : la patte avant-droite se lève bien haut devant et salue de façon dynamique
+          // Saluer : la patte avant-droite s'élève haut au-dessus du corps pour être parfaitement visible
           const env = Math.sin(Math.PI * p);
           // Le corps et les 3 autres pattes restent totalement immobiles
           extraPitch = 0;
           extraBodyY = 0;
 
-          // La patte FR s'élève bien haut devant (niveau tête/yeux)
-          legAngles.FR.hipZ = 1.25 * env;
-          legAngles.FR.kneeZ = -0.70 * env;
-          // Battement de salut vif et visible
+          // La patte FR s'élève au-dessus du dos/corps (cuisse pointant vers le haut)
+          legAngles.FR.hipZ = 2.15 * env;
+          legAngles.FR.kneeZ = -0.35 * env;
+          legAngles.FR.hipX = 0.12 * env; // légèrement écartée sur le côté pour un dégagement net
+
+          // Battement de la patte bien visible au-dessus du corps
           const wave = Math.sin(gesteTemps * Math.PI * 5) * env;
-          legAngles.FR.kneeZ += 0.28 * wave;
-          legAngles.FR.ankleZ = 0.40 * env + 0.35 * wave;
+          legAngles.FR.kneeZ += 0.25 * wave;
+          legAngles.FR.ankleZ = 0.50 * env + 0.35 * wave;
         } else if (gesteActif === 'heart') {
           // Pour le cœur : se met assis et dessine un cœur avec ses pattes avant
           const env = Math.sin(Math.PI * p);
