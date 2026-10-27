@@ -210,10 +210,13 @@
 
 ### 8.3. Nouveau Système de Sauvegarde & Importation JSON
 - **Téléchargement direct sur PC Hôte** :
-  - En cliquant sur « Sauvegarder », le programme est immédiatement sérialisé en JSON et téléchargé dans le dossier **Téléchargements** du PC hôte via un Blob déclenché (`programme-go2.json`), tout en conservant une copie miroir dans le `localStorage` local.
-- **Réimportation en un clic (« Importer »)** :
-  - Nouveau bouton ambré **« Importer »** dans la barre d'en-tête (`PlayHeader.svelte`), ouvrant un sélecteur de fichier `.json`.
-  - Lecture et réhydratation instantanée du programme dans la timeline.
+  - En cliquant sur le bouton « Sauvegarder » (icône disquette d'origine dans la barre supérieure), le programme est immédiatement sérialisé en JSON et téléchargé dans le dossier **Téléchargements** du PC hôte (`programme-go2.json`), tout en conservant une copie miroir dans le `localStorage` local.
+- **Importation 2-en-1 directement intégrée dans la Dropzone** :
+  - **Barre supérieure restaurée à l'identique visuellement** (Mode manuel, Mode autonome, Sauvegarder).
+  - Le grand bloc central en pointillés de la timeline affiche désormais :  
+    *« Glisser-déposer le fichier ou les blocs ici pour programmer »*.
+  - **Au clic** sur ce bloc : ouvre directement le sélecteur de fichier de votre PC hôte pour choisir un fichier `.json`.
+  - **Au glisser-déposer** : vous pouvez glisser un fichier `.json` depuis votre explorateur directement dans la dropzone (ou continuer à y déposer des blocs de la bibliothèque).
 - **Compatibilité Totale avec les Blocs Futurs** :
   - Le parseur `parseBlocksFromJson` et le modèle `PlayBlock` préservent l'ensemble des clés et paramètres personnalisés (`[key: string]: unknown`).
   - Tolérance aux blocs futurs dans `specOfOrFallback` pour afficher tout futur bloc sans rupture.
