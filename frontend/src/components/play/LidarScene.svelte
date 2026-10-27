@@ -30,6 +30,8 @@
     volume: LidarVolume | null;
     /** Le robot avance, recule ou tourne : les pattes marchent. */
     walking?: boolean;
+    /** Le robot sprinte à vitesse maximale (trot de course). */
+    sprinting?: boolean;
     /** La souris peut-elle tourner autour de la scène ? */
     interactive?: boolean;
     /** Posture actuelle ou demandée ('stand' | 'sit' | 'lie_down' | 'balance' | null). */
@@ -47,6 +49,7 @@
   let {
     volume,
     walking = false,
+    sprinting = false,
     interactive = true,
     posture = 'stand',
     action = null,
@@ -161,6 +164,7 @@
 
   /** Recopié depuis la prop : la boucle de rendu le lit à chaque image. */
   let marcheDemandee = $state(false);
+  let sprintDemandee = $state(false);
 
   /**
    * Nombre maximal de cubes.
@@ -483,8 +487,11 @@
       // La marche ne s'enclenche que si le robot est en posture debout
       const estDebout = postureDemandee === 'stand' && poseActuelle.bodyY > 0.35;
       const cibleMarche = marcheDemandee && estDebout ? 1 : 0;
-      marche += (cibleMarche - marche) * (1 - Math.exp(-delta * 6));
-      if (marche > 0.005) phase += delta * Math.PI * 2 * 1.8;
+      marche += (cibleMarche - marche) * (1 - Math.exp(-delta * 8));
+
+      // Cadence et foulées : trot rapide énergique en sprint (3,5 m/s) vs marche normale (0,6 m/s)
+      const cadenceFrequence = sprintDemandee ? 4.2 : 1.8;
+      if (marche > 0.005) phase += delta * Math.PI * 2 * cadenceFrequence;
 
       const legAngles: Record<
         LegName,
@@ -497,17 +504,20 @@
       };
 
       const balancement = Math.sin(phase) * marche;
+      const amplitudeHanche = sprintDemandee ? 0.62 : 0.38;
+      const amplitudeGenou = sprintDemandee ? 0.85 : 0.55;
+
       for (const nom of LEG_NAMES) {
         const isFront = nom === 'FL' || nom === 'FR';
         const baseHip = isFront ? poseActuelle.frontHip : poseActuelle.rearHip;
         const baseKnee = isFront ? poseActuelle.frontKnee : poseActuelle.rearKnee;
         const baseAnkle = isFront ? poseActuelle.frontAnkle : poseActuelle.rearAnkle;
 
-        // Les pattes en diagonale avancent ensemble pendant la marche
+        // Les pattes en diagonale avancent ensemble pendant la marche / sprint
         const paire = nom === 'FL' || nom === 'RR' ? balancement : -balancement;
         const levee = Math.max(0, paire);
-        const hanche = 0.38 * paire;
-        const genou = -0.55 * levee;
+        const hanche = amplitudeHanche * paire;
+        const genou = -amplitudeGenou * levee;
         const cheville = -(hanche + genou);
 
         legAngles[nom].hipZ = baseHip + hanche;
@@ -517,6 +527,12 @@
 
       let extraPitch = 0;
       let extraBodyY = 0;
+
+      if (sprintDemandee && marche > 0.1) {
+        // En sprint, inclinaison dynamique du tronc vers l'avant (-0.14 rad) et rebond vertical de galop
+        extraPitch -= 0.14 * marche;
+        extraBodyY += Math.abs(Math.sin(phase * 2)) * 0.028 * marche;
+      }
 
       // Animations expressives réalistes pour les gestes (saluer, cœur, s'étirer, sauter)
       // Aucun angle n'accumule : chaque offset est recalculé de zéro à chaque image.
@@ -689,9 +705,10 @@
       }
 
       // Suivi continu de la position et de l'orientation
-      robotX += (cibleX - robotX) * (1 - Math.exp(-delta * 12));
-      robotZ += (cibleZ - robotZ) * (1 - Math.exp(-delta * 12));
-      robotCap += (cibleCap - robotCap) * (1 - Math.exp(-delta * 12));
+      const vitesseInterpolation = sprintDemandee ? 22 : 12;
+      robotX += (cibleX - robotX) * (1 - Math.exp(-delta * vitesseInterpolation));
+      robotZ += (cibleZ - robotZ) * (1 - Math.exp(-delta * vitesseInterpolation));
+      robotCap += (cibleCap - robotCap) * (1 - Math.exp(-delta * vitesseInterpolation));
       capChien = robotCap;
 
       if (chien) {
@@ -733,8 +750,9 @@
             if (walking || Math.abs(deltaX) > 0.0005 || Math.abs(deltaZ) > 0.0005) {
               const camCibleX = robotX - avantX * CAMERA_RECUL;
               const camCibleZ = robotZ - avantZ * CAMERA_RECUL;
-              camera.position.x += (camCibleX - camera.position.x) * (1 - Math.exp(-delta * 4));
-              camera.position.z += (camCibleZ - camera.position.z) * (1 - Math.exp(-delta * 4));
+              const cameraVitesse = sprintDemandee ? 9 : 4;
+              camera.position.x += (camCibleX - camera.position.x) * (1 - Math.exp(-delta * cameraVitesse));
+              camera.position.z += (camCibleZ - camera.position.z) * (1 - Math.exp(-delta * cameraVitesse));
             }
           }
         }
@@ -831,6 +849,10 @@
 
   $effect(() => {
     marcheDemandee = walking;
+  });
+
+  $effect(() => {
+    sprintDemandee = Boolean(sprinting);
   });
 
   $effect(() => {

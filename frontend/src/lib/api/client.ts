@@ -71,6 +71,12 @@ export interface RobotStatus {
   lidarActive?: boolean;
   /** Source active de pilotage manuel si une commande est en cours. */
   manualSource: 'keyboard' | 'mobile' | null;
+  /** Direction actuelle en mode manuel si une touche est maintenue. */
+  manualDirection?: ManualDirection | null;
+  /** Le sprint (vitesse max) est-il actif en mode manuel ? */
+  manualSprint?: boolean;
+  /** État global du robot ('idle', 'moving', etc.). */
+  state?: string;
   /** Le mode accroupi manuel est-il actif (vitesse réduite, StaticWalk) ? */
   manualCrouchActive?: boolean;
   /** Le mode de navigation autonome avec évitement LiDAR est-il actif ? */

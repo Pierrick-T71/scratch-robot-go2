@@ -78,6 +78,8 @@ class AppState {
   notice = $state<AppNotice | null>(null);
   /** Fenêtre centrale quand une action est refusée faute de place. */
   blockedNotice = $state<BlockedNotice | null>(null);
+  /** Consigne de pilotage manuel en cours (direction et sprint). */
+  manualMotion = $state<{ direction: ManualDirection | null; sprint: boolean } | null>(null);
   /** Programme en attente de confirmation (mode reel). */
   pendingStart = $state<Program | null>(null);
   /** Reglages en vigueur, fournis par le service (bornes incluses). */
@@ -372,9 +374,15 @@ class AppState {
     source: 'keyboard' | 'mobile' = 'keyboard',
     sprint: boolean = false,
   ): Promise<ManualMoveResult> {
+    this.manualMotion = direction !== null ? { direction, sprint } : null;
     try {
-      return await api.moveManual(direction, seq, source, sprint);
+      const result = await api.moveManual(direction, seq, source, sprint);
+      if (result.blocked) {
+        this.manualMotion = null;
+      }
+      return result;
     } catch (error) {
+      this.manualMotion = null;
       return {
         active: false,
         blocked: direction !== null,
@@ -388,6 +396,7 @@ class AppState {
 
   /** Ferme le mode manuel et immobilise le robot. */
   async stopManual(): Promise<void> {
+    this.manualMotion = null;
     try {
       await api.stopManual();
     } catch {

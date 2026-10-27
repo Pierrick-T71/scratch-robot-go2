@@ -70,13 +70,33 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
     runningIndex === null ? null : (blocks[runningIndex]?.kind ?? null),
   );
 
+  const isManualMoving = $derived(
+    Boolean(
+      manualMode &&
+        ((app.manualMotion && app.manualMotion.direction !== null) ||
+          app.status.manualDirection ||
+          app.status.state === 'moving'),
+    ),
+  );
+
+  const isManualSprinting = $derived(
+    Boolean(
+      manualMode &&
+        ((app.manualMotion && app.manualMotion.sprint) ||
+          app.status.manualSprint),
+    ),
+  );
+
   const walking = $derived(
-    app.execution === 'running' &&
+    (app.execution === 'running' &&
       (runningKind === 'forward' ||
         runningKind === 'backward' ||
         runningKind === 'turn_left' ||
-        runningKind === 'turn_right'),
+        runningKind === 'turn_right')) ||
+      isManualMoving,
   );
+
+  const sprinting = $derived(isManualSprinting);
 
   /** Posture active demandée au modèle 3D selon l'étape ou l'état du robot. */
   const effectivePosture = $derived(
@@ -421,6 +441,7 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
       <RobotStage
         status={app.status}
         {walking}
+        {sprinting}
         posture={effectivePosture}
         action={effectiveAction}
         resetRun={app.execution === 'starting'}
@@ -431,7 +452,7 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
     {#if manualMode}
       <div class="app__manual">
         <ManualPanel
-          robotReady={app.status.mode === 'real' && app.status.connected}
+          robotReady={app.status.mode === 'simulation' || (app.status.mode === 'real' && app.status.connected)}
           onMove={(direction, seq, sprint) => app.moveManual(direction, seq, 'keyboard', sprint)}
           onRelease={(seq) => void app.moveManual(null, seq)}
           onJump={() => app.jumpManual()}

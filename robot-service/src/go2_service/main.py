@@ -602,6 +602,8 @@ class ServiceState:
             # est ouvert.
             "manualActive": self.manual.active,
             "manualSource": self.manual.active_source,
+            "manualDirection": self.manual.direction,
+            "manualSprint": self.manual.sprint,
             "manualCrouchActive": self.manual.crouch_mode,
             "autonomousActive": self.autonomous.active,
             "autonomousStopReason": self.autonomous.last_stop_reason,
@@ -1379,7 +1381,11 @@ async def _status_pusher(state: ServiceState) -> None:
         while True:
             # En cours d'exécution ou en simulation, on diffuse l'odométrie
             # plus fréquemment (50 ms) pour une trajectoire 3D fluide.
-            is_active = state.engine.is_running or getattr(state.adapter, "name", None) == "simulation"
+            is_active = (
+                state.engine.is_running
+                or getattr(state.adapter, "name", None) == "simulation"
+                or state.manual.active
+            )
             delai = 0.05 if is_active else (state.limits.safety.frontend_poll_timeout_ms / 1000.0)
             await asyncio.sleep(delai)
             payload = await state.status_payload()

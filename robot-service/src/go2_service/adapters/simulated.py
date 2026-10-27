@@ -518,8 +518,8 @@ class SimulatedAdapter:
         # Dérive latérale : un vrai quadrupède ne suit pas une ligne droite.
         drift = self._random.uniform(-self._drift_ratio, self._drift_ratio)
 
-        dx = vx * dt + vy * dt
-        dy = vx * drift * dt
+        dx = vx * dt
+        dy = (vy + vx * drift) * dt
         # Rotation de la position du robot autour de son centre.
         cos_y = math.cos(self._yaw)
         sin_y = math.sin(self._yaw)

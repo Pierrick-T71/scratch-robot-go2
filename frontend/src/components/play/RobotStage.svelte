@@ -18,6 +18,8 @@
     status: RobotStatus;
     /** Un bloc de déplacement tourne : les pattes doivent marcher. */
     walking?: boolean;
+    /** Le robot sprinte à vitesse maximale. */
+    sprinting?: boolean;
     /** Posture souhaitée ou active pour le modèle 3D. */
     posture?: string | null;
     /** Action ou geste en cours ('heart' | 'jump' | 'salute' | 'stretch' | null). */
@@ -30,6 +32,7 @@
   let {
     status,
     walking = false,
+    sprinting = false,
     posture = null,
     action = null,
     resetRun = false,
@@ -136,6 +139,7 @@
       <LidarScene
         volume={lidar ? volume : null}
         {walking}
+        {sprinting}
         interactive={true}
         posture={rawPosture}
         {action}
