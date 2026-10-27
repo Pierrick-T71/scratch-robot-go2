@@ -89,9 +89,23 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
             runningKind === 'forward' ||
             runningKind === 'backward' ||
             runningKind === 'turn_left' ||
-            runningKind === 'turn_right'
+            runningKind === 'turn_right' ||
+            runningKind === 'salute' ||
+            runningKind === 'heart' ||
+            runningKind === 'stretch' ||
+            runningKind === 'jump'
           ? 'stand'
           : (app.status.posture ?? 'stand'),
+  );
+
+  /** Action expressive active (gestes 3D : saluer, cœur, étirement, saut). */
+  const effectiveAction = $derived(
+    runningKind === 'salute' ||
+      runningKind === 'heart' ||
+      runningKind === 'stretch' ||
+      runningKind === 'jump'
+      ? runningKind
+      : null,
   );
 
   $effect(() => {
@@ -409,6 +423,8 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
         status={app.status}
         {walking}
         posture={effectivePosture}
+        action={effectiveAction}
+        resetRun={app.execution === 'starting'}
         onOpenRobot={openRobot}
       />
     </div>

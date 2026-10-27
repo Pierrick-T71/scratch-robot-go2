@@ -82,8 +82,8 @@ class SimulatedAdapter:
         self._limits = limits
         self._period = limits.timing.command_tick_seconds
         self._tick_multiplier = tick_multiplier
-        # Pas de temps réel minimal pour ne pas boucler à pleine vitesse.
-        self._real_sleep = max(0.001, self._period / 50.0)
+        # Pas de temps réel : égal au pas simulé divisé par le multiplicateur
+        self._real_sleep = max(0.0005, self._period / self._tick_multiplier)
         self._drift_ratio = drift_ratio
         self._random = random.Random(seed)
 
@@ -152,10 +152,13 @@ class SimulatedAdapter:
         """Le robot simulé se met sur ses quatre pattes avant de bouger.
 
         Même contrat que l'adaptateur physique : la posture de départ d'un
-        programme est toujours « debout ».
+        programme est toujours « debout », et la position repart à l'origine.
         """
-        if self._posture == Posture.SIT:
+        self._position = [0.0, 0.0, 0.0]
+        self._yaw = 0.0
+        if self._posture != Posture.STAND:
             self._posture = Posture.STAND
+            await self._do_wait(1.0, -1, StopSignal())
 
     async def manual_prepare(self) -> None:
         """Le simulateur accepte le mode manuel, sans mouvement réel."""
@@ -239,17 +242,19 @@ class SimulatedAdapter:
             case CommandKind.WAIT:
                 return await self._do_wait(command.duration_s, index, should_stop)
             case CommandKind.STAND_UP:
-                return await self._do_posture(Posture.STAND, index)
+                return await self._do_posture(Posture.STAND, index, should_stop)
             case CommandKind.SIT_DOWN:
                 if self._posture != Posture.STAND:
                     self._posture = Posture.STAND
-                return await self._do_posture(Posture.SIT, index)
+                    await self._do_wait(1.0, index, should_stop)
+                return await self._do_posture(Posture.SIT, index, should_stop)
             case CommandKind.LIE_DOWN:
                 if self._posture != Posture.STAND:
                     self._posture = Posture.STAND
-                return await self._do_posture(Posture.LIE_DOWN, index)
+                    await self._do_wait(1.0, index, should_stop)
+                return await self._do_posture(Posture.LIE_DOWN, index, should_stop)
             case CommandKind.BALANCE:
-                return await self._do_posture(Posture.BALANCE, index)
+                return await self._do_posture(Posture.BALANCE, index, should_stop)
             case CommandKind.FINGER_HEART:
                 # Le geste simulé : un bref mouvement, sans déplacement.
                 return await self._do_wait(1.5, index, should_stop)
@@ -328,14 +333,16 @@ class SimulatedAdapter:
         """Durée simulée correspondant à un pas de boucle."""
         return self._period * self._tick_multiplier
 
-    async def _do_posture(self, posture: Posture, index: int) -> CommandOutcome:
-        # Une transition de posture n'a pas de confirmation mesurée par le SDK.
-        # On le dit explicitement plutôt que d'inventer une mesure.
+    async def _do_posture(
+        self, posture: Posture, index: int, should_stop: StopSignal | None = None
+    ) -> CommandOutcome:
         self._posture = posture
+        signal = should_stop if should_stop is not None else StopSignal()
+        outcome = await self._do_wait(1.2, index, signal)
         return CommandOutcome(
             index=index,
-            outcome="exact",
-            detail="Posture appliquée (aucune mesure fournie par le SDK).",
+            outcome=outcome.outcome,
+            detail="Posture appliquée.",
         )
 
     async def _do_move(

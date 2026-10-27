@@ -20,10 +20,21 @@
     walking?: boolean;
     /** Posture souhaitée ou active pour le modèle 3D. */
     posture?: string | null;
+    /** Action ou geste en cours ('heart' | 'jump' | 'salute' | 'stretch' | null). */
+    action?: string | null;
+    /** Réinitialisation au début d'un nouveau lancement. */
+    resetRun?: boolean;
     onOpenRobot: () => void;
   }
 
-  let { status, walking = false, posture = null, onOpenRobot }: Props = $props();
+  let {
+    status,
+    walking = false,
+    posture = null,
+    action = null,
+    resetRun = false,
+    onOpenRobot,
+  }: Props = $props();
 
   /** La caméra du robot est-elle à l'écran ? */
   let camera = $state(false);
@@ -127,6 +138,10 @@
         {walking}
         interactive={lidar}
         posture={rawPosture}
+        {action}
+        position={status.position}
+        yawRad={status.yawRad}
+        {resetRun}
       />
     </div>
 

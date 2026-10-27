@@ -1375,7 +1375,11 @@ async def _status_pusher(state: ServiceState) -> None:
     """Pousse l'état robot à intervalle régulier sur le WebSocket."""
     try:
         while True:
-            await asyncio.sleep(state.limits.safety.frontend_poll_timeout_ms / 1000.0)
+            # En cours d'exécution ou en simulation, on diffuse l'odométrie
+            # plus fréquemment (50 ms) pour une trajectoire 3D fluide.
+            is_active = state.engine.is_running or getattr(state.adapter, "name", None) == "simulation"
+            delai = 0.05 if is_active else (state.limits.safety.frontend_poll_timeout_ms / 1000.0)
+            await asyncio.sleep(delai)
             payload = await state.status_payload()
             await state.hub.broadcast({"type": "status", "status": payload})
     except asyncio.CancelledError:

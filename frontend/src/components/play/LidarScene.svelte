@@ -34,6 +34,14 @@
     interactive?: boolean;
     /** Posture actuelle ou demandée ('stand' | 'sit' | 'lie_down' | 'balance' | null). */
     posture?: string | null;
+    /** Action ou geste en cours ('heart' | 'jump' | 'salute' | 'stretch' | null). */
+    action?: string | null;
+    /** Position réelle ou simulée du robot (x, y, z en mètres). */
+    position?: { x: number; y: number; z: number } | null;
+    /** Cap réel ou simulé du robot (en radians). */
+    yawRad?: number | null;
+    /** Réinitialisation au début d'un nouveau lancement. */
+    resetRun?: boolean;
   }
 
   let {
@@ -41,6 +49,10 @@
     walking = false,
     interactive = true,
     posture = 'stand',
+    action = null,
+    position = null,
+    yawRad = null,
+    resetRun = false,
   }: Props = $props();
 
   let canvas = $state<HTMLCanvasElement | undefined>();
@@ -191,6 +203,21 @@
   let cameraPlacee = false;
   /** Cap du robot dans la scène : 0 = museau vers +X. */
   let capChien = 0;
+
+  let robotX = 0;
+  let robotZ = 0;
+  let robotCap = 0;
+  let prevChienX = 0;
+  let prevChienZ = 0;
+
+  // Cible de position et cap pour un déplacement continu
+  let cibleX = $state(0);
+  let cibleZ = $state(0);
+  let cibleCap = $state(0);
+
+  // Geste en cours ('heart' | 'jump' | 'salute' | 'stretch' | null)
+  let gesteActif = $state<string | null>(null);
+  let gesteTemps = 0;
 
   /**
    * Place la caméra DERRIÈRE le robot, dans l'axe de son museau.
@@ -415,6 +442,12 @@
       if (marche > 0.005) phase += delta * Math.PI * 2 * 1.8;
 
       if (rig) {
+        // Remise à zéro des rotations latérales (roulis/lacet des hanches)
+        for (const nom of LEG_NAMES) {
+          rig[nom].hip.rotation.x = 0;
+          rig[nom].hip.rotation.y = 0;
+        }
+
         const balancement = Math.sin(phase) * marche;
         for (const nom of LEG_NAMES) {
           const patte = rig[nom];
@@ -460,14 +493,134 @@
         hauteurChien -= minFoot;
       }
 
+      // Animations expressives pour les autres actions (saluer, cœur, s'étirer, sauter)
+      if (gesteActif) {
+        gesteTemps += delta;
+        const duree =
+          gesteActif === 'stretch' ? 3.0 : gesteActif === 'jump' ? 1.5 : 2.0;
+        const p = Math.min(1.0, gesteTemps / duree);
+
+        if (gesteActif === 'salute') {
+          const env = Math.sin(Math.PI * p);
+          poseActuelle.pitch += 0.20 * env;
+          if (rig) {
+            rig.FR.hip.rotation.z += 0.85 * env;
+            rig.FR.knee.rotation.z -= 1.10 * env;
+            rig.FR.ankle.rotation.z += Math.sin(gesteTemps * Math.PI * 5) * 0.5 * env;
+            rig.FR.hip.rotation.y += Math.sin(gesteTemps * Math.PI * 5) * 0.25 * env;
+          }
+        } else if (gesteActif === 'heart') {
+          const env = Math.sin(Math.PI * p);
+          poseActuelle.pitch += 0.40 * env;
+          hauteurChien -= 0.12 * env;
+          if (rig) {
+            rig.RL.hip.rotation.z += 0.70 * env;
+            rig.RL.knee.rotation.z -= 1.80 * env;
+            rig.RR.hip.rotation.z += 0.70 * env;
+            rig.RR.knee.rotation.z -= 1.80 * env;
+            rig.FL.hip.rotation.z += 0.90 * env;
+            rig.FL.knee.rotation.z -= 1.30 * env;
+            rig.FL.hip.rotation.x -= 0.35 * env;
+            rig.FR.hip.rotation.z += 0.90 * env;
+            rig.FR.knee.rotation.z -= 1.30 * env;
+            rig.FR.hip.rotation.x += 0.35 * env;
+          }
+        } else if (gesteActif === 'stretch') {
+          const env = Math.sin(Math.PI * p);
+          poseActuelle.pitch -= 0.28 * env;
+          hauteurChien -= 0.10 * env;
+          if (rig) {
+            rig.FL.hip.rotation.z += 0.60 * env;
+            rig.FL.knee.rotation.z -= 1.10 * env;
+            rig.FR.hip.rotation.z += 0.60 * env;
+            rig.FR.knee.rotation.z -= 1.10 * env;
+            rig.RL.hip.rotation.z -= 0.25 * env;
+            rig.RR.hip.rotation.z -= 0.25 * env;
+          }
+        } else if (gesteActif === 'jump') {
+          if (p < 0.3) {
+            const c = Math.sin(Math.PI * (p / 0.3));
+            hauteurChien -= 0.14 * c;
+            if (rig) {
+              for (const nom of LEG_NAMES) {
+                rig[nom].hip.rotation.z += 0.4 * c;
+                rig[nom].knee.rotation.z -= 0.8 * c;
+              }
+            }
+          } else if (p < 0.75) {
+            const f = (p - 0.3) / 0.45;
+            const h = Math.sin(Math.PI * f);
+            hauteurChien += 0.18 * h;
+            if (rig) {
+              for (const nom of LEG_NAMES) {
+                rig[nom].hip.rotation.z += 0.3 * h;
+                rig[nom].knee.rotation.z -= 0.5 * h;
+              }
+            }
+          } else {
+            const l = Math.sin(Math.PI * (p - 0.75) / 0.25);
+            hauteurChien -= 0.08 * l;
+            if (rig) {
+              for (const nom of LEG_NAMES) {
+                rig[nom].hip.rotation.z += 0.25 * l;
+                rig[nom].knee.rotation.z -= 0.5 * l;
+              }
+            }
+          }
+        }
+      }
+
+      // Suivi continu de la position et de l'orientation
+      robotX += (cibleX - robotX) * (1 - Math.exp(-delta * 12));
+      robotZ += (cibleZ - robotZ) * (1 - Math.exp(-delta * 12));
+      robotCap += (cibleCap - robotCap) * (1 - Math.exp(-delta * 12));
+      capChien = robotCap;
+
       if (chien) {
-        // Balancement léger du corps pendant la marche
+        chien.position.x = robotX;
+        chien.position.z = robotZ;
+        chien.rotation.y = robotCap + Math.PI / 2;
         chien.position.y = hauteurChien + 0.008 * Math.abs(Math.sin(phase)) * marche;
       }
 
       if (corps) {
-        // Tangage du corps (buste relevé en posture assise)
         corps.rotation.z = poseActuelle.pitch;
+      }
+
+      // Suivi de la caméra ("la caméra suit")
+      if (camera && controles) {
+        if (!cameraPlacee) {
+          cameraPlacee = true;
+          poserCameraDerriere();
+          prevChienX = robotX;
+          prevChienZ = robotZ;
+        } else {
+          const deltaX = robotX - prevChienX;
+          const deltaZ = robotZ - prevChienZ;
+          prevChienX = robotX;
+          prevChienZ = robotZ;
+
+          camera.position.x += deltaX;
+          camera.position.z += deltaZ;
+          controles.target.x += deltaX;
+          controles.target.z += deltaZ;
+
+          const avantX = Math.cos(capChien);
+          const avantZ = -Math.sin(capChien);
+          const viseX = robotX + avantX * CAMERA_VISEE;
+          const viseZ = robotZ + avantZ * CAMERA_VISEE;
+
+          controles.target.x += (viseX - controles.target.x) * (1 - Math.exp(-delta * 6));
+          controles.target.z += (viseZ - controles.target.z) * (1 - Math.exp(-delta * 6));
+
+          // Quand le robot se déplace ou marche, la caméra se repositionne souplement derrière son cap
+          if (walking || Math.abs(deltaX) > 0.0005 || Math.abs(deltaZ) > 0.0005) {
+            const camCibleX = robotX - avantX * CAMERA_RECUL;
+            const camCibleZ = robotZ - avantZ * CAMERA_RECUL;
+            camera.position.x += (camCibleX - camera.position.x) * (1 - Math.exp(-delta * 4));
+            camera.position.z += (camCibleZ - camera.position.z) * (1 - Math.exp(-delta * 4));
+          }
+        }
       }
 
       controles?.update();
@@ -542,23 +695,12 @@
     cubes.instanceMatrix.needsUpdate = true;
     if (cubes.instanceColor) cubes.instanceColor.needsUpdate = true;
 
-    // Le robot est pose a sa place REELLE dans la carte, et il regarde vers
-    // son cap reel : c'est ce qui rend la scene credibile.
-    if (chien) {
-      const pose = donnees.robot ?? { x: 0, y: 0, cap: 0 };
-      const x = pose.x ?? 0;
-      const z = -(pose.y ?? 0);
-      chien.position.x = x;
-      chien.position.z = z;
-      // Le modele de Sketchfab a son avant vers +Z ; on le tourne d'un quart
-      // de tour pour qu'il regarde vers l'avant du robot, puis on lui applique
-      // le cap mesure.
-      chien.rotation.y = (pose.cap ?? 0) + Math.PI / 2;
-      capChien = pose.cap ?? 0;
+    // Le robot est pose a sa place REELLE dans la carte
+    if (donnees?.robot) {
+      cibleX = donnees.robot.x ?? 0;
+      cibleZ = -(donnees.robot.y ?? 0);
+      cibleCap = donnees.robot.cap ?? 0;
 
-      // La camera n'est posee qu'UNE fois : sinon chaque nouvelle carte
-      // renverrait l'utilisateur a sa position de depart. Elle se place
-      // DERRIERE le robot, dans son axe.
       if (!cameraPlacee) {
         cameraPlacee = true;
         poserCameraDerriere();
@@ -581,6 +723,53 @@
       postureDemandee = 'lie_down';
     } else {
       postureDemandee = 'stand';
+    }
+  });
+
+  $effect(() => {
+    if (position) {
+      cibleX = position.x;
+      cibleZ = -position.y;
+    } else if (volume?.robot) {
+      cibleX = volume.robot.x ?? 0;
+      cibleZ = -(volume.robot.y ?? 0);
+    }
+    if (yawRad !== null && yawRad !== undefined) {
+      cibleCap = yawRad;
+    } else if (volume?.robot?.cap !== undefined) {
+      cibleCap = volume.robot.cap;
+    }
+  });
+
+  $effect(() => {
+    if (action && action !== gesteActif) {
+      gesteActif = action;
+      gesteTemps = 0;
+    } else if (!action) {
+      gesteActif = null;
+      gesteTemps = 0;
+    }
+  });
+
+  $effect(() => {
+    if (resetRun) {
+      robotX = 0;
+      robotZ = 0;
+      robotCap = 0;
+      cibleX = 0;
+      cibleZ = 0;
+      cibleCap = 0;
+      prevChienX = 0;
+      prevChienZ = 0;
+      gesteActif = null;
+      gesteTemps = 0;
+      capChien = 0;
+      if (chien) {
+        chien.position.x = 0;
+        chien.position.z = 0;
+        chien.rotation.y = Math.PI / 2;
+      }
+      poserCameraDerriere();
     }
   });
 

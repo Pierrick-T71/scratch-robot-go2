@@ -276,6 +276,12 @@ class AppState {
   async #start(program: Program): Promise<void> {
     this.#setExecution('starting');
     this.blockedNotice = null;
+    this.status = {
+      ...this.status,
+      position: { x: 0, y: 0, z: 0 },
+      yawRad: 0,
+      posture: 'stand',
+    };
     this.steps = flattenForDisplay(program.statements).map((statement, index) => ({
       index,
       label: describeStatement(statement),
