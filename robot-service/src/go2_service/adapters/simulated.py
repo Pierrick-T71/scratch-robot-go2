@@ -260,8 +260,8 @@ class SimulatedAdapter:
                 self._posture = Posture.SIT
                 return await self._do_wait(2.5, index, should_stop)
             case CommandKind.SALUTE:
-                # Saluer : un bref mouvement, sans deplacement.
-                return await self._do_wait(1.5, index, should_stop)
+                # Saluer : geste de salut de 3 secondes, sans déplacement.
+                return await self._do_wait(3.0, index, should_stop)
             case CommandKind.STRETCH:
                 # S'étirer dure un peu plus longtemps qu'un salut.
                 return await self._do_wait(3.0, index, should_stop)

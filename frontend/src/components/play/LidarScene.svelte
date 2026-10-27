@@ -523,7 +523,7 @@
       if (gesteActif) {
         gesteTemps += delta;
         const duree =
-          gesteActif === 'stretch'
+          gesteActif === 'stretch' || gesteActif === 'salute'
             ? 3.0
             : gesteActif === 'heart'
               ? 2.8
