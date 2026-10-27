@@ -61,6 +61,10 @@ MANUAL_SPEED_MPS = 0.6
 #: une frappe brève au clavier permet un ajustement fin du cap sans survirage.
 MANUAL_TURN_SPEED_RPS = 1.0
 
+#: Vitesse lente pour le déplacement en mode accroupi (crawl / creep).
+CRAWL_SPEED_MPS = 0.20
+CRAWL_TURN_SPEED_RPS = 0.50
+
 
 class ManualNotActive(RuntimeError):
     """Le mode manuel n'a pas été ouvert."""
@@ -74,13 +78,12 @@ class ManualControl:
 
         self._active = False
         self._direction: str | None = None
+        self._active_source: str | None = None
         self._deadline = 0.0
         self._blocked_reason: str | None = None
         self._prepared = False
-        #: Dernier numéro de séquence accepté. Une requête plus ancienne est
-        #: ignorée : un renouvellement lent ne peut pas relancer le robot
-        #: après le relâchement.
-        self._last_seq = 0
+        self._seq_by_source: dict[str, int] = {}
+        self._crouch_mode = False
 
         self._task: asyncio.Task[None] | None = None
         self._prepare_task: asyncio.Task[None] | None = None
@@ -94,17 +97,41 @@ class ManualControl:
         return self._direction
 
     @property
+    def active_source(self) -> str | None:
+        """Source active ('keyboard' ou 'mobile') si une commande est en cours."""
+        if self._direction is not None and time.monotonic() < self._deadline:
+            return self._active_source
+        return None
+
+    @property
+    def _last_seq(self) -> int:
+        return max(self._seq_by_source.values()) if self._seq_by_source else 0
+
+    @_last_seq.setter
+    def _last_seq(self, val: int) -> None:
+        self._seq_by_source["default"] = val
+
+    @property
     def blocked_reason(self) -> str | None:
         return self._blocked_reason
 
     @property
+    def crouch_mode(self) -> bool:
+        """Indique si le mode accroupi (vitesse lente, StaticWalk) est actif."""
+        return self._crouch_mode
+
+    @property
     def speed_mps(self) -> float:
         """Vitesse fixée par le service, jamais par le client."""
+        if self._crouch_mode:
+            return CRAWL_SPEED_MPS
         return MANUAL_SPEED_MPS
 
     @property
     def turn_speed_rps(self) -> float:
         """Vitesse de rotation fixée par le service."""
+        if self._crouch_mode:
+            return CRAWL_TURN_SPEED_RPS
         return MANUAL_TURN_SPEED_RPS
 
     def start(self) -> None:
@@ -112,17 +139,19 @@ class ManualControl:
         if not self._active:
             self._active = True
             self._prepared = False
-            self._last_seq = 0
+            self._seq_by_source.clear()
             self._prepare_once()
             self._task = asyncio.create_task(self._loop(), name="go2-manual")
         # Une nouvelle entrée dans le mode efface un ancien blocage.
         self._direction = None
+        self._active_source = None
         self._blocked_reason = None
         self._deadline = 0.0
+        self._crouch_mode = False
         log.info("Mode manuel ouvert.")
 
     async def set_direction(
-        self, direction: str | None, seq: int = 0
+        self, direction: str | None, seq: int = 0, source: str = "keyboard"
     ) -> tuple[bool, str | None]:
         """Démarre/renouvelle une direction, ou arrête le mouvement.
 
@@ -130,21 +159,35 @@ class ManualControl:
         touche a été relâchée : le robot s'arrête immédiatement et le blocage
         est effacé.
 
-        ``seq`` est le numéro croissant de la requête. Une requête plus
-        ancienne qu'une autre est ignorée : si un renouvellement lent arrive
-        après l'arrêt, il ne relance pas le robot.
+        ``seq`` est le numéro croissant de la requête pour chaque ``source``.
+        ``source`` identifie le contrôleur ('keyboard', 'mobile').
         """
         if not self._active:
             raise ManualNotActive("Le mode manuel n’est pas ouvert.")
 
+        now = time.monotonic()
+        last_seq = self._seq_by_source.get(source, 0)
         if seq <= 0:
-            seq = self._last_seq + 1
-        if seq <= self._last_seq:
+            seq = last_seq + 1
+        if seq <= last_seq:
             return False, None
-        self._last_seq = seq
+        self._seq_by_source[source] = seq
+
+        # Arbitrage : si une autre source contrôle activement le robot
+        if (
+            self._active_source is not None
+            and self._active_source != source
+            and self._direction is not None
+            and now < self._deadline
+        ):
+            if direction is None:
+                # Un relâchement d'une source inactive n'interrompt pas la source active
+                return False, None
+            return True, f"Le robot est déjà piloté par {self._active_source}."
 
         if direction is None:
             self._direction = None
+            self._active_source = None
             self._blocked_reason = None
             self._deadline = 0.0
             self._stop_motion()
@@ -160,10 +203,11 @@ class ManualControl:
             return True, self._blocked_reason
 
         self._direction = direction
-        self._deadline = time.monotonic() + MANUAL_TTL_S
+        self._active_source = source
+        self._deadline = now + MANUAL_TTL_S
         return False, None
 
-    async def jump(self) -> tuple[bool, str | None]:
+    async def jump(self, source: str = "keyboard") -> tuple[bool, str | None]:
         """Déclenche un saut immédiat en mode manuel.
 
         Retourne ``(bloqué, message)``.
@@ -171,11 +215,21 @@ class ManualControl:
         if not self._active:
             raise ManualNotActive("Le mode manuel n’est pas ouvert.")
 
+        now = time.monotonic()
+        if (
+            self._active_source is not None
+            and self._active_source != source
+            and self._direction is not None
+            and now < self._deadline
+        ):
+            return True, f"Le robot est déjà piloté par {self._active_source}."
+
         if self._blocked_reason is not None:
             return True, self._blocked_reason
 
         # Arrête d'abord toute consigne de déplacement continu
         self._direction = None
+        self._active_source = source
         self._deadline = 0.0
         self._stop_motion()
 
@@ -197,16 +251,65 @@ class ManualControl:
             self._block(f"Le robot n’a pas pu sauter ({exc}).")
             return True, str(exc)
 
+    async def set_crouch_mode(self, enabled: bool) -> tuple[bool, str | None]:
+        """Active ou désactive le mode accroupi (déplacement lent, stable et fluide)."""
+        if not self._active:
+            raise ManualNotActive("Le mode manuel n’est pas ouvert.")
+
+        target = bool(enabled)
+        if target == self._crouch_mode:
+            return False, None
+
+        # Arrête d'abord toute consigne de déplacement en cours
+        self._direction = None
+        self._active_source = None
+        self._deadline = 0.0
+        self._stop_motion()
+
+        try:
+            if target:
+                entrer = getattr(self._adapter, "enter_crouch_mode", None)
+                if callable(entrer):
+                    await entrer()
+                self._crouch_mode = True
+                log.info("Mode accroupi manuel activé.")
+            else:
+                sortir = getattr(self._adapter, "exit_crouch_mode", None)
+                if callable(sortir):
+                    await sortir()
+                self._crouch_mode = False
+                log.info("Mode accroupi manuel désactivé.")
+            return False, None
+        except SafetyInterrupt as exc:
+            self._block(str(exc))
+            return True, str(exc)
+        except AdapterError as exc:
+            self._block(str(exc))
+            return True, str(exc)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Changement de mode accroupi impossible.")
+            self._block(f"Le robot n’a pas pu modifier sa posture ({exc}).")
+            return True, str(exc)
+
     async def stop(self) -> None:
         """Ferme la session et immobilise le robot."""
         if not self._active:
             return
 
+        if self._crouch_mode:
+            sortir = getattr(self._adapter, "exit_crouch_mode", None)
+            if callable(sortir):
+                with contextlib.suppress(Exception):
+                    await sortir()
+            self._crouch_mode = False
+
         self._active = False
         self._direction = None
+        self._active_source = None
         self._blocked_reason = None
         self._deadline = 0.0
         self._prepared = False
+        self._seq_by_source.clear()
 
         task = self._task
         self._task = None
@@ -263,6 +366,7 @@ class ManualControl:
                     # disparu. On s'arrête sans attendre une nouvelle requête.
                     log.warning("Pilotage manuel : bail expiré, arrêt du robot.")
                     self._direction = None
+                    self._active_source = None
                     self._deadline = 0.0
                     self._stop_motion()
                     continue
@@ -303,6 +407,7 @@ class ManualControl:
             log.exception("Pilotage manuel : boucle interrompue.")
             self._active = False
             self._direction = None
+            self._active_source = None
             self._stop_motion()
         finally:
             if self._active:
@@ -338,6 +443,7 @@ class ManualControl:
         """Arrête et empêche la reprise tant que la touche n'est pas relâchée."""
         self._blocked_reason = reason
         self._direction = None
+        self._active_source = None
         self._deadline = 0.0
         self._stop_motion()
         log.warning("Pilotage manuel arrêté : %s", reason)

@@ -52,6 +52,8 @@ export interface PlayBlock {
   seconds: number;
   /** Angle choisi, en degrés (blocs de rotation). */
   degrees: number;
+  /** Propriétés additionnelles pour les blocs futurs ou personnalisés. */
+  [key: string]: unknown;
 }
 
 export interface BlockSpec {
@@ -193,6 +195,20 @@ export function specOf(kind: PlayBlockKind): BlockSpec {
   return spec;
 }
 
+export function specOfOrFallback(kind: string): BlockSpec {
+  const spec = SPECS.get(kind as PlayBlockKind);
+  if (spec) return spec;
+  // Fallback pour les blocs futurs ou inconnus
+  return {
+    kind: kind as PlayBlockKind,
+    label: kind,
+    category: 'actions',
+    tone: 'peach',
+    icon: 'star',
+    hint: `Action ${kind}`,
+  };
+}
+
 export function isPlayBlockKind(value: unknown): value is PlayBlockKind {
   return typeof value === 'string' && SPECS.has(value as PlayBlockKind);
 }
@@ -303,6 +319,17 @@ export function toProgram(blocks: readonly PlayBlock[]): Program {
         return { kind: 'gesture', gesture: 'salute', line };
       case 'stretch':
         return { kind: 'gesture', gesture: 'stretch', line };
+      default: {
+        const custom = block as unknown as Record<string, unknown>;
+        return (
+          (custom['statement'] as Statement) ?? {
+            kind: (custom['statementKind'] as any) ?? 'action',
+            action: block.kind,
+            line,
+            ...custom,
+          }
+        );
+      }
     }
   });
 
@@ -311,7 +338,7 @@ export function toProgram(blocks: readonly PlayBlock[]): Program {
 
 /** Description courte, pour les messages et les tests. */
 export function describeBlock(block: PlayBlock): string {
-  const spec = specOf(block.kind);
+  const spec = specOfOrFallback(block.kind);
   if (spec.editable === 'seconds') {
     return `${spec.label} ${clampDuration(block.seconds)} s`;
   }

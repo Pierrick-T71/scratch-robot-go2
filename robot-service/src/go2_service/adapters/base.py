@@ -215,6 +215,36 @@ class RobotAdapter(Protocol):
         """Sort le robot du mode veille (rallume LiDAR, relève le robot)."""
         ...
 
+    @property
+    def lidar_active(self) -> bool:
+        """Indique si le LiDAR physique est actuellement alimenté/actif."""
+        return True
+
+    async def set_lidar_switch(self, on: bool) -> None:
+        """Active ou coupe le LiDAR physique du robot via rt/utlidar/switch."""
+        pass
+
+    async def enter_crouch_mode(self) -> None:
+        """Active le mode accroupi (gait lent et stable type StaticWalk)."""
+        pass
+
+    async def exit_crouch_mode(self) -> None:
+        """Désactive le mode accroupi et retourne progressivement à la posture normale."""
+        pass
+
+    @property
+    def crouch_mode_active(self) -> bool:
+        """Indique si le mode accroupi est actif."""
+        return False
+
+    async def enter_autonomous_mode(self) -> None:
+        """Active le mode autonome (évitement d'obstacles et exploration)."""
+        pass
+
+    async def exit_autonomous_mode(self) -> None:
+        """Désactive le mode autonome et immobilise le robot."""
+        pass
+
 
 @dataclass
 class StopSignal:

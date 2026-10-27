@@ -61,6 +61,59 @@ class TestManualControl:
             await manual.set_direction("diagonal_up")
 
 
+
+    @pytest.mark.asyncio
+    async def test_arbitration_between_sources(self, manual):
+        manual.start()
+        # Keyboard takes control
+        blocked, msg = await manual.set_direction("forward", seq=1, source="keyboard")
+        assert not blocked
+        assert manual.active_source == "keyboard"
+
+        # Mobile attempts to steer while keyboard is active
+        blocked, msg = await manual.set_direction("turn_left", seq=1, source="mobile")
+        assert blocked
+        assert "déjà piloté par keyboard" in msg
+        assert manual.direction == "forward"
+        assert manual.active_source == "keyboard"
+
+        # Keyboard releases
+        blocked, msg = await manual.set_direction(None, seq=2, source="keyboard")
+        assert not blocked
+        assert manual.direction is None
+        assert manual.active_source is None
+
+        # Now mobile takes control
+        blocked, msg = await manual.set_direction("turn_right", seq=2, source="mobile")
+        assert not blocked
+        assert manual.direction == "turn_right"
+        assert manual.active_source == "mobile"
+
+    @pytest.mark.asyncio
+    async def test_crouch_mode_toggle_and_speeds(self, manual):
+        manual.start()
+        assert not manual.crouch_mode
+        assert manual.speed_mps == 0.6
+        assert manual.turn_speed_rps == 1.0
+
+        blocked, msg = await manual.set_crouch_mode(True)
+        assert not blocked
+        assert msg is None
+        assert manual.crouch_mode
+        assert manual.speed_mps == 0.20
+        assert manual.turn_speed_rps == 0.50
+
+        blocked, msg = await manual.set_direction("forward")
+        assert not blocked
+        assert manual.direction == "forward"
+
+        blocked, msg = await manual.set_crouch_mode(False)
+        assert not blocked
+        assert not manual.crouch_mode
+        assert manual.speed_mps == 0.6
+        assert manual.turn_speed_rps == 1.0
+
+
 class TestManualEndpoints:
     def test_jump_endpoint_requires_manual_active(self, client):
         resp = client.post("/api/manual/jump")
@@ -87,7 +140,65 @@ class TestManualEndpoints:
         assert jump_resp.json()["ok"] is True
         assert jump_resp.json()["blocked"] is False
 
-        # Test stop
+# Test stop
         stop_resp = client.post("/api/manual/stop")
         assert stop_resp.status_code == 200
         assert stop_resp.json()["active"] is False
+
+    def test_arbitration_and_status_payload(self, client):
+        client.post("/api/manual/start", json={"adult_authorised": True})
+
+        # Keyboard moves
+        move_resp = client.post(
+            "/api/manual/move",
+            json={"direction": "forward", "seq": 1, "source": "keyboard"},
+        )
+        assert move_resp.json()["blocked"] is False
+
+        # Status shows manualSource keyboard and valid lanIp
+        status_resp = client.get("/api/status")
+        assert status_resp.json()["manualActive"] is True
+        assert status_resp.json()["manualSource"] == "keyboard"
+        assert status_resp.json()["lanIp"] != ""
+
+        # Mobile command is blocked by arbitration
+        mobile_resp = client.post(
+            "/api/manual/move",
+            json={"direction": "backward", "seq": 1, "source": "mobile"},
+        )
+        assert mobile_resp.json()["blocked"] is True
+        assert "déjà piloté" in mobile_resp.json()["message"]
+
+        # Keyboard releases
+        client.post(
+            "/api/manual/move",
+            json={"direction": None, "seq": 2, "source": "keyboard"},
+        )
+
+        # Mobile jump succeeds
+        jump_resp = client.post(
+            "/api/manual/jump",
+            json={"source": "mobile"},
+        )
+        assert jump_resp.status_code == 200
+        assert jump_resp.json()["ok"] is True
+
+    def test_crouch_endpoint(self, client):
+        client.post("/api/manual/start", json={"adult_authorised": True})
+
+        # Enable crouch
+        resp = client.post("/api/manual/crouch", json={"enabled": True})
+        assert resp.status_code == 200
+        assert resp.json()["crouchActive"] is True
+
+        # Check status reflects crouchActive
+        status = client.get("/api/status").json()
+        assert status["manualCrouchActive"] is True
+
+        # Disable crouch
+        resp = client.post("/api/manual/crouch", json={"enabled": False})
+        assert resp.status_code == 200
+        assert resp.json()["crouchActive"] is False
+
+        status = client.get("/api/status").json()
+        assert status["manualCrouchActive"] is False

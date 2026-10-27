@@ -63,6 +63,11 @@ const OFFLINE_STATUS: RobotStatus = {
   obstacleSafetyAvailable: false,
   standby: false,
   standbyTransition: null,
+  manualSource: null,
+  manualCrouchActive: false,
+  autonomousActive: false,
+  autonomousStopReason: null,
+  lanIp: '172.16.13.41',
 };
 
 class AppState {
@@ -91,7 +96,8 @@ class AppState {
       this.execution === 'running' ||
       this.execution === 'stopping' ||
       this.status.standby === true ||
-      Boolean(this.status.standbyTransition)
+      Boolean(this.status.standbyTransition) ||
+      Boolean(this.status.autonomousActive)
     );
   }
 
@@ -357,9 +363,10 @@ class AppState {
   async moveManual(
     direction: ManualDirection | null,
     seq: number,
+    source: 'keyboard' | 'mobile' = 'keyboard',
   ): Promise<ManualMoveResult> {
     try {
-      return await api.moveManual(direction, seq);
+      return await api.moveManual(direction, seq, source);
     } catch (error) {
       return {
         active: false,
@@ -381,10 +388,12 @@ class AppState {
     }
   }
 
-  /** Déclenche un saut en mode manuel (barre espace). */
-  async jumpManual(): Promise<{ ok: boolean; blocked: boolean; message: string | null }> {
+  /** Déclenche un saut en mode manuel (barre espace ou bouton mobile). */
+  async jumpManual(
+    source: 'keyboard' | 'mobile' = 'keyboard',
+  ): Promise<{ ok: boolean; blocked: boolean; message: string | null }> {
     try {
-      return await api.jumpManual();
+      return await api.jumpManual(source);
     } catch (error) {
       return {
         ok: false,
@@ -394,6 +403,49 @@ class AppState {
             ? error.message
             : 'Erreur lors du saut manuel.',
       };
+    }
+  }
+
+  /** Active ou désactive le mode accroupi manuel (déplacement lent, fluide et stable). */
+  async toggleCrouchManual(): Promise<boolean> {
+    const target = !(this.status.manualCrouchActive ?? false);
+    try {
+      const res = await api.crouchManual(target);
+      if (res.blocked && res.message) {
+        this.#setNotice('error', res.message);
+      }
+      return res.crouchActive;
+    } catch (error) {
+      this.#setNotice(
+        'error',
+        error instanceof ServiceError
+          ? error.message
+          : 'Erreur lors du changement de mode accroupi.',
+      );
+      return this.status.manualCrouchActive ?? false;
+    }
+  }
+
+  /** Bascule l'état du mode autonome (marche avec évitement d'obstacles LiDAR). */
+  async toggleAutonomous(): Promise<boolean> {
+    try {
+      const res = await api.toggleAutonomous();
+      await this.refreshStatus();
+      if (res.active) {
+        this.status.obstacleSafetyEnabled = true;
+        this.#setNotice('ok', 'Mode autonome activé : exploration avec sécurité obstacle verrouillée.');
+      } else {
+        this.#setNotice('ok', 'Mode autonome arrêté.');
+      }
+      return res.active;
+    } catch (error) {
+      this.#setNotice(
+        'error',
+        error instanceof ServiceError
+          ? error.message
+          : 'Impossible de basculer le mode autonome.',
+      );
+      return Boolean(this.status.autonomousActive);
     }
   }
 
@@ -484,9 +536,26 @@ class AppState {
 
   #onEvent(event: import('../api/client').ExecutionEvent): void {
     switch (event.type) {
-      case 'status':
+      case 'autonomous_stopped':
+        if (event.reason) {
+          this.#setNotice('error', `Mode autonome désactivé : ${event.reason}`);
+        }
+        if (event.status) {
+          this.status = event.status;
+        }
+        break;
+      case 'status': {
+        const wasAutonomous = Boolean(this.status.autonomousActive);
+        const isAutonomous = Boolean(event.status.autonomousActive);
+        if (wasAutonomous && !isAutonomous && event.status.autonomousStopReason) {
+          this.#setNotice(
+            'error',
+            `Mode autonome désactivé : ${event.status.autonomousStopReason}`,
+          );
+        }
         this.status = event.status;
         break;
+      }
       case 'step_started':
         this.#updateStep(event.index, { state: 'running' });
         break;

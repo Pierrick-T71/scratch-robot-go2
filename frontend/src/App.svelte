@@ -20,6 +20,7 @@
   import ProgramTimeline from './components/play/ProgramTimeline.svelte';
   import BlockedPopup from './components/play/BlockedPopup.svelte';
 import StandbyOverlay from './components/play/StandbyOverlay.svelte';
+  import MobileGamepad from './components/play/MobileGamepad.svelte';
   import ManualPanel from './components/play/ManualPanel.svelte';
   import RobotStage from './components/play/RobotStage.svelte';
   import RobotConnect from './components/RobotConnect.svelte';
@@ -35,7 +36,9 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
   } from './lib/play/blocks';
   import {
     clearSavedBlocks,
+    downloadProgramJson,
     loadBlocks,
+    parseBlocksFromJson,
     PlayStorageError,
     saveBlocks,
   } from './lib/play/storage';
@@ -48,6 +51,11 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
   let showRobot = $state(false);
   let showSafetyOffConfirm = $state(false);
   let manualMode = $state(false);
+  let fileInputEl = $state<HTMLInputElement | undefined>();
+  let isRemoteMode = $state(
+    typeof window !== 'undefined' &&
+      (window.location.search.includes('remote') || window.location.hash.includes('remote')),
+  );
 
   /** Ce que voit l'enfant EST ce qui part : une seule source de vérité. */
   const program = $derived(toProgram(blocks));
@@ -96,8 +104,18 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
     app.connect();
     void app.refreshSettings();
     const poll = setInterval(() => void app.refreshStatus(), 2000);
+
+    const checkRemote = () => {
+      isRemoteMode =
+        window.location.search.includes('remote') || window.location.hash.includes('remote');
+    };
+    window.addEventListener('popstate', checkRemote);
+    window.addEventListener('hashchange', checkRemote);
+
     return () => {
       clearInterval(poll);
+      window.removeEventListener('popstate', checkRemote);
+      window.removeEventListener('hashchange', checkRemote);
       app.disconnect();
     };
   });
@@ -161,6 +179,7 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
    * Le couper est une décision d'adulte : on demande confirmation.
    */
   function toggleSafety(enabled: boolean): void {
+    if (app.status.autonomousActive) return;
     if (enabled) {
       void app.setObstacleSafety(true);
       return;
@@ -193,7 +212,9 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
   function stop(): void {
     if (manualMode) {
       closeManual();
-      return;
+    }
+    if (app.status.autonomousActive) {
+      void app.toggleAutonomous();
     }
     void app.requestStop();
   }
@@ -216,11 +237,19 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
   }
 
   function save(): void {
+    if (blocks.length === 0) {
+      app.notice = {
+        tone: 'warn',
+        message: 'Ajoute au moins un bloc avant de sauvegarder.',
+      };
+      return;
+    }
     try {
       saveBlocks(blocks);
+      downloadProgramJson(blocks);
       app.notice = {
         tone: 'ok',
-        message: 'Programme sauvegardé sur cet appareil.',
+        message: 'Programme sauvegardé et téléchargé en JSON (Téléchargements).',
       };
     } catch (error) {
       app.notice = {
@@ -228,19 +257,76 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
         message:
           error instanceof PlayStorageError
             ? error.message
-            : 'Impossible de sauvegarder sur cet appareil.',
+            : 'Impossible de sauvegarder le programme.',
       };
+    }
+  }
+
+  function triggerImport(): void {
+    if (app.isBusy) {
+      app.notice = {
+        tone: 'warn',
+        message: 'Attends la fin du programme avant d’importer.',
+      };
+      return;
+    }
+    fileInputEl?.click();
+  }
+
+  async function handleFileImport(event: Event): Promise<void> {
+    const target = event.target as HTMLInputElement;
+    const file = target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const imported = parseBlocksFromJson(text);
+      if (imported.length === 0) {
+        app.notice = {
+          tone: 'warn',
+          message: 'Le fichier JSON ne contient aucun bloc valide.',
+        };
+        return;
+      }
+      blocks = imported;
+      saveBlocks(blocks);
+      app.notice = {
+        tone: 'ok',
+        message: `Programme importé avec succès (${imported.length} bloc${imported.length > 1 ? 's' : ''}).`,
+      };
+    } catch (error) {
+      app.notice = {
+        tone: 'error',
+        message:
+          error instanceof PlayStorageError
+            ? error.message
+            : 'Fichier JSON invalide ou illisible.',
+      };
+    } finally {
+      target.value = '';
     }
   }
 </script>
 
+<input
+  type="file"
+  bind:this={fileInputEl}
+  accept=".json,application/json"
+  style="display: none;"
+  onchange={handleFileImport}
+/>
+
+{#if isRemoteMode}
+  <MobileGamepad />
+{:else}
 <div class="app">
   <PlayHeader
     status={app.status}
     busy={app.isBusy || manualMode}
     onManual={() => void openManual()}
-    onStop={stop}
+    onToggleAutonomous={() => void app.toggleAutonomous()}
     onSave={save}
+    onImport={triggerImport}
     onOpenRobot={openRobot}
     onToggleSafety={toggleSafety}
     onToggleStandby={(enabled) => void app.setStandby(enabled)}
@@ -278,6 +364,7 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
         {runningIndex}
         busy={app.isBusy || manualMode}
         blocked={Boolean(app.status.safetyReason)}
+        autonomousActive={Boolean(app.status.autonomousActive)}
         notice={app.notice}
         onAdd={addBlock}
         onRemove={removeBlock}
@@ -285,6 +372,7 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
         onChangeDegrees={changeDegrees}
         onMove={moveBlock}
         onStart={start}
+        onStop={stop}
         onClear={clearProgram}
       />
     </div>
@@ -408,6 +496,8 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
       </div>
     </div>
   </div>
+{/if}
+
 {/if}
 
 {#if app.status.standby || app.status.standbyTransition !== null}

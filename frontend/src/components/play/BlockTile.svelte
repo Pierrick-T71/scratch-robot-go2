@@ -11,7 +11,7 @@
   import {
     DEGREES,
     DURATIONS,
-    specOf,
+    specOfOrFallback,
     type PlayBlockKind,
   } from '../../lib/play/blocks';
 
@@ -44,7 +44,7 @@
     onDegreesChange,
   }: Props = $props();
 
-  const spec = $derived(specOf(kind));
+  const spec = $derived(specOfOrFallback(kind));
   const canEdit = $derived(editable && spec.editable !== undefined);
 
   function handleChange(event: Event): void {

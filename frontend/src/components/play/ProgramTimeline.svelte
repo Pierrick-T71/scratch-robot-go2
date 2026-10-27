@@ -19,6 +19,7 @@
     busy: boolean;
     /** Le robot est verrouillé par la sécurité : on ne peut pas relancer. */
     blocked?: boolean;
+    autonomousActive?: boolean;
     notice: AppNotice | null;
     onAdd: (kind: PlayBlockKind, index?: number) => void;
     onRemove: (id: string) => void;
@@ -26,6 +27,7 @@
     onChangeDegrees: (id: string, degrees: number) => void;
     onMove: (id: string, toIndex: number) => void;
     onStart: () => void;
+    onStop: () => void;
     onClear: () => void;
   }
 
@@ -34,6 +36,7 @@
     runningIndex,
     busy,
     blocked = false,
+    autonomousActive = false,
     notice,
     onAdd,
     onRemove,
@@ -41,6 +44,7 @@
     onChangeDegrees,
     onMove,
     onStart,
+    onStop,
     onClear,
   }: Props = $props();
 
@@ -140,6 +144,20 @@
         onclick={onStart}
       >
         <Icon name="flag" size={22} />
+      </button>
+
+      <button
+        type="button"
+        class="stop-btn"
+        class:stop-btn--active={busy || autonomousActive}
+        aria-label="Arrêter le robot ou le programme"
+        title={busy || autonomousActive
+          ? 'Arrêter immédiatement le robot ou le programme en cours'
+          : 'Aucune action en cours à arrêter'}
+        disabled={!busy && !autonomousActive}
+        onclick={onStop}
+      >
+        <Icon name="stop" size={20} />
       </button>
     </div>
   </header>
@@ -330,7 +348,8 @@
   }
 
   .tool:focus-visible,
-  .flag:focus-visible {
+  .flag:focus-visible,
+  .stop-btn:focus-visible {
     outline: 2px solid #9fc4ec;
     outline-offset: 2px;
   }
@@ -370,6 +389,46 @@
 
   .flag--busy {
     animation: pulse-flag 1.5s ease-in-out infinite;
+  }
+
+  .stop-btn {
+    display: grid;
+    place-items: center;
+    width: 46px;
+    height: 46px;
+    border: 1px solid #c43e4c;
+    border-radius: 14px;
+    background: linear-gradient(180deg, #e2636f, #c43e4c);
+    color: #fff1f2;
+    cursor: pointer;
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 30%),
+      0 8px 20px rgb(196 62 76 / 35%);
+    transition:
+      transform 0.13s ease,
+      filter 0.15s ease,
+      opacity 0.15s ease;
+  }
+
+  .stop-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    filter: brightness(1.08);
+  }
+
+  .stop-btn:active:not(:disabled) {
+    transform: translateY(0);
+  }
+
+  .stop-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+
+  .stop-btn--active {
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 40%),
+      0 0 16px rgb(226 99 111 / 55%);
   }
 
   @keyframes pulse-flag {

@@ -13,8 +13,9 @@
     status: RobotStatus;
     busy: boolean;
     onManual: () => void;
-    onStop: () => void;
+    onToggleAutonomous: () => void;
     onSave: () => void;
+    onImport?: () => void;
     onOpenRobot: () => void;
     /** Active/coupe la sécurité lidar du service. */
     onToggleSafety: (enabled: boolean) => void;
@@ -26,8 +27,9 @@
     status,
     busy,
     onManual,
-    onStop,
+    onToggleAutonomous,
     onSave,
+    onImport,
     onOpenRobot,
     onToggleSafety,
     onToggleStandby,
@@ -52,14 +54,18 @@
           : 'off',
   );
 
+  const autonomousActive = $derived(Boolean(status.autonomousActive));
+
   const safetyAvailable = $derived(Boolean(status.obstacleSafetyAvailable));
   const safetyOn = $derived(status.obstacleSafetyEnabled !== false);
   const safetyState = $derived(
     !safetyAvailable
       ? 'indisponible'
-      : safetyOn
-        ? 'activée'
-        : 'désactivée',
+      : autonomousActive
+        ? 'activée (verrouillée)'
+        : safetyOn
+          ? 'activée'
+          : 'désactivée',
   );
   const standbyOn = $derived(Boolean(status.standby));
   const standbyState = $derived(
@@ -80,13 +86,15 @@
   );
 
   const safetyTitle = $derived(
-    !safetyAvailable
-      ? 'La sécurité lidar est disponible quand le robot réel est connecté'
-      : busy
-        ? 'Attends la fin du programme ou du mode manuel pour changer la sécurité'
-        : safetyOn
-          ? 'Couper la vérification de place du service (l’anti-obstacle du robot reste actif)'
-          : 'Réactiver la vérification de place du service',
+    autonomousActive
+      ? 'La sécurité obstacle est obligatoire et verrouillée pendant le mode autonome'
+      : !safetyAvailable
+        ? 'La sécurité lidar est disponible quand le robot réel est connecté'
+        : busy
+          ? 'Attends la fin du programme ou du mode manuel pour changer la sécurité'
+          : safetyOn
+            ? 'Couper la vérification de place du service (l’anti-obstacle du robot reste actif)'
+            : 'Réactiver la vérification de place du service',
   );
 
   const manualDisabled = $derived(
@@ -102,6 +110,24 @@
         : status.mode === 'real' && !status.connected
           ? 'Branche le robot réel pour piloter à la main'
           : 'Déplacer le robot avec les touches ZQSD',
+  );
+
+  const autonomousDisabled = $derived(
+    Boolean(status.safetyReason) ||
+      (status.mode === 'real' && !status.connected) ||
+      Boolean(status.standby) ||
+      Boolean(status.standbyTransition),
+  );
+  const autonomousTitle = $derived(
+    status.safetyReason
+      ? 'Repose le robot au sol et attends qu’il soit stable'
+      : status.mode === 'real' && !status.connected
+        ? 'Branche le robot réel pour lancer le mode autonome'
+        : status.standby
+          ? 'Réveille d’abord le robot pour lancer le mode autonome'
+          : autonomousActive
+            ? 'Arrêter la navigation autonome'
+            : 'Activer la navigation autonome avec évitement d’obstacles LiDAR',
   );
 </script>
 
@@ -146,28 +172,43 @@
 
     <button
       type="button"
-      class="action action--stop"
-      disabled={!busy}
-      onclick={onStop}
-      title="Arrêter le programme en cours"
+      class="action action--autonomous"
+      class:action--autonomous-active={autonomousActive}
+      disabled={autonomousDisabled}
+      onclick={onToggleAutonomous}
+      title={autonomousTitle}
     >
-      <span class="action__icon action__icon--stop">
-        <Icon name="stop" size={18} />
+      <span class="action__icon action__icon--autonomous">
+        <Icon name="radar" size={20} />
       </span>
-      Arrêter
+      {autonomousActive ? 'Autonome actif' : 'Mode autonome'}
     </button>
 
     <button
       type="button"
       class="action action--save"
       onclick={onSave}
-      title="Enregistrer le programme sur cet appareil"
+      title="Télécharger le programme en fichier JSON (dossier Téléchargements)"
     >
       <span class="action__icon action__icon--save">
-        <Icon name="save" size={19} />
+        <Icon name="download" size={19} />
       </span>
       Sauvegarder
     </button>
+
+    {#if onImport}
+      <button
+        type="button"
+        class="action action--import"
+        onclick={onImport}
+        title="Importer un programme JSON depuis votre ordinateur"
+      >
+        <span class="action__icon action__icon--import">
+          <Icon name="upload" size={19} />
+        </span>
+        Importer
+      </button>
+    {/if}
   </div>
 
   <div class="topright">
@@ -195,12 +236,13 @@
     <button
       type="button"
       class="safety-switch"
-      class:safety-switch--off={safetyAvailable && !safetyOn}
+      class:safety-switch--off={safetyAvailable && !safetyOn && !autonomousActive}
       class:safety-switch--unavailable={!safetyAvailable}
+      class:safety-switch--locked={autonomousActive}
       role="switch"
-      aria-checked={safetyOn}
+      aria-checked={safetyOn || autonomousActive}
       aria-label="Sécurité lidar"
-      disabled={busy || !safetyAvailable}
+      disabled={busy || !safetyAvailable || autonomousActive}
       title={safetyTitle}
       onclick={() => onToggleSafety(!safetyOn)}
     >
@@ -338,15 +380,39 @@
     box-shadow: 0 4px 12px rgb(102 80 196 / 45%);
   }
 
-  .action--stop {
-    background: rgb(198 62 74 / 15%);
-    border-color: rgb(226 100 110 / 40%);
-    color: #f3a7ae;
+  .action--autonomous {
+    background: rgb(20 184 166 / 16%);
+    border-color: rgb(45 212 191 / 40%);
+    color: #99f6e4;
   }
 
-  .action__icon--stop {
-    background: linear-gradient(180deg, #e2636f, #c43e4c);
-    box-shadow: 0 4px 12px rgb(196 62 76 / 42%);
+  .action__icon--autonomous {
+    background: linear-gradient(180deg, #2dd4bf, #0d9488);
+    box-shadow: 0 4px 12px rgb(13 148 136 / 42%);
+  }
+
+  .action--autonomous-active {
+    background: rgb(20 184 166 / 28%);
+    border-color: #2dd4bf;
+    color: #ffffff;
+    box-shadow: 0 0 16px rgb(45 212 191 / 45%);
+    animation: autonomous-glow 1.8s infinite ease-in-out;
+  }
+
+  .action--autonomous-active .action__icon--autonomous {
+    background: linear-gradient(180deg, #5eead4, #14b8a6);
+    box-shadow: 0 0 14px rgb(45 212 191 / 70%);
+  }
+
+  @keyframes autonomous-glow {
+    0%, 100% {
+      box-shadow: 0 0 12px rgb(45 212 191 / 35%);
+      border-color: rgb(45 212 191 / 60%);
+    }
+    50% {
+      box-shadow: 0 0 22px rgb(45 212 191 / 65%);
+      border-color: #5eead4;
+    }
   }
 
   .action--save {
@@ -358,6 +424,23 @@
   .action__icon--save {
     background: linear-gradient(180deg, #5b86d6, #3f68b8);
     box-shadow: 0 4px 12px rgb(63 104 184 / 42%);
+  }
+
+  .action--import {
+    background: rgb(245 158 11 / 16%);
+    border-color: rgb(251 191 36 / 40%);
+    color: #fde68a;
+  }
+
+  .action--import:hover:not(:disabled) {
+    background: rgb(245 158 11 / 26%);
+    border-color: #fbbf24;
+    color: #ffffff;
+  }
+
+  .action__icon--import {
+    background: linear-gradient(180deg, #fbbf24, #d97706);
+    box-shadow: 0 4px 12px rgb(217 119 6 / 42%);
   }
 
   .topright {
@@ -435,6 +518,24 @@
 
   .safety-switch--off:hover:not(:disabled) {
     background: rgb(198 62 74 / 24%);
+  }
+
+  .safety-switch:disabled {
+    cursor: not-allowed;
+  }
+
+  .safety-switch--locked {
+    border-color: #4b5563;
+    background: #1f2937;
+    color: #9ca3af;
+    opacity: 0.65;
+    cursor: not-allowed;
+    filter: grayscale(0.4);
+  }
+
+  .safety-switch--locked:hover {
+    background: #1f2937;
+    border-color: #4b5563;
   }
 
   .safety-switch--unavailable {

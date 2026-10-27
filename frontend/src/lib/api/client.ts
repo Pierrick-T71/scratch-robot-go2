@@ -67,6 +67,18 @@ export interface RobotStatus {
   standby: boolean;
   /** Transition en cours ('entering' | 'waking' | null). */
   standbyTransition: 'entering' | 'waking' | null;
+  /** Le LiDAR physique est-il actuellement alimenté/actif ? */
+  lidarActive?: boolean;
+  /** Source active de pilotage manuel si une commande est en cours. */
+  manualSource: 'keyboard' | 'mobile' | null;
+  /** Le mode accroupi manuel est-il actif (vitesse réduite, StaticWalk) ? */
+  manualCrouchActive?: boolean;
+  /** Le mode de navigation autonome avec évitement LiDAR est-il actif ? */
+  autonomousActive?: boolean;
+  /** Raison du dernier arrêt du mode autonome (ex: obstacle rencontré). */
+  autonomousStopReason?: string | null;
+  /** Adresse IP du service sur le réseau local pour le QR code. */
+  lanIp: string;
 }
 
 /** Postures que le service sait demander au robot. */
@@ -174,6 +186,7 @@ export type ExecutionEvent =
    */
   | { type: 'variables'; values: VariableValue[]; reset?: boolean }
   | { type: 'execution_finished'; reason: 'completed' | 'stopped' | 'error' | 'safety' }
+  | { type: 'autonomous_stopped'; reason?: string | null; status?: RobotStatus }
   | { type: 'error'; message: string };
 
 /** Rapport du test de branchement d'un robot réel. */
@@ -264,19 +277,34 @@ export const api = {
   moveManual: (
     direction: ManualDirection | null,
     seq: number,
+    source: 'keyboard' | 'mobile' = 'keyboard',
   ): Promise<ManualMoveResult> =>
     request('/api/manual/move', {
       method: 'POST',
-      body: JSON.stringify({ direction, seq }),
+      body: JSON.stringify({ direction, seq, source }),
     }),
 
   /** Ferme le mode manuel et arrête le robot. */
   stopManual: (): Promise<{ active: boolean }> =>
     request('/api/manual/stop', { method: 'POST' }),
 
-  /** Déclenche un saut en mode manuel (barre espace). */
-  jumpManual: (): Promise<{ ok: boolean; blocked: boolean; message: string | null }> =>
-    request('/api/manual/jump', { method: 'POST' }),
+  /** Déclenche un saut en mode manuel (barre espace ou manette mobile). */
+  jumpManual: (
+    source: 'keyboard' | 'mobile' = 'keyboard',
+  ): Promise<{ ok: boolean; blocked: boolean; message: string | null }> =>
+    request('/api/manual/jump', {
+      method: 'POST',
+      body: JSON.stringify({ source }),
+    }),
+
+  /** Active ou désactive le mode accroupi manuel (déplacement lent, fluide et stable). */
+  crouchManual: (
+    enabled: boolean,
+  ): Promise<{ crouchActive: boolean; blocked: boolean; message: string | null }> =>
+    request('/api/manual/crouch', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    }),
 
   /**
    * Carte du lidar, vue du dessus, en mètres autour du robot.
@@ -387,6 +415,27 @@ heartbeat: (runId: string): Promise<{ ok: boolean }> =>
         body: JSON.stringify({ enabled }),
       },
     ),
+
+  /** Démarre la navigation autonome. */
+  startAutonomous: (): Promise<{ active: boolean }> =>
+    request<{ active: boolean }>('/api/autonomous/start', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+
+  /** Arrête la navigation autonome. */
+  stopAutonomous: (): Promise<{ active: boolean }> =>
+    request<{ active: boolean }>('/api/autonomous/stop', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+
+  /** Bascule l'état du mode autonome. */
+  toggleAutonomous: (): Promise<{ active: boolean }> =>
+    request<{ active: boolean }>('/api/autonomous/toggle', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
 };
 
 /** Connexion aux evenements du service, avec reconnexion espacee. */

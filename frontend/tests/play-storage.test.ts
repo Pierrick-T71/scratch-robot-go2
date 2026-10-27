@@ -9,8 +9,11 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   MAX_BLOCKS,
   PlayStorageError,
+  downloadProgramJson,
+  exportProgramToJson,
   loadBlocks,
   parseBlock,
+  parseBlocksFromJson,
   saveBlocks,
   storageAvailable,
 } from '../src/lib/play/storage';
@@ -148,5 +151,157 @@ describe('stockage indisponible', () => {
     expect(storageAvailable()).toBe(true);
     vi.stubGlobal('localStorage', undefined);
     expect(storageAvailable()).toBe(false);
+  });
+});
+
+describe('sauvegarde et import JSON (téléchargement et réimportation hôte)', () => {
+  it('exporte un programme au format JSON propre', () => {
+    const blocks = [
+      { ...createBlock('forward'), seconds: 3 },
+      { ...createBlock('turn_left'), degrees: 45 },
+      createBlock('sit'),
+    ];
+    const jsonStr = exportProgramToJson(blocks);
+    const parsed = JSON.parse(jsonStr);
+
+    expect(parsed.version).toBe(1);
+    expect(parsed.generator).toBe('go2-play');
+    expect(typeof parsed.savedAt).toBe('string');
+    expect(parsed.blocks).toHaveLength(3);
+    expect(parsed.blocks[0]).toMatchObject({ kind: 'forward', seconds: 3 });
+    expect(parsed.blocks[1]).toMatchObject({ kind: 'turn_left', degrees: 45 });
+    expect(parsed.blocks[2]).toMatchObject({ kind: 'sit' });
+  });
+
+  it('réimporte un programme structuré avec ses réglages', () => {
+    const jsonStr = JSON.stringify({
+      version: 1,
+      generator: 'go2-play',
+      blocks: [
+        { kind: 'backward', seconds: 5 },
+        { kind: 'turn_right', degrees: 180 },
+        { kind: 'lie_down' },
+      ],
+    });
+
+    const imported = parseBlocksFromJson(jsonStr);
+    expect(imported).toHaveLength(3);
+    expect(imported[0]?.kind).toBe('backward');
+    expect(imported[0]?.seconds).toBe(5);
+    expect(imported[1]?.kind).toBe('turn_right');
+    expect(imported[1]?.degrees).toBe(180);
+    expect(imported[2]?.kind).toBe('lie_down');
+  });
+
+  it('accepte et préserve les blocs futurs et leurs paramètres additionnels', () => {
+    const jsonStr = JSON.stringify({
+      version: 2,
+      blocks: [
+        { kind: 'forward', seconds: 2 },
+        {
+          kind: 'dance_twist',
+          tempo: 120,
+          repeat: 4,
+          style: 'funky',
+        },
+      ],
+    });
+
+    const imported = parseBlocksFromJson(jsonStr);
+    expect(imported).toHaveLength(2);
+    expect(imported[0]?.kind).toBe('forward');
+    expect(imported[1]?.kind).toBe('dance_twist');
+    expect((imported[1] as any).tempo).toBe(120);
+    expect((imported[1] as any).repeat).toBe(4);
+    expect((imported[1] as any).style).toBe('funky');
+
+    // Vérifie aussi que l'export préserve ces futurs champs
+    const reExported = JSON.parse(exportProgramToJson(imported));
+    expect(reExported.blocks[1]).toMatchObject({
+      kind: 'dance_twist',
+      tempo: 120,
+      repeat: 4,
+      style: 'funky',
+    });
+  });
+
+  it('accepte un tableau JSON direct', () => {
+    const jsonStr = JSON.stringify([
+      { kind: 'forward', seconds: 1 },
+      { kind: 'sit' },
+    ]);
+    const imported = parseBlocksFromJson(jsonStr);
+    expect(imported.map((b) => b.kind)).toEqual(['forward', 'sit']);
+  });
+
+  it('traduit les formats statements backend lors de l’import', () => {
+    const jsonStr = JSON.stringify({
+      statements: [
+        { kind: 'move', direction: 'forward', seconds: 3 },
+        { kind: 'turn', direction: 'left', degrees: 90 },
+        { kind: 'posture', posture: 'sit' },
+        { kind: 'gesture', gesture: 'heart' },
+      ],
+    });
+    const imported = parseBlocksFromJson(jsonStr);
+    expect(imported.map((b) => b.kind)).toEqual([
+      'forward',
+      'turn_left',
+      'sit',
+      'heart',
+    ]);
+    expect(imported[0]?.seconds).toBe(3);
+    expect(imported[1]?.degrees).toBe(90);
+  });
+
+  it('lève une PlayStorageError si le JSON est corrompu', () => {
+    expect(() => parseBlocksFromJson('ceci n est pas du json')).toThrow(
+      PlayStorageError,
+    );
+    expect(() => parseBlocksFromJson('{"inconnu": 123}')).toThrow(
+      PlayStorageError,
+    );
+  });
+
+  it('déclenche le téléchargement du fichier JSON', () => {
+    const blocks = [{ ...createBlock('forward'), seconds: 2 }];
+    const appended: any[] = [];
+    const removed: any[] = [];
+    let clickCalled = false;
+
+    const fakeAnchor: any = {
+      click: () => {
+        clickCalled = true;
+      },
+      download: '',
+      href: '',
+    };
+
+    const fakeDoc: any = {
+      body: {
+        appendChild: (node: any) => {
+          appended.push(node);
+          return node;
+        },
+        removeChild: (node: any) => {
+          removed.push(node);
+          return node;
+        },
+      },
+      createElement: () => fakeAnchor,
+    };
+
+    vi.stubGlobal('document', fakeDoc);
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn(() => 'blob:fake-url'),
+      revokeObjectURL: vi.fn(),
+    });
+
+    downloadProgramJson(blocks, 'mon-programme.json');
+
+    expect(clickCalled).toBe(true);
+    expect(appended).toHaveLength(1);
+    expect(appended[0].download).toBe('mon-programme.json');
+    expect(removed).toHaveLength(1);
   });
 });

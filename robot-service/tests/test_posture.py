@@ -111,8 +111,8 @@ def build_adapter(
 
 
 def commandes(connexion: FakeConnexion) -> list[str]:
-    noms = {0x2101: "Move", 0x2102: "StopMove", 0x2103: "StandUp", 0x2104: "Sit"}
-    return [noms[api] for api, _ in connexion.datachannel.pub_sub.published]
+    noms = {0x2101: "Move", 0x2102: "StopMove", 0x2103: "StandUp", 0x2104: "Sit", 0x2105: "Damp"}
+    return [noms.get(api, f"0x{api:x}") for api, _ in connexion.datachannel.pub_sub.published]
 
 
 def consignes_de_vitesse(connexion: FakeConnexion) -> list[str]:
@@ -125,8 +125,8 @@ def consignes_de_vitesse(connexion: FakeConnexion) -> list[str]:
 
 
 def commandes_demandees(connexion: FakeConnexion) -> list[str]:
-    noms = {0x2101: "Move", 0x2102: "StopMove", 0x2103: "StandUp", 0x2104: "Sit"}
-    return [noms[api] for api, _ in connexion.datachannel.pub_sub.requested]
+    noms = {0x2101: "Move", 0x2102: "StopMove", 0x2103: "StandUp", 0x2104: "Sit", 0x2105: "Damp"}
+    return [noms.get(api, f"0x{api:x}") for api, _ in connexion.datachannel.pub_sub.requested]
 
 
 class TestArret:
@@ -443,3 +443,124 @@ class TestAcquittementPerdu:
         resultat = await adaptateur._do_posture("Sit", Posture.SIT, 0)  # noqa: SLF001
 
         assert resultat.outcome == "timeout"
+
+
+class TestTransitionsAssisCoucher:
+    """Transitions entre s'asseoir et se coucher via la position debout."""
+
+    @pytest.mark.asyncio
+    async def test_assis_puis_coucher_se_releve_d_abord(self):
+        from go2_service.adapters.base import StopSignal
+        from go2_service.validation import CommandKind, RobotCommand
+
+        adaptateur, connexion = build_adapter()
+        adaptateur.enable_physical_commands()
+        adaptateur._code_etat = 1007  # robot assis
+        adaptateur._posture = Posture.SIT
+
+        commande = RobotCommand(kind=CommandKind.LIE_DOWN)
+        signal = StopSignal()
+
+        orig_publish = connexion.datachannel.pub_sub.publish_request_new
+
+        async def simuler_transition(topic, demande):
+            res = await orig_publish(topic, demande)
+            if adaptateur._code_etat == 1007:
+                adaptateur._code_etat = 1013  # debout
+                adaptateur._posture = Posture.STAND
+            elif adaptateur._code_etat in (1013, 100):
+                adaptateur._code_etat = 1001  # couché
+                adaptateur._posture = Posture.LIE_DOWN
+            return res
+
+        connexion.datachannel.pub_sub.publish_request_new = simuler_transition
+
+        await adaptateur.execute_command(commande, 0, signal)
+
+        assert commandes_demandees(connexion) == ["StandUp", "Damp"]
+
+    @pytest.mark.asyncio
+    async def test_coucher_puis_assis_se_releve_d_abord(self):
+        from go2_service.adapters.base import StopSignal
+        from go2_service.validation import CommandKind, RobotCommand
+
+        adaptateur, connexion = build_adapter()
+        adaptateur.enable_physical_commands()
+        adaptateur._code_etat = 1001  # robot couché
+        adaptateur._posture = Posture.LIE_DOWN
+
+        commande = RobotCommand(kind=CommandKind.SIT_DOWN)
+        signal = StopSignal()
+
+        orig_publish = connexion.datachannel.pub_sub.publish_request_new
+
+        async def simuler_transition(topic, demande):
+            res = await orig_publish(topic, demande)
+            if adaptateur._code_etat == 1001:
+                adaptateur._code_etat = 1013  # debout
+                adaptateur._posture = Posture.STAND
+            elif adaptateur._code_etat in (1013, 100):
+                adaptateur._code_etat = 1007  # assis
+                adaptateur._posture = Posture.SIT
+            return res
+
+        connexion.datachannel.pub_sub.publish_request_new = simuler_transition
+
+        await adaptateur.execute_command(commande, 0, signal)
+
+        assert commandes_demandees(connexion) == ["StandUp", "Sit"]
+
+    @pytest.mark.asyncio
+    async def test_debout_puis_coucher_ne_se_releve_pas_en_trop(self):
+        from go2_service.adapters.base import StopSignal
+        from go2_service.validation import CommandKind, RobotCommand
+
+        adaptateur, connexion = build_adapter()
+        adaptateur.enable_physical_commands()
+        adaptateur._code_etat = 1013  # robot debout
+        adaptateur._posture = Posture.STAND
+
+        commande = RobotCommand(kind=CommandKind.LIE_DOWN)
+        signal = StopSignal()
+
+        orig_publish = connexion.datachannel.pub_sub.publish_request_new
+
+        async def simuler_coucher(topic, demande):
+            res = await orig_publish(topic, demande)
+            adaptateur._code_etat = 1001
+            adaptateur._posture = Posture.LIE_DOWN
+            return res
+
+        connexion.datachannel.pub_sub.publish_request_new = simuler_coucher
+
+        await adaptateur.execute_command(commande, 0, signal)
+
+        assert commandes_demandees(connexion) == ["Damp"]
+
+    @pytest.mark.asyncio
+    async def test_debout_puis_assis_ne_se_releve_pas_en_trop(self):
+        from go2_service.adapters.base import StopSignal
+        from go2_service.validation import CommandKind, RobotCommand
+
+        adaptateur, connexion = build_adapter()
+        adaptateur.enable_physical_commands()
+        adaptateur._code_etat = 1013  # robot debout
+        adaptateur._posture = Posture.STAND
+
+        commande = RobotCommand(kind=CommandKind.SIT_DOWN)
+        signal = StopSignal()
+
+        orig_publish = connexion.datachannel.pub_sub.publish_request_new
+
+        async def simuler_assis(topic, demande):
+            res = await orig_publish(topic, demande)
+            adaptateur._code_etat = 1007
+            adaptateur._posture = Posture.SIT
+            return res
+
+        connexion.datachannel.pub_sub.publish_request_new = simuler_assis
+
+        await adaptateur.execute_command(commande, 0, signal)
+
+        assert commandes_demandees(connexion) == ["Sit"]
+

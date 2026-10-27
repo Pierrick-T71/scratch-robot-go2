@@ -51,6 +51,7 @@ from .execution import (
     ConcurrentExecutionError,
     ExecutionEngine,
 )
+from .autonomous import AutonomousControl
 from .manual import ManualControl, ManualNotActive
 from .safety import SafetyWatchdog
 from .program import (
@@ -139,6 +140,28 @@ ROBOT_AES_KEY_ENV = "GO2_ROBOT_AES_KEY"
 ROBOT_AES_KEY_FILE = os.environ.get(
     "GO2_ROBOT_ENV_FILE", "/root/go2/robot.env"
 )
+
+
+def _detect_lan_ip() -> str:
+    """Détecte l'adresse IP locale joignable sur le réseau local."""
+    env_ip = os.environ.get("SERVICE_LAN_IP", "").strip()
+    if env_ip:
+        return env_ip
+    try:
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("172.16.13.1", 80))
+            return s.getsockname()[0]
+    except Exception:
+        pass
+    try:
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        pass
+    return "172.16.13.41" 
 
 
 def _robot_aes_key() -> str | None:
@@ -253,6 +276,23 @@ class ManualMoveRequest(BaseModel):
         "backward+turn_right",
     ] | None = None
     seq: int = Field(default=0, ge=0)
+    source: Literal["keyboard", "mobile", "default"] = "keyboard"
+
+
+class ManualJumpRequest(BaseModel):
+    """Déclenchement d'un saut manuel (clavier ou manette mobile)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: Literal["keyboard", "mobile", "default"] = "keyboard"
+
+
+class ManualCrouchRequest(BaseModel):
+    """Activation ou désactivation du mode accroupi (déplacement lent et contrôlé)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
 
 
 class SettingsRequest(BaseModel):
@@ -322,6 +362,7 @@ class ServiceState:
         self.engine = ExecutionEngine(self.adapter, limits=self.limits)
         self.watchdog = SafetyWatchdog(self.engine, self.adapter, self.limits)
         self.manual = ManualControl(self.adapter)
+        self.autonomous = self._create_autonomous()
         #: Incrémenté à chaque changement de limites, pour que le frontend
         #: sache que son rapport de vérification est caduc.
         self.settings_revision = 0
@@ -355,6 +396,19 @@ class ServiceState:
         if hasattr(self.adapter, "obstacle_safety_enabled"):
             self.adapter.obstacle_safety_enabled = self.obstacle_safety_enabled
 
+    def _create_autonomous(self) -> AutonomousControl:
+        ctrl = AutonomousControl(self.adapter)
+        ctrl.set_on_stop(self._on_autonomous_stop)
+        return ctrl
+
+    async def _on_autonomous_stop(self, reason: str | None) -> None:
+        payload = await self.status_payload()
+        await self.hub.broadcast({
+            "type": "autonomous_stopped",
+            "reason": reason,
+            "status": payload,
+        })
+
     def set_obstacle_safety(self, enabled: bool) -> None:
         """Active ou coupe la sécurité lidar du service (pas celle du robot)."""
         self.obstacle_safety_enabled = enabled
@@ -377,6 +431,7 @@ class ServiceState:
                 status_code=409,
                 detail="Un programme est déjà en cours : arrêtez-le d’abord.",
             )
+        await self.autonomous.stop()
         await self.manual.stop()
         await self.watchdog.emergency_stop()
 
@@ -390,6 +445,7 @@ class ServiceState:
         DÉMARRÉ explicitement : sans cela, après un branchement, plus aucun
         bail n'était surveillé.
         """
+        await self.autonomous.stop()
         await self.manual.stop()
         await self.watchdog.stop()
         self.adapter = adapter
@@ -401,6 +457,7 @@ class ServiceState:
         self.engine = ExecutionEngine(self.adapter, limits=self.limits)
         self.watchdog = SafetyWatchdog(self.engine, self.adapter, self.limits)
         self.manual = ManualControl(self.adapter)
+        self.autonomous = self._create_autonomous()
         await self.watchdog.start()
         self._mode = "real"
         self.last_robot_ip = getattr(adapter, "robot_ip", None)
@@ -413,6 +470,7 @@ class ServiceState:
         consigne de vitesse encore publiée quand le canal se ferme laisserait
         le robot partir tout seul.
         """
+        await self.autonomous.stop()
         await self.manual.stop()
         await self.watchdog.emergency_stop()
         await self.watchdog.stop()
@@ -437,6 +495,7 @@ class ServiceState:
         self.engine = ExecutionEngine(self.adapter, limits=self.limits)
         self.watchdog = SafetyWatchdog(self.engine, self.adapter, self.limits)
         self.manual = ManualControl(self.adapter)
+        self.autonomous = self._create_autonomous()
         await self.watchdog.start()
         self._mode = "simulation"
 
@@ -468,6 +527,8 @@ class ServiceState:
             try:
                 if self.engine.is_running:
                     await self.engine.stop()
+                if self.autonomous.active:
+                    await self.autonomous.stop()
                 if self.manual.active:
                     await self.manual.stop()
 
@@ -539,6 +600,11 @@ class ServiceState:
             # pour que l'interface puisse bloquer les réglages pendant qu'il
             # est ouvert.
             "manualActive": self.manual.active,
+            "manualSource": self.manual.active_source,
+            "manualCrouchActive": self.manual.crouch_mode,
+            "autonomousActive": self.autonomous.active,
+            "autonomousStopReason": self.autonomous.last_stop_reason,
+            "lanIp": _detect_lan_ip(),
             "blockedReason": status.blocked_reason,
             "safetyReason": status.safety_reason,
             "recoveryReason": status.recovery_reason,
@@ -562,6 +628,7 @@ class ServiceState:
             ),
             "standby": self.standby,
             "standbyTransition": self.standby_transition,
+            "lidarActive": getattr(self.adapter, "lidar_active", True),
         }
 
 
@@ -729,6 +796,11 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
                 status_code=409,
                 detail="Attends la fin du programme avant de changer la sécurité.",
             )
+        if state.autonomous.active:
+            raise HTTPException(
+                status_code=409,
+                detail="La sécurité obstacle est obligatoire et verrouillée pendant le mode autonome.",
+            )
         if not payload.enabled and not payload.adult_authorised:
             raise HTTPException(
                 status_code=403,
@@ -766,6 +838,8 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
                 status_code=409,
                 detail="Un programme est déjà en cours.",
             )
+        if state.autonomous.active:
+            await state.autonomous.stop()
         if state.mode == "real":
             if not payload.adult_authorised:
                 raise HTTPException(
@@ -825,7 +899,7 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
 
         try:
             blocked, message = await state.manual.set_direction(
-                payload.direction, payload.seq
+                payload.direction, payload.seq, payload.source
             )
         except ManualNotActive as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -839,8 +913,9 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
         }
 
     @app.post("/api/manual/jump")
-    async def manual_jump() -> dict[str, Any]:
-        """Déclenche un saut en mode manuel (barre espace)."""
+    async def manual_jump(payload: ManualJumpRequest | None = None) -> dict[str, Any]:
+        """Déclenche un saut en mode manuel (barre espace ou bouton mobile)."""
+        source = payload.source if payload is not None else "keyboard" 
         if state.standby or state.standby_transition:
             raise HTTPException(
                 status_code=409,
@@ -867,12 +942,49 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
                 )
 
         try:
-            blocked, message = await state.manual.jump()
+            blocked, message = await state.manual.jump(source=source)
         except ManualNotActive as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
         return {
             "ok": not blocked,
+            "blocked": blocked,
+            "message": message,
+        }
+
+    @app.post("/api/manual/crouch")
+    async def manual_crouch(payload: ManualCrouchRequest) -> dict[str, Any]:
+        """Active ou désactive le mode accroupi (déplacement lent, stable et contrôlé)."""
+        if not state.manual.active:
+            raise HTTPException(
+                status_code=409,
+                detail="Le mode manuel n’est pas ouvert.",
+            )
+        if state.engine.is_running:
+            await state.manual.stop()
+            raise HTTPException(
+                status_code=409,
+                detail="Un programme a pris la main : mode manuel arrêté.",
+            )
+        if state.mode == "real":
+            statut = await state.adapter.get_status()
+            if not statut.connected:
+                await state.manual.stop()
+                raise HTTPException(
+                    status_code=409,
+                    detail="Le robot n’est pas connecté : pilotage manuel arrêté.",
+                )
+
+        try:
+            blocked, message = await state.manual.set_crouch_mode(payload.enabled)
+        except ManualNotActive as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        await state.hub.broadcast(
+            {"type": "status", "status": await state.status_payload()}
+        )
+        return {
+            "crouchActive": state.manual.crouch_mode,
             "blocked": blocked,
             "message": message,
         }
@@ -902,6 +1014,8 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
                 status_code=409,
                 detail="Quitte d’abord le mode manuel avant de lancer un programme.",
             )
+        if state.autonomous.active:
+            await state.autonomous.stop()
 
         # 1. Validation de la FORME. Une donnée forgée est refusée ici.
         try:
@@ -1096,13 +1210,92 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
 
     @app.post("/api/execution/stop")
     async def stop() -> dict[str, Any]:
+        if state.autonomous.active:
+            await state.autonomous.stop()
         if state.manual.active:
             await state.manual.stop()
         if not state.engine.request_stop():
             # Aucun programme en cours : on demande tout de même l'arrêt de
             # l'adaptateur, pour ne jamais laisser une consigne résiduelle.
             await adapter.request_stop()
+        await state.hub.broadcast(
+            {"type": "status", "status": await state.status_payload()}
+        )
         return {"stopping": True}
+
+    # -- Navigation autonome -----------------------------------------------
+
+    @app.post("/api/autonomous/start")
+    async def autonomous_start() -> dict[str, Any]:
+        """Démarre le mode de navigation autonome."""
+        if state.standby or state.standby_transition:
+            raise HTTPException(
+                status_code=409,
+                detail="Le robot est en veille. Réveille-le d’abord.",
+            )
+        if state.engine.is_running:
+            raise HTTPException(
+                status_code=409,
+                detail="Un programme est déjà en cours : arrête-le d’abord.",
+            )
+        if state.manual.active:
+            await state.manual.stop()
+
+        # Le mode autonome exige impérativement la sécurité obstacles activée
+        if not state.obstacle_safety_enabled:
+            state.set_obstacle_safety(True)
+            log.info("Sécurité obstacle activée automatiquement pour le mode autonome.")
+
+        ok, msg = await state.autonomous.start()
+        if not ok:
+            raise HTTPException(status_code=409, detail=msg or "Impossible de démarrer le mode autonome.")
+
+        await state.hub.broadcast(
+            {"type": "status", "status": await state.status_payload()}
+        )
+        return {"active": state.autonomous.active}
+
+    @app.post("/api/autonomous/stop")
+    async def autonomous_stop() -> dict[str, Any]:
+        """Arrête le mode de navigation autonome."""
+        await state.autonomous.stop(reason="Arrêt demandé par l’utilisateur.")
+        await state.hub.broadcast(
+            {"type": "status", "status": await state.status_payload()}
+        )
+        return {"active": False}
+
+    @app.post("/api/autonomous/toggle")
+    async def autonomous_toggle() -> dict[str, Any]:
+        """Bascule l'état du mode autonome."""
+        if state.autonomous.active:
+            await state.autonomous.stop(reason="Arrêt demandé par l’utilisateur.")
+        else:
+            if state.standby or state.standby_transition:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Le robot est en veille. Réveille-le d’abord.",
+                )
+            if state.engine.is_running:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Un programme est déjà en cours : arrête-le d’abord.",
+                )
+            if state.manual.active:
+                await state.manual.stop()
+
+            # Le mode autonome exige impérativement la sécurité obstacles activée
+            if not state.obstacle_safety_enabled:
+                state.set_obstacle_safety(True)
+                log.info("Sécurité obstacle activée automatiquement pour le mode autonome.")
+
+            ok, msg = await state.autonomous.start()
+            if not ok:
+                raise HTTPException(status_code=409, detail=msg or "Impossible de démarrer le mode autonome.")
+
+        await state.hub.broadcast(
+            {"type": "status", "status": await state.status_payload()}
+        )
+        return {"active": state.autonomous.active}
 
     @app.post("/api/execution/heartbeat")
     async def heartbeat(payload: HeartbeatRequest) -> dict[str, Any]:

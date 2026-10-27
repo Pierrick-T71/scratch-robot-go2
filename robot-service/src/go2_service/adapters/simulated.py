@@ -93,6 +93,7 @@ class SimulatedAdapter:
         self._yaw = 0.0
         self._battery = 100.0
         self._posture = Posture.SIT
+        self._crouch_mode = False
 
         # Points d'injection de panne, pour les tests.
         self.fail_next_command = False
@@ -112,8 +113,17 @@ class SimulatedAdapter:
         self._position = [0.0, 0.0, 0.0]
         self._yaw = 0.0
 
+        self._lidar_active = True
+
     def supports(self, capability: Capability) -> bool:
         return capability in SIMULATED_CAPABILITIES
+
+    @property
+    def lidar_active(self) -> bool:
+        return self._lidar_active
+
+    async def set_lidar_switch(self, on: bool) -> None:
+        self._lidar_active = on
 
     # -- État --------------------------------------------------------------
 
@@ -177,8 +187,34 @@ class SimulatedAdapter:
         """Simule un saut en mode manuel."""
         await asyncio.sleep(0.2)
 
+    @property
+    def crouch_mode_active(self) -> bool:
+        return self._crouch_mode
+
+    async def enter_crouch_mode(self) -> None:
+        """Simule l'entrée en mode accroupi."""
+        self._crouch_mode = True
+        await asyncio.sleep(0.1)
+
+    async def exit_crouch_mode(self) -> None:
+        """Simule la sortie du mode accroupi."""
+        self._crouch_mode = False
+        await asyncio.sleep(0.1)
+
+    async def enter_autonomous_mode(self) -> None:
+        """Active le mode autonome en simulation."""
+        self._state = RobotState.IDLE
+        self._posture = Posture.STAND
+
+    async def exit_autonomous_mode(self) -> None:
+        """Désactive le mode autonome en simulation."""
+        await self.request_stop()
+
     async def enter_standby(self) -> None:
         """Simule le passage en mode veille."""
+        if self._posture != Posture.STAND:
+            self._posture = Posture.STAND
+            await asyncio.sleep(0.1)
         self._posture = Posture.LIE_DOWN
         self._state = RobotState.IDLE
         await asyncio.sleep(0.3)
@@ -205,8 +241,12 @@ class SimulatedAdapter:
             case CommandKind.STAND_UP:
                 return await self._do_posture(Posture.STAND, index)
             case CommandKind.SIT_DOWN:
+                if self._posture != Posture.STAND:
+                    self._posture = Posture.STAND
                 return await self._do_posture(Posture.SIT, index)
             case CommandKind.LIE_DOWN:
+                if self._posture != Posture.STAND:
+                    self._posture = Posture.STAND
                 return await self._do_posture(Posture.LIE_DOWN, index)
             case CommandKind.BALANCE:
                 return await self._do_posture(Posture.BALANCE, index)
@@ -389,7 +429,11 @@ class SimulatedAdapter:
             )
             # `ecart` est exprimé dans le sens de la rotation : positif tant
             # qu'il reste de l'angle à parcourir, négatif en cas de dépassement.
-            if abs(ecart) <= YAW_BANDE_MORTE_DEG:
+            if (
+                abs(ecart) <= YAW_BANDE_MORTE_DEG
+                or (direction > 0.0 and ecart <= 0.0)
+                or (direction < 0.0 and ecart >= 0.0)
+            ):
                 await self.request_stop()
                 return self._outcome_for(
                     index, plan, None, "exact", start_yaw=start_yaw

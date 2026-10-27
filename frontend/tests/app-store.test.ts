@@ -68,6 +68,8 @@ function statutDeBase() {
     obstacleSafetyAvailable: true,
     standby: false,
     standbyTransition: null,
+    manualSource: null,
+    lanIp: '172.16.13.41',
   };
 }
 
@@ -234,5 +236,25 @@ describe('interrupteur de veille', () => {
     expect(apiMock.setStandby).toHaveBeenCalledWith(false);
     expect(app.status.standby).toBe(false);
     expect(app.isBusy).toBe(false);
+  });
+});
+
+describe('mode autonome', () => {
+  it('affiche un message d’erreur explicite quand il est arrêté sur obstacle', () => {
+    recoir?.({
+      type: 'autonomous_stopped',
+      reason: 'Obstacle détecté devant le robot (38 cm).',
+      status: {
+        ...statutDeBase(),
+        autonomousActive: false,
+        autonomousStopReason: 'Obstacle détecté devant le robot (38 cm).',
+      },
+    } as ExecutionEvent);
+
+    expect(app.notice?.tone).toBe('error');
+    expect(app.notice?.message).toBe(
+      'Mode autonome désactivé : Obstacle détecté devant le robot (38 cm).',
+    );
+    expect(app.status.autonomousActive).toBe(false);
   });
 });

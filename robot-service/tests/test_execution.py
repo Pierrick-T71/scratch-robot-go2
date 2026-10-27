@@ -125,6 +125,29 @@ class FakeAdapter:
     async def exit_standby(self) -> None:
         self._posture = Posture.STAND
 
+    @property
+    def lidar_active(self) -> bool:
+        return True
+
+    async def set_lidar_switch(self, on: bool) -> None:
+        pass
+
+    async def enter_crouch_mode(self) -> None:
+        pass
+
+    async def exit_crouch_mode(self) -> None:
+        pass
+
+    @property
+    def crouch_mode_active(self) -> bool:
+        return False
+
+    async def enter_autonomous_mode(self) -> None:
+        pass
+
+    async def exit_autonomous_mode(self) -> None:
+        pass
+
     def supports(self, capability: Capability) -> bool:
         return capability in ALWAYS_AVAILABLE
 
