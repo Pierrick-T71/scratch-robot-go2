@@ -533,18 +533,19 @@
         const p = Math.min(1.0, gesteTemps / duree);
 
         if (gesteActif === 'salute') {
-          // Saluer : juste secouer la patte avant-droite devant, sans bouger le reste
+          // Saluer : la patte avant-droite se lève bien haut devant et salue de façon dynamique
           const env = Math.sin(Math.PI * p);
           // Le corps et les 3 autres pattes restent totalement immobiles
           extraPitch = 0;
           extraBodyY = 0;
 
-          // Seule la patte FR s'élève droit devant et se secoue
-          legAngles.FR.hipZ = 0.72 * env;
-          legAngles.FR.kneeZ = -1.05 * env;
-          const wave = Math.sin(gesteTemps * Math.PI * 6) * env;
-          legAngles.FR.kneeZ += 0.22 * wave;
-          legAngles.FR.ankleZ = 0.35 * env + 0.35 * wave;
+          // La patte FR s'élève bien haut devant (niveau tête/yeux)
+          legAngles.FR.hipZ = 1.25 * env;
+          legAngles.FR.kneeZ = -0.70 * env;
+          // Battement de salut vif et visible
+          const wave = Math.sin(gesteTemps * Math.PI * 5) * env;
+          legAngles.FR.kneeZ += 0.28 * wave;
+          legAngles.FR.ankleZ = 0.40 * env + 0.35 * wave;
         } else if (gesteActif === 'heart') {
           // Pour le cœur : se met assis et dessine un cœur avec ses pattes avant
           const env = Math.sin(Math.PI * p);
@@ -583,21 +584,33 @@
           legAngles.FR.hipX = 0.12 * env + lobeX;
         } else if (gesteActif === 'stretch') {
           // S'étirer (Stretch) :
-          // Étirement canin (play-bow) : le torse s'abaisse vers le sol,
-          // les pattes avant s'étirent devant, le train arrière reste haut.
+          // Posture d'étirement quadrupède profonde et expressive (play-bow) :
+          // 1. Torse et poitrine s'affaissent bas au ras du sol
+          // 2. Les deux pattes avant s'étirent loin devant, le long du sol
+          // 3. Le train arrière reste bien haut et poussé vers l'arrière
           const env = Math.sin(Math.PI * p);
-          extraPitch = -0.22 * env;
-          extraBodyY = -0.07 * env;
+          const hold = Math.pow(Math.sin(Math.PI * p), 0.7);
 
-          legAngles.FL.hipZ = 0.55 * env;
-          legAngles.FL.kneeZ = -0.95 * env;
-          legAngles.FL.ankleZ = 0.40 * env;
-          legAngles.FR.hipZ = 0.55 * env;
-          legAngles.FR.kneeZ = -0.95 * env;
-          legAngles.FR.ankleZ = 0.40 * env;
+          extraPitch = -0.42 * hold; // inclinaison marquée vers le bas (-24°)
+          extraBodyY = -0.16 * hold; // abaissement marqué du corps
 
-          legAngles.RL.hipZ -= 0.12 * env;
-          legAngles.RR.hipZ -= 0.12 * env;
+          // Pattes avant étirées loin devant
+          legAngles.FL.hipZ = 0.95 * hold;
+          legAngles.FL.kneeZ = -0.40 * hold;
+          legAngles.FL.ankleZ = -0.40 * hold;
+
+          legAngles.FR.hipZ = 0.95 * hold;
+          legAngles.FR.kneeZ = -0.40 * hold;
+          legAngles.FR.ankleZ = -0.40 * hold;
+
+          // Train arrière tendu et haut en arrière
+          legAngles.RL.hipZ = -0.32 * hold;
+          legAngles.RL.kneeZ = 0.22 * hold;
+          legAngles.RL.ankleZ = 0.08 * hold;
+
+          legAngles.RR.hipZ = -0.32 * hold;
+          legAngles.RR.kneeZ = 0.22 * hold;
+          legAngles.RR.ankleZ = 0.08 * hold;
         } else if (gesteActif === 'jump') {
           // Saut vers l'avant (FrontJump) :
           // Flexion (0-0.28) -> bond parabolique (0.28-0.82) -> amorti (0.82-1.0)
