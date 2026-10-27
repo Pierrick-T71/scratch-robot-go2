@@ -219,6 +219,11 @@
   let gesteActif = $state<string | null>(null);
   let gesteTemps = 0;
 
+  /** Le suivi automatique de la caméra est-il désactivé suite à un déplacement au clic droit ? */
+  let suiviDesactiveParClicDroit = $state(false);
+  let clicDroitEnCours = false;
+  let nettoyageEcouteurs: (() => void) | null = null;
+
   /**
    * Place la caméra DERRIÈRE le robot, dans l'axe de son museau.
    *
@@ -395,6 +400,44 @@
     redimensionner();
     globalThis.addEventListener('resize', redimensionner);
 
+    const onContextMenu = (e: MouseEvent): void => {
+      e.preventDefault();
+    };
+    const onPointerDown = (e: PointerEvent): void => {
+      if (e.button === 2) {
+        clicDroitEnCours = true;
+      }
+    };
+    const onPointerMove = (e: PointerEvent): void => {
+      if (clicDroitEnCours) {
+        suiviDesactiveParClicDroit = true;
+      }
+    };
+    const onPointerUp = (e: PointerEvent): void => {
+      if (e.button === 2) {
+        clicDroitEnCours = false;
+      }
+    };
+    const onDblClick = (): void => {
+      suiviDesactiveParClicDroit = false;
+      poserCameraDerriere();
+    };
+
+    canvas.addEventListener('contextmenu', onContextMenu);
+    canvas.addEventListener('pointerdown', onPointerDown);
+    globalThis.addEventListener('pointermove', onPointerMove);
+    globalThis.addEventListener('pointerup', onPointerUp);
+    canvas.addEventListener('dblclick', onDblClick);
+
+    nettoyageEcouteurs = () => {
+      canvas?.removeEventListener('contextmenu', onContextMenu);
+      canvas?.removeEventListener('pointerdown', onPointerDown);
+      globalThis.removeEventListener('pointermove', onPointerMove);
+      globalThis.removeEventListener('pointerup', onPointerUp);
+      canvas?.removeEventListener('dblclick', onDblClick);
+      globalThis.removeEventListener('resize', redimensionner);
+    };
+
     let dernier = performance.now();
     let phase = 0;
     let marche = 0;
@@ -483,57 +526,61 @@
           gesteActif === 'stretch'
             ? 3.0
             : gesteActif === 'heart'
-              ? 2.5
+              ? 2.8
               : gesteActif === 'jump'
                 ? 1.5
                 : 2.0;
         const p = Math.min(1.0, gesteTemps / duree);
 
         if (gesteActif === 'salute') {
-          // Saluer (Hello) :
-          // Le robot reste bien droit et stable sur ses pattes, penche très légèrement
-          // le buste, lève sa patte avant-droite (FR) et salue en l'agitant de haut en bas.
+          // Saluer : juste secouer la patte avant-droite devant, sans bouger le reste
           const env = Math.sin(Math.PI * p);
-          extraPitch = 0.08 * env;
-          extraBodyY = 0.01 * env;
+          // Le corps et les 3 autres pattes restent totalement immobiles
+          extraPitch = 0;
+          extraBodyY = 0;
 
-          // Appui stable sur les 3 autres pattes
-          legAngles.FL.hipZ += 0.04 * env;
-          legAngles.RL.hipZ += 0.05 * env;
-          legAngles.RR.hipZ += 0.05 * env;
-
-          // Patte avant-droite levée
-          legAngles.FR.hipZ = 0.75 * env;
-          legAngles.FR.kneeZ = -1.15 * env;
-          const wave = Math.sin(gesteTemps * Math.PI * 4) * env;
-          legAngles.FR.kneeZ += 0.18 * wave;
-          legAngles.FR.ankleZ = 0.45 * env + 0.25 * wave;
+          // Seule la patte FR s'élève droit devant et se secoue
+          legAngles.FR.hipZ = 0.72 * env;
+          legAngles.FR.kneeZ = -1.05 * env;
+          const wave = Math.sin(gesteTemps * Math.PI * 6) * env;
+          legAngles.FR.kneeZ += 0.22 * wave;
+          legAngles.FR.ankleZ = 0.35 * env + 0.35 * wave;
         } else if (gesteActif === 'heart') {
-          // Faire un cœur (FingerHeart / Show me love) :
-          // Le robot s'abaisse un peu sur l'arrière, lève ses deux pattes avant (FL et FR)
-          // et les replie l'une vers l'autre devant lui pour former un cœur.
+          // Pour le cœur : se met assis et dessine un cœur avec ses pattes avant
           const env = Math.sin(Math.PI * p);
-          extraPitch = 0.18 * env;
-          extraBodyY = -0.05 * env;
 
-          // Appui arrière fléchi et stable
-          legAngles.RL.hipZ += 0.30 * env;
-          legAngles.RL.kneeZ -= 0.60 * env;
-          legAngles.RL.ankleZ += 0.30 * env;
-          legAngles.RR.hipZ += 0.30 * env;
-          legAngles.RR.kneeZ -= 0.60 * env;
-          legAngles.RR.ankleZ += 0.30 * env;
+          // Le corps s'assoit franchement (pose assise)
+          const cibleSitY = POSE_SIT.bodyY;
+          const cibleSitPitch = POSE_SIT.pitch;
+          extraBodyY = (cibleSitY - poseActuelle.bodyY) * env;
+          extraPitch = (cibleSitPitch - poseActuelle.pitch) * env;
 
-          // Pattes avant levées et inclinées vers l'intérieur
-          legAngles.FL.hipZ = 0.80 * env;
-          legAngles.FL.kneeZ = -1.30 * env;
+          // Train arrière assis en appui stable
+          legAngles.RL.hipZ = (POSE_SIT.rearHip - legAngles.RL.hipZ) * env + legAngles.RL.hipZ;
+          legAngles.RL.kneeZ = (POSE_SIT.rearKnee - legAngles.RL.kneeZ) * env + legAngles.RL.kneeZ;
+          legAngles.RL.ankleZ = (POSE_SIT.rearAnkle - legAngles.RL.ankleZ) * env + legAngles.RL.ankleZ;
+
+          legAngles.RR.hipZ = (POSE_SIT.rearHip - legAngles.RR.hipZ) * env + legAngles.RR.hipZ;
+          legAngles.RR.kneeZ = (POSE_SIT.rearKnee - legAngles.RR.kneeZ) * env + legAngles.RR.kneeZ;
+          legAngles.RR.ankleZ = (POSE_SIT.rearAnkle - legAngles.RR.ankleZ) * env + legAngles.RR.ankleZ;
+
+          // Pattes avant : levées pour dessiner un cœur dans l'espace
+          // Le tracé commence en haut au centre, s'arrondit vers l'extérieur pour les deux lobes,
+          // puis descend et converge vers la pointe du cœur
+          const tCoeur = Math.min(1.0, Math.max(0.0, (p - 0.12) / 0.76));
+          const angleTracer = tCoeur * Math.PI * 2;
+          const lobeX = 0.22 * Math.sin(angleTracer) * env;
+          const lobeZ = 0.16 * Math.cos(angleTracer) * env;
+
+          legAngles.FL.hipZ = 0.85 * env + lobeZ;
+          legAngles.FL.kneeZ = -1.25 * env - 0.18 * lobeZ;
           legAngles.FL.ankleZ = 0.50 * env;
-          legAngles.FL.hipX = -0.22 * env;
+          legAngles.FL.hipX = -0.12 * env - lobeX;
 
-          legAngles.FR.hipZ = 0.80 * env;
-          legAngles.FR.kneeZ = -1.30 * env;
+          legAngles.FR.hipZ = 0.85 * env + lobeZ;
+          legAngles.FR.kneeZ = -1.25 * env - 0.18 * lobeZ;
           legAngles.FR.ankleZ = 0.50 * env;
-          legAngles.FR.hipX = 0.22 * env;
+          legAngles.FR.hipX = 0.12 * env + lobeX;
         } else if (gesteActif === 'stretch') {
           // S'étirer (Stretch) :
           // Étirement canin (play-bow) : le torse s'abaisse vers le sol,
@@ -652,25 +699,28 @@
           prevChienX = robotX;
           prevChienZ = robotZ;
 
-          camera.position.x += deltaX;
-          camera.position.z += deltaZ;
-          controles.target.x += deltaX;
-          controles.target.z += deltaZ;
+          // Si l'utilisateur a déplacé la caméra avec le clic droit, on n'impose aucun suivi du robot
+          if (!suiviDesactiveParClicDroit) {
+            camera.position.x += deltaX;
+            camera.position.z += deltaZ;
+            controles.target.x += deltaX;
+            controles.target.z += deltaZ;
 
-          const avantX = Math.cos(capChien);
-          const avantZ = -Math.sin(capChien);
-          const viseX = robotX + avantX * CAMERA_VISEE;
-          const viseZ = robotZ + avantZ * CAMERA_VISEE;
+            const avantX = Math.cos(capChien);
+            const avantZ = -Math.sin(capChien);
+            const viseX = robotX + avantX * CAMERA_VISEE;
+            const viseZ = robotZ + avantZ * CAMERA_VISEE;
 
-          controles.target.x += (viseX - controles.target.x) * (1 - Math.exp(-delta * 6));
-          controles.target.z += (viseZ - controles.target.z) * (1 - Math.exp(-delta * 6));
+            controles.target.x += (viseX - controles.target.x) * (1 - Math.exp(-delta * 6));
+            controles.target.z += (viseZ - controles.target.z) * (1 - Math.exp(-delta * 6));
 
-          // Quand le robot se déplace ou marche, la caméra se repositionne souplement derrière son cap
-          if (walking || Math.abs(deltaX) > 0.0005 || Math.abs(deltaZ) > 0.0005) {
-            const camCibleX = robotX - avantX * CAMERA_RECUL;
-            const camCibleZ = robotZ - avantZ * CAMERA_RECUL;
-            camera.position.x += (camCibleX - camera.position.x) * (1 - Math.exp(-delta * 4));
-            camera.position.z += (camCibleZ - camera.position.z) * (1 - Math.exp(-delta * 4));
+            // Quand le robot se déplace ou marche, la caméra se repositionne souplement derrière son cap
+            if (walking || Math.abs(deltaX) > 0.0005 || Math.abs(deltaZ) > 0.0005) {
+              const camCibleX = robotX - avantX * CAMERA_RECUL;
+              const camCibleZ = robotZ - avantZ * CAMERA_RECUL;
+              camera.position.x += (camCibleX - camera.position.x) * (1 - Math.exp(-delta * 4));
+              camera.position.z += (camCibleZ - camera.position.z) * (1 - Math.exp(-delta * 4));
+            }
           }
         }
       }
@@ -816,6 +866,8 @@
       gesteActif = null;
       gesteTemps = 0;
       capChien = 0;
+      suiviDesactiveParClicDroit = false;
+      clicDroitEnCours = false;
       if (chien) {
         chien.position.x = 0;
         chien.position.z = 0;
@@ -839,6 +891,7 @@
 
   onDestroy(() => {
     cancelAnimationFrame(cadre);
+    nettoyageEcouteurs?.();
     controles?.dispose();
     renderer?.dispose();
   });

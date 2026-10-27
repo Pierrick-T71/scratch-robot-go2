@@ -80,7 +80,7 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
 
   /** Posture active demandée au modèle 3D selon l'étape ou l'état du robot. */
   const effectivePosture = $derived(
-    runningKind === 'sit'
+    runningKind === 'sit' || runningKind === 'heart'
       ? 'sit'
       : runningKind === 'lie_down'
         ? 'lie_down'
@@ -91,7 +91,6 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
             runningKind === 'turn_left' ||
             runningKind === 'turn_right' ||
             runningKind === 'salute' ||
-            runningKind === 'heart' ||
             runningKind === 'stretch' ||
             runningKind === 'jump'
           ? 'stand'

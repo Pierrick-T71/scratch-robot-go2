@@ -256,8 +256,9 @@ class SimulatedAdapter:
             case CommandKind.BALANCE:
                 return await self._do_posture(Posture.BALANCE, index, should_stop)
             case CommandKind.FINGER_HEART:
-                # Le geste simulé : un bref mouvement, sans déplacement.
-                return await self._do_wait(1.5, index, should_stop)
+                # Pour le cœur, le robot se met assis et dessine le cœur avec ses pattes avant.
+                self._posture = Posture.SIT
+                return await self._do_wait(2.5, index, should_stop)
             case CommandKind.SALUTE:
                 # Saluer : un bref mouvement, sans deplacement.
                 return await self._do_wait(1.5, index, should_stop)
