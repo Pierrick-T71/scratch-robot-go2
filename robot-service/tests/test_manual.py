@@ -119,11 +119,11 @@ class TestManualControl:
         assert not manual.sprint
         assert manual.speed_mps == 0.6
 
-        # Sprint forward activates 2.5 m/s
+        # Sprint forward activates max speed (3.5 m/s)
         blocked, msg = await manual.set_direction("forward", seq=1, sprint=True)
         assert not blocked
         assert manual.sprint is True
-        assert manual.speed_mps == 2.5
+        assert manual.speed_mps == 3.5
 
         # Releasing sprint while keeping forward reverts to 0.6 m/s
         blocked, msg = await manual.set_direction("forward", seq=2, sprint=False)
@@ -137,11 +137,11 @@ class TestManualControl:
         assert manual.sprint is False
         assert manual.speed_mps == 0.6
 
-        # Sprint with forward+turn_left activates 2.5 m/s
+        # Sprint with forward+turn_left activates 3.5 m/s
         blocked, msg = await manual.set_direction("forward+turn_left", seq=4, sprint=True)
         assert not blocked
         assert manual.sprint is True
-        assert manual.speed_mps == 2.5
+        assert manual.speed_mps == 3.5
 
         # Release motion resets sprint
         blocked, msg = await manual.set_direction(None, seq=5)

@@ -55,8 +55,8 @@ MANUAL_TICK_S = 0.1
 #: élargir les limites des programmes de l'enfant.
 MANUAL_SPEED_MPS = 0.6
 
-#: Vitesse de sprint en mode manuel (vitesse maximale du Go2, trot rapide / course).
-MANUAL_SPRINT_SPEED_MPS = 2.5
+#: Vitesse de sprint en mode manuel (vitesse maximale du Go2, 2,5 m/s sur Go2 Air et jusqu'à 3,5 m/s sur Go2 Pro / Edu).
+MANUAL_SPRINT_SPEED_MPS = 3.5
 
 #: Vitesse de rotation en mode manuel.
 #:

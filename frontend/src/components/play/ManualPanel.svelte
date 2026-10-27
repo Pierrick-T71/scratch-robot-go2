@@ -433,7 +433,7 @@
             class:key--on={heldKeys.has('z')}
             class:key--sprint-active={activeSprint}
             aria-label="Avancer"
-            title={activeSprint ? 'Sprint en cours (2,5 m/s)' : 'Avancer (0,6 m/s)'}
+            title={activeSprint ? 'Sprint en cours (vitesse max 3,5 m/s)' : 'Avancer (0,6 m/s)'}
             onpointerdown={(event) => onPointerDown(event, 'z')}
             onpointerup={(event) => onPointerUp(event, 'z')}
             onpointercancel={(event) => onPointerUp(event, 'z')}
@@ -515,7 +515,7 @@
             class:key--on={isShiftHeld}
             class:key--sprint-active={activeSprint}
             aria-label="Sprint Shift"
-            title="Maintenir Shift (Maj) en avançant avec Z pour sprinter à 2,5 m/s"
+            title="Maintenir Shift (Maj) en avançant avec Z pour sprinter à la vitesse maximale (jusqu’à 3,5 m/s)"
             onpointerdown={(event) => {
               event.preventDefault();
               isShiftHeld = true;
@@ -533,7 +533,7 @@
             }}
             oncontextmenu={(event) => event.preventDefault()}
           >
-            {activeSprint ? '⚡ SPRINT ACTIF (2,5 m/s)' : '⇧ Shift · Maintenir pour sprinter'}
+            {activeSprint ? '⚡ SPRINT ACTIF (Vitesse max 3,5 m/s)' : '⇧ Shift · Maintenir pour sprinter'}
           </button>
         </div>
         {#if onJump}
@@ -557,7 +557,7 @@
         <li><strong>Z</strong> avancer · <strong>S</strong> reculer</li>
         <li><strong>Q</strong> pas à gauche · <strong>D</strong> pas à droite</li>
         <li><strong>← / →</strong> tourner · <strong>Espace</strong> sauter</li>
-        <li><strong>Shift + Z</strong> sprinter (vitesse max 2,5 m/s)</li>
+        <li><strong>Shift + Z</strong> sprinter (vitesse max 3,5 m/s)</li>
       </ul>
 
       {#if message}
