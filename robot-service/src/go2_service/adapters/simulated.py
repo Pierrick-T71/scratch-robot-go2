@@ -265,8 +265,8 @@ class SimulatedAdapter:
                 # S'étirer dure un peu plus longtemps qu'un salut.
                 return await self._do_wait(3.0, index, should_stop)
             case CommandKind.FRONT_JUMP:
-                # Le saut simule : un bref mouvement, sans deplacement.
-                return await self._do_wait(1.5, index, should_stop)
+                # Le vrai robot saute vers l'avant : le simulateur avance également.
+                return await self._do_front_jump(index, should_stop)
             case CommandKind.STOP:
                 await self.request_stop()
                 # Un bloc « Arrêter le déplacement » est une instruction comme
@@ -343,6 +343,43 @@ class SimulatedAdapter:
             index=index,
             outcome=outcome.outcome,
             detail="Posture appliquée.",
+        )
+
+    async def _do_front_jump(
+        self, index: int, should_stop: StopSignal
+    ) -> CommandOutcome:
+        """Simule un saut vers l'avant : bondit et avance vers l'avant comme le vrai robot."""
+        total_duration = 1.5
+        jump_distance = 0.5  # 50 cm vers l'avant
+        start_xy = (self._position[0], self._position[1])
+        elapsed = 0.0
+
+        # L'impulsion vers l'avant se produit principalement pendant la phase aérienne
+        # (entre 0.35 s et 0.95 s, durée 0.60 s)
+        jump_speed = jump_distance / 0.60
+
+        while elapsed < total_duration:
+            if should_stop.requested:
+                await self.request_stop()
+                return CommandOutcome(index=index, outcome="stopped")
+
+            step = min(self._sim_step(), total_duration - elapsed)
+            await asyncio.sleep(self._real_sleep)
+
+            if 0.35 <= elapsed < 0.95:
+                # vx dans le repère du robot : avance le robot le long de son cap
+                self._advance(jump_speed, 0.0, 0.0, step)
+
+            elapsed += step
+
+        measured = travelled_distance_cm(
+            start_xy, (self._position[0], self._position[1])
+        )
+        return CommandOutcome(
+            index=index,
+            outcome="exact",
+            measured_distance_cm=round(measured, 1),
+            detail="Saut vers l'avant exécuté.",
         )
 
     async def _do_move(

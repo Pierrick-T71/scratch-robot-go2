@@ -324,9 +324,11 @@
     controles = new OrbitControls(camera, canvas);
     controles.enableDamping = true;
     controles.dampingFactor = 0.08;
-    controles.minDistance = 1.2;
-    controles.maxDistance = 16;
+    controles.minDistance = 0.6;
+    controles.maxDistance = 20;
     controles.maxPolarAngle = Math.PI * 0.52;
+    controles.enablePan = true;
+    controles.screenSpacePanning = true;
     controles.enabled = interactive;
     // Cadrage de départ : la caméra se place derrière le robot.
     poserCameraDerriere();
@@ -441,37 +443,164 @@
       marche += (cibleMarche - marche) * (1 - Math.exp(-delta * 6));
       if (marche > 0.005) phase += delta * Math.PI * 2 * 1.8;
 
-      if (rig) {
-        // Remise à zéro des rotations latérales (roulis/lacet des hanches)
-        for (const nom of LEG_NAMES) {
-          rig[nom].hip.rotation.x = 0;
-          rig[nom].hip.rotation.y = 0;
+      const legAngles: Record<
+        LegName,
+        { hipX: number; hipY: number; hipZ: number; kneeZ: number; ankleZ: number }
+      > = {
+        FL: { hipX: 0, hipY: 0, hipZ: 0, kneeZ: 0, ankleZ: 0 },
+        FR: { hipX: 0, hipY: 0, hipZ: 0, kneeZ: 0, ankleZ: 0 },
+        RL: { hipX: 0, hipY: 0, hipZ: 0, kneeZ: 0, ankleZ: 0 },
+        RR: { hipX: 0, hipY: 0, hipZ: 0, kneeZ: 0, ankleZ: 0 },
+      };
+
+      const balancement = Math.sin(phase) * marche;
+      for (const nom of LEG_NAMES) {
+        const isFront = nom === 'FL' || nom === 'FR';
+        const baseHip = isFront ? poseActuelle.frontHip : poseActuelle.rearHip;
+        const baseKnee = isFront ? poseActuelle.frontKnee : poseActuelle.rearKnee;
+        const baseAnkle = isFront ? poseActuelle.frontAnkle : poseActuelle.rearAnkle;
+
+        // Les pattes en diagonale avancent ensemble pendant la marche
+        const paire = nom === 'FL' || nom === 'RR' ? balancement : -balancement;
+        const levee = Math.max(0, paire);
+        const hanche = 0.38 * paire;
+        const genou = -0.55 * levee;
+        const cheville = -(hanche + genou);
+
+        legAngles[nom].hipZ = baseHip + hanche;
+        legAngles[nom].kneeZ = baseKnee + genou;
+        legAngles[nom].ankleZ = baseAnkle + cheville;
+      }
+
+      let extraPitch = 0;
+      let extraBodyY = 0;
+
+      // Animations expressives réalistes pour les gestes (saluer, cœur, s'étirer, sauter)
+      // Aucun angle n'accumule : chaque offset est recalculé de zéro à chaque image.
+      if (gesteActif) {
+        gesteTemps += delta;
+        const duree =
+          gesteActif === 'stretch'
+            ? 3.0
+            : gesteActif === 'heart'
+              ? 2.5
+              : gesteActif === 'jump'
+                ? 1.5
+                : 2.0;
+        const p = Math.min(1.0, gesteTemps / duree);
+
+        if (gesteActif === 'salute') {
+          // Saluer (Hello) :
+          // Le robot reste bien droit et stable sur ses pattes, penche très légèrement
+          // le buste, lève sa patte avant-droite (FR) et salue en l'agitant de haut en bas.
+          const env = Math.sin(Math.PI * p);
+          extraPitch = 0.08 * env;
+          extraBodyY = 0.01 * env;
+
+          // Appui stable sur les 3 autres pattes
+          legAngles.FL.hipZ += 0.04 * env;
+          legAngles.RL.hipZ += 0.05 * env;
+          legAngles.RR.hipZ += 0.05 * env;
+
+          // Patte avant-droite levée
+          legAngles.FR.hipZ = 0.75 * env;
+          legAngles.FR.kneeZ = -1.15 * env;
+          const wave = Math.sin(gesteTemps * Math.PI * 4) * env;
+          legAngles.FR.kneeZ += 0.18 * wave;
+          legAngles.FR.ankleZ = 0.45 * env + 0.25 * wave;
+        } else if (gesteActif === 'heart') {
+          // Faire un cœur (FingerHeart / Show me love) :
+          // Le robot s'abaisse un peu sur l'arrière, lève ses deux pattes avant (FL et FR)
+          // et les replie l'une vers l'autre devant lui pour former un cœur.
+          const env = Math.sin(Math.PI * p);
+          extraPitch = 0.18 * env;
+          extraBodyY = -0.05 * env;
+
+          // Appui arrière fléchi et stable
+          legAngles.RL.hipZ += 0.30 * env;
+          legAngles.RL.kneeZ -= 0.60 * env;
+          legAngles.RL.ankleZ += 0.30 * env;
+          legAngles.RR.hipZ += 0.30 * env;
+          legAngles.RR.kneeZ -= 0.60 * env;
+          legAngles.RR.ankleZ += 0.30 * env;
+
+          // Pattes avant levées et inclinées vers l'intérieur
+          legAngles.FL.hipZ = 0.80 * env;
+          legAngles.FL.kneeZ = -1.30 * env;
+          legAngles.FL.ankleZ = 0.50 * env;
+          legAngles.FL.hipX = -0.22 * env;
+
+          legAngles.FR.hipZ = 0.80 * env;
+          legAngles.FR.kneeZ = -1.30 * env;
+          legAngles.FR.ankleZ = 0.50 * env;
+          legAngles.FR.hipX = 0.22 * env;
+        } else if (gesteActif === 'stretch') {
+          // S'étirer (Stretch) :
+          // Étirement canin (play-bow) : le torse s'abaisse vers le sol,
+          // les pattes avant s'étirent devant, le train arrière reste haut.
+          const env = Math.sin(Math.PI * p);
+          extraPitch = -0.22 * env;
+          extraBodyY = -0.07 * env;
+
+          legAngles.FL.hipZ = 0.55 * env;
+          legAngles.FL.kneeZ = -0.95 * env;
+          legAngles.FL.ankleZ = 0.40 * env;
+          legAngles.FR.hipZ = 0.55 * env;
+          legAngles.FR.kneeZ = -0.95 * env;
+          legAngles.FR.ankleZ = 0.40 * env;
+
+          legAngles.RL.hipZ -= 0.12 * env;
+          legAngles.RR.hipZ -= 0.12 * env;
+        } else if (gesteActif === 'jump') {
+          // Saut vers l'avant (FrontJump) :
+          // Flexion (0-0.28) -> bond parabolique (0.28-0.82) -> amorti (0.82-1.0)
+          if (p < 0.28) {
+            const f = Math.sin((p / 0.28) * Math.PI);
+            extraBodyY = -0.08 * f;
+            extraPitch = -0.08 * f;
+            for (const nom of LEG_NAMES) {
+              legAngles[nom].hipZ += 0.35 * f;
+              legAngles[nom].kneeZ -= 0.70 * f;
+              legAngles[nom].ankleZ += 0.35 * f;
+            }
+          } else if (p < 0.82) {
+            const flight = (p - 0.28) / 0.54;
+            const h = Math.sin(flight * Math.PI);
+            extraBodyY = 0.24 * h;
+            extraPitch = 0.16 * Math.cos(flight * Math.PI);
+            for (const nom of LEG_NAMES) {
+              legAngles[nom].hipZ -= 0.20 * h;
+              legAngles[nom].kneeZ += 0.25 * h;
+              legAngles[nom].ankleZ -= 0.05 * h;
+            }
+          } else {
+            const land = (p - 0.82) / 0.18;
+            const f = Math.sin(land * Math.PI);
+            extraBodyY = -0.06 * f;
+            for (const nom of LEG_NAMES) {
+              legAngles[nom].hipZ += 0.22 * f;
+              legAngles[nom].kneeZ -= 0.45 * f;
+              legAngles[nom].ankleZ += 0.23 * f;
+            }
+          }
         }
+      }
 
-        const balancement = Math.sin(phase) * marche;
+      if (rig) {
         for (const nom of LEG_NAMES) {
-          const patte = rig[nom];
-          const isFront = nom === 'FL' || nom === 'FR';
-          const baseHip = isFront ? poseActuelle.frontHip : poseActuelle.rearHip;
-          const baseKnee = isFront ? poseActuelle.frontKnee : poseActuelle.rearKnee;
-          const baseAnkle = isFront ? poseActuelle.frontAnkle : poseActuelle.rearAnkle;
-
-          // Les pattes en diagonale avancent ensemble pendant la marche
-          const paire = nom === 'FL' || nom === 'RR' ? balancement : -balancement;
-          const levee = Math.max(0, paire);
-          const hanche = 0.38 * paire;
-          const genou = -0.55 * levee;
-          const cheville = -(hanche + genou);
-
-          patte.hip.rotation.z = baseHip + hanche;
-          patte.knee.rotation.z = baseKnee + genou;
-          patte.ankle.rotation.z = baseAnkle + cheville;
+          const angles = legAngles[nom];
+          rig[nom].hip.rotation.x = angles.hipX;
+          rig[nom].hip.rotation.y = angles.hipY;
+          rig[nom].hip.rotation.z = angles.hipZ;
+          rig[nom].knee.rotation.z = angles.kneeZ;
+          rig[nom].ankle.rotation.z = angles.ankleZ;
         }
       }
 
       // Maintien au sol géométrique : les pattes ne s'enfoncent jamais sous la grille
-      const cosP = Math.cos(poseActuelle.pitch);
-      const sinP = Math.sin(poseActuelle.pitch);
+      const currentPitch = poseActuelle.pitch + extraPitch;
+      const cosP = Math.cos(currentPitch);
+      const sinP = Math.sin(currentPitch);
       const L1 = 0.213;
       const L2 = 0.213;
 
@@ -482,92 +611,19 @@
         const cy = -L2 * Math.cos(thH + thK);
         const localX = hipX + tx + cx;
         const localY = ty + cy;
-        return localX * sinP + localY * cosP + poseActuelle.bodyY;
+        return localX * sinP + localY * cosP + poseActuelle.bodyY + extraBodyY;
       };
 
-      const flY = calcFootY(0.1934, poseActuelle.frontHip, poseActuelle.frontKnee);
-      const rlY = calcFootY(-0.1934, poseActuelle.rearHip, poseActuelle.rearKnee);
+      const flY = calcFootY(0.1934, legAngles.FL.hipZ, legAngles.FL.kneeZ);
+      const rlY = calcFootY(-0.1934, legAngles.RL.hipZ, legAngles.RL.kneeZ);
       const minFoot = Math.min(flY, rlY);
-      let hauteurChien = poseActuelle.bodyY;
-      if (minFoot < 0) {
+      let hauteurChien = poseActuelle.bodyY + extraBodyY;
+      if (minFoot < 0 && gesteActif !== 'jump') {
         hauteurChien -= minFoot;
       }
 
-      // Animations expressives pour les autres actions (saluer, cœur, s'étirer, sauter)
-      if (gesteActif) {
-        gesteTemps += delta;
-        const duree =
-          gesteActif === 'stretch' ? 3.0 : gesteActif === 'jump' ? 1.5 : 2.0;
-        const p = Math.min(1.0, gesteTemps / duree);
-
-        if (gesteActif === 'salute') {
-          const env = Math.sin(Math.PI * p);
-          poseActuelle.pitch += 0.20 * env;
-          if (rig) {
-            rig.FR.hip.rotation.z += 0.85 * env;
-            rig.FR.knee.rotation.z -= 1.10 * env;
-            rig.FR.ankle.rotation.z += Math.sin(gesteTemps * Math.PI * 5) * 0.5 * env;
-            rig.FR.hip.rotation.y += Math.sin(gesteTemps * Math.PI * 5) * 0.25 * env;
-          }
-        } else if (gesteActif === 'heart') {
-          const env = Math.sin(Math.PI * p);
-          poseActuelle.pitch += 0.40 * env;
-          hauteurChien -= 0.12 * env;
-          if (rig) {
-            rig.RL.hip.rotation.z += 0.70 * env;
-            rig.RL.knee.rotation.z -= 1.80 * env;
-            rig.RR.hip.rotation.z += 0.70 * env;
-            rig.RR.knee.rotation.z -= 1.80 * env;
-            rig.FL.hip.rotation.z += 0.90 * env;
-            rig.FL.knee.rotation.z -= 1.30 * env;
-            rig.FL.hip.rotation.x -= 0.35 * env;
-            rig.FR.hip.rotation.z += 0.90 * env;
-            rig.FR.knee.rotation.z -= 1.30 * env;
-            rig.FR.hip.rotation.x += 0.35 * env;
-          }
-        } else if (gesteActif === 'stretch') {
-          const env = Math.sin(Math.PI * p);
-          poseActuelle.pitch -= 0.28 * env;
-          hauteurChien -= 0.10 * env;
-          if (rig) {
-            rig.FL.hip.rotation.z += 0.60 * env;
-            rig.FL.knee.rotation.z -= 1.10 * env;
-            rig.FR.hip.rotation.z += 0.60 * env;
-            rig.FR.knee.rotation.z -= 1.10 * env;
-            rig.RL.hip.rotation.z -= 0.25 * env;
-            rig.RR.hip.rotation.z -= 0.25 * env;
-          }
-        } else if (gesteActif === 'jump') {
-          if (p < 0.3) {
-            const c = Math.sin(Math.PI * (p / 0.3));
-            hauteurChien -= 0.14 * c;
-            if (rig) {
-              for (const nom of LEG_NAMES) {
-                rig[nom].hip.rotation.z += 0.4 * c;
-                rig[nom].knee.rotation.z -= 0.8 * c;
-              }
-            }
-          } else if (p < 0.75) {
-            const f = (p - 0.3) / 0.45;
-            const h = Math.sin(Math.PI * f);
-            hauteurChien += 0.18 * h;
-            if (rig) {
-              for (const nom of LEG_NAMES) {
-                rig[nom].hip.rotation.z += 0.3 * h;
-                rig[nom].knee.rotation.z -= 0.5 * h;
-              }
-            }
-          } else {
-            const l = Math.sin(Math.PI * (p - 0.75) / 0.25);
-            hauteurChien -= 0.08 * l;
-            if (rig) {
-              for (const nom of LEG_NAMES) {
-                rig[nom].hip.rotation.z += 0.25 * l;
-                rig[nom].knee.rotation.z -= 0.5 * l;
-              }
-            }
-          }
-        }
+      if (corps) {
+        corps.rotation.z = currentPitch;
       }
 
       // Suivi continu de la position et de l'orientation
@@ -581,10 +637,6 @@
         chien.position.z = robotZ;
         chien.rotation.y = robotCap + Math.PI / 2;
         chien.position.y = hauteurChien + 0.008 * Math.abs(Math.sin(phase)) * marche;
-      }
-
-      if (corps) {
-        corps.rotation.z = poseActuelle.pitch;
       }
 
       // Suivi de la caméra ("la caméra suit")
@@ -801,5 +853,9 @@
     height: 100%;
     background: #0d1016;
     touch-action: none;
+    cursor: grab;
+  }
+  .lidar:active {
+    cursor: grabbing;
   }
 </style>

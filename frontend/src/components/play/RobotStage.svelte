@@ -136,7 +136,7 @@
       <LidarScene
         volume={lidar ? volume : null}
         {walking}
-        interactive={lidar}
+        interactive={true}
         posture={rawPosture}
         {action}
         position={status.position}
