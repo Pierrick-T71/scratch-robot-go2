@@ -639,6 +639,13 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
     gap: 16px;
   }
 
+  @media (min-width: 1700px) {
+    .app__main {
+      grid-template-columns: minmax(0, 1fr) clamp(380px, 28%, 560px);
+      gap: 20px;
+    }
+  }
+
   .app__library {
     grid-area: library;
     display: flex;

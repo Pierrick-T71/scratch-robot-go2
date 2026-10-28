@@ -167,13 +167,24 @@
     --tone-ink: #12304f;
     --tone-icon: #1f5f9e;
 
+    --blk-size: 124px;
+    --blk-svg-size: 142.6px;
+    --blk-icon-size: 36px;
+    --blk-icon-svg: 22px;
+    --blk-font-size: 13.5px;
+    --blk-max-w: 96px;
+    --blk-pill-height: 25px;
+    --blk-pill-font: 13px;
+    --blk-pill-badge: 16px;
+    --blk-pad: 16px 4px 7px 16px;
+
     position: relative;
     display: inline-flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    width: 124px;
-    height: 124px;
+    width: var(--blk-size);
+    height: var(--blk-size);
     cursor: inherit;
     user-select: none;
     -webkit-user-select: none;
@@ -186,8 +197,8 @@
     position: absolute;
     left: 0;
     top: 0;
-    width: 142.6px;
-    height: 142.6px;
+    width: var(--blk-svg-size);
+    height: var(--blk-svg-size);
     pointer-events: none;
     overflow: visible;
     filter: drop-shadow(0 4px 8px rgb(0 0 0 / 22%));
@@ -209,9 +220,9 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    width: 124px;
-    height: 124px;
-    padding: 16px 4px 7px 16px;
+    width: var(--blk-size);
+    height: var(--blk-size);
+    padding: var(--blk-pad);
     box-sizing: border-box;
     text-align: center;
     pointer-events: auto;
@@ -270,13 +281,18 @@
     display: grid;
     place-items: center;
     flex: none;
-    width: 36px;
-    height: 36px;
+    width: var(--blk-icon-size);
+    height: var(--blk-icon-size);
     border-radius: 11px;
     background: var(--tone-icon);
     color: #fff;
     box-shadow: inset 0 1px 0 rgb(255 255 255 / 35%);
     margin-bottom: 3px;
+  }
+
+  .blk__icon :global(svg) {
+    width: var(--blk-icon-svg);
+    height: var(--blk-icon-svg);
   }
 
   .blk__bottom {
@@ -290,8 +306,8 @@
 
   .blk__label {
     min-width: 0;
-    max-width: 96px;
-    font-size: 13.5px;
+    max-width: var(--blk-max-w);
+    font-size: var(--blk-font-size);
     font-weight: 800;
     letter-spacing: -0.015em;
     line-height: 1.15;
@@ -308,12 +324,12 @@
     justify-content: center;
     gap: 6px;
     margin-top: 4px;
-    min-height: 25px;
+    min-height: var(--blk-pill-height);
     padding: 2px 10px;
     border-radius: 999px;
     background: #ffffff;
     color: #111827;
-    font-size: 13px;
+    font-size: var(--blk-pill-font);
     font-weight: 850;
     line-height: 1;
     white-space: nowrap;
@@ -354,7 +370,7 @@
     position: relative;
     z-index: 1;
     font: inherit;
-    font-size: 13px;
+    font-size: var(--blk-pill-font);
     font-weight: 850;
     color: #111827;
   }
@@ -362,8 +378,8 @@
   .blk__chevron-badge {
     position: relative;
     z-index: 1;
-    width: 16px;
-    height: 16px;
+    width: var(--blk-pill-badge);
+    height: var(--blk-pill-badge);
     border-radius: 999px;
     background: #e2e8f0;
     display: flex;
@@ -374,9 +390,86 @@
     transition: background 0.12s ease, color 0.12s ease;
   }
 
+  .blk__chevron-badge :global(svg) {
+    width: 8px;
+    height: 6px;
+  }
+
   .blk__pill--edit:hover .blk__chevron-badge {
     background: #cbd5e1;
     color: #0f172a;
+  }
+
+  /* Grands écrans de PC fixe (au-delà de 20 pouces, >= 1700px pour ne pas impacter les portables 15" à 1536px) */
+  @media (min-width: 1700px) {
+    .blk {
+      --blk-size: 146px;
+      --blk-svg-size: 167.9px;
+      --blk-icon-size: 44px;
+      --blk-icon-svg: 27px;
+      --blk-font-size: 15.5px;
+      --blk-max-w: 114px;
+      --blk-pill-height: 29px;
+      --blk-pill-font: 14.5px;
+      --blk-pill-badge: 18px;
+      --blk-pad: 19px 5px 8px 19px;
+    }
+
+    .blk__icon {
+      border-radius: 13px;
+      margin-bottom: 4px;
+    }
+
+    .blk__pill {
+      gap: 7px;
+      margin-top: 5px;
+      padding: 3px 12px;
+    }
+
+    .blk__pill--edit {
+      padding: 2px 7px 2px 13px;
+    }
+
+    .blk__chevron-badge :global(svg) {
+      width: 9px;
+      height: 7px;
+    }
+  }
+
+  /* Très grands écrans (27 pouces et plus / QHD / 4K, >= 2200px) */
+  @media (min-width: 2200px) {
+    .blk {
+      --blk-size: 158px;
+      --blk-svg-size: 181.7px;
+      --blk-icon-size: 48px;
+      --blk-icon-svg: 30px;
+      --blk-font-size: 17px;
+      --blk-max-w: 126px;
+      --blk-pill-height: 33px;
+      --blk-pill-font: 16px;
+      --blk-pill-badge: 20px;
+      --blk-pad: 20px 6px 9px 20px;
+    }
+
+    .blk__icon {
+      border-radius: 15px;
+      margin-bottom: 5px;
+    }
+
+    .blk__pill {
+      gap: 8px;
+      margin-top: 6px;
+      padding: 3px 14px;
+    }
+
+    .blk__pill--edit {
+      padding: 2px 8px 2px 14px;
+    }
+
+    .blk__chevron-badge :global(svg) {
+      width: 10px;
+      height: 8px;
+    }
   }
 
   .blk--running {

@@ -515,4 +515,48 @@
       gap: 12px 10px;
     }
   }
+
+  /* Grands écrans de PC fixe (au-delà de 20 pouces, >= 1700px pour ne pas impacter les portables 15" à 1536px) */
+  @media (min-width: 1700px) {
+    .library__title {
+      font-size: 19px;
+    }
+
+    .cat-pill {
+      font-size: 15.5px;
+      padding: 9px 18px;
+    }
+
+    .library__grid {
+      grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
+      gap: 28px 24px;
+    }
+
+    .slot {
+      width: 146px;
+      height: 146px;
+    }
+  }
+
+  /* Très grands écrans (27 pouces et plus / QHD / 4K, >= 2200px) */
+  @media (min-width: 2200px) {
+    .library__title {
+      font-size: 21px;
+    }
+
+    .cat-pill {
+      font-size: 17px;
+      padding: 10px 20px;
+    }
+
+    .library__grid {
+      grid-template-columns: repeat(auto-fill, minmax(172px, 1fr));
+      gap: 32px 28px;
+    }
+
+    .slot {
+      width: 158px;
+      height: 158px;
+    }
+  }
 </style>

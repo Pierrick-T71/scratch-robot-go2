@@ -758,6 +758,90 @@
     }
   }
 
+  /* Grands écrans de PC fixe (au-delà de 20 pouces, >= 1700px pour ne pas impacter les portables 15" à 1536px) */
+  @media (min-width: 1700px) {
+    .program__title {
+      font-size: 21px;
+    }
+
+    .tool {
+      width: 42px;
+      height: 42px;
+    }
+
+    .flag,
+    .stop-btn {
+      width: 50px;
+      height: 50px;
+    }
+
+    .dropzone {
+      width: 146px;
+      min-height: 162px;
+      border-radius: 18px;
+    }
+
+    .dropzone__text {
+      font-size: 12px;
+    }
+
+    .card {
+      width: 146px;
+      height: 170px;
+    }
+
+    .strip {
+      min-height: 204px;
+      padding: 6px 28px 30px 14px;
+    }
+
+    .caret {
+      height: 146px;
+    }
+  }
+
+  /* Très grands écrans (27 pouces et plus / QHD / 4K, >= 2200px) */
+  @media (min-width: 2200px) {
+    .program__title {
+      font-size: 23px;
+    }
+
+    .tool {
+      width: 46px;
+      height: 46px;
+    }
+
+    .flag,
+    .stop-btn {
+      width: 54px;
+      height: 54px;
+    }
+
+    .dropzone {
+      width: 158px;
+      min-height: 176px;
+      border-radius: 20px;
+    }
+
+    .dropzone__text {
+      font-size: 13px;
+    }
+
+    .card {
+      width: 158px;
+      height: 184px;
+    }
+
+    .strip {
+      min-height: 220px;
+      padding: 6px 32px 34px 16px;
+    }
+
+    .caret {
+      height: 158px;
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .flag--busy,
     .caret {
