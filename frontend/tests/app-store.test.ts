@@ -25,6 +25,7 @@ const apiMock = {
   connectRobot: vi.fn(),
   jumpManual: vi.fn(),
   setStandby: vi.fn(),
+  resetSimulation: vi.fn(),
 };
 
 vi.mock('../src/lib/api/client', async (importOriginal) => {
@@ -256,5 +257,27 @@ describe('mode autonome', () => {
       'Mode autonome désactivé : Obstacle détecté devant le robot (38 cm).',
     );
     expect(app.status.autonomousActive).toBe(false);
+  });
+});
+
+describe('réinitialisation de la simulation', () => {
+  it('remet la position et le cap au centre et appelle le service', async () => {
+    app.status.position = { x: 1.5, y: 0.8, z: 0 };
+    app.status.yawRad = 1.2;
+
+    apiMock.resetSimulation.mockResolvedValueOnce({
+      ok: true,
+      status: {
+        ...statutDeBase(),
+        position: { x: 0, y: 0, z: 0 },
+        yawRad: 0,
+      },
+    });
+
+    await app.resetSimulation();
+
+    expect(apiMock.resetSimulation).toHaveBeenCalled();
+    expect(app.status.position).toEqual({ x: 0, y: 0, z: 0 });
+    expect(app.status.yawRad).toBe(0);
   });
 });

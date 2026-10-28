@@ -44,6 +44,8 @@
     yawRad?: number | null;
     /** Réinitialisation au début d'un nouveau lancement. */
     resetRun?: boolean;
+    /** Déclencheur manuel de recentrage (remettre au milieu). */
+    resetTrigger?: number;
   }
 
   let {
@@ -56,6 +58,7 @@
     position = null,
     yawRad = null,
     resetRun = false,
+    resetTrigger = 0,
   }: Props = $props();
 
   let canvas = $state<HTMLCanvasElement | undefined>();
@@ -252,6 +255,7 @@
     );
     controles?.target.set(viseX, CAMERA_VISEE_Y, viseZ);
     camera.lookAt(viseX, CAMERA_VISEE_Y, viseZ);
+    controles?.update();
   }
 
   /** La couleur d'un cube, selon sa hauteur relative. */
@@ -890,27 +894,43 @@
     }
   });
 
+  /**
+   * Replace le robot au milieu de la carte (position 0,0,0 et cap 0) et
+   * replace la caméra directement derrière lui.
+   */
+  export function recentrer(): void {
+    robotX = 0;
+    robotZ = 0;
+    robotCap = 0;
+    cibleX = 0;
+    cibleZ = 0;
+    cibleCap = 0;
+    prevChienX = 0;
+    prevChienZ = 0;
+    gesteActif = null;
+    gesteTemps = 0;
+    capChien = 0;
+    suiviDesactiveParClicDroit = false;
+    clicDroitEnCours = false;
+    if (chien) {
+      chien.position.x = 0;
+      chien.position.z = 0;
+      chien.rotation.y = Math.PI / 2;
+    }
+    poserCameraDerriere();
+  }
+
+  let dernierResetVu = 0;
   $effect(() => {
     if (resetRun) {
-      robotX = 0;
-      robotZ = 0;
-      robotCap = 0;
-      cibleX = 0;
-      cibleZ = 0;
-      cibleCap = 0;
-      prevChienX = 0;
-      prevChienZ = 0;
-      gesteActif = null;
-      gesteTemps = 0;
-      capChien = 0;
-      suiviDesactiveParClicDroit = false;
-      clicDroitEnCours = false;
-      if (chien) {
-        chien.position.x = 0;
-        chien.position.z = 0;
-        chien.rotation.y = Math.PI / 2;
-      }
-      poserCameraDerriere();
+      recentrer();
+    }
+  });
+
+  $effect(() => {
+    if (resetTrigger > 0 && resetTrigger !== dernierResetVu) {
+      dernierResetVu = resetTrigger;
+      recentrer();
     }
   });
 

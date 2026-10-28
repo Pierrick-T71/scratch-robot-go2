@@ -404,6 +404,21 @@ class AppState {
     }
   }
 
+  /** Réinitialise la simulation en replaçant le robot au centre de la carte. */
+  async resetSimulation(): Promise<void> {
+    this.status = {
+      ...this.status,
+      position: { x: 0, y: 0, z: 0 },
+      yawRad: 0,
+    };
+    try {
+      const res = await api.resetSimulation();
+      this.status = res.status;
+    } catch {
+      /* si le service n'est pas joignable, l'état local a déjà été remis à zéro */
+    }
+  }
+
   /** Déclenche un saut en mode manuel (barre espace ou bouton mobile). */
   async jumpManual(
     source: 'keyboard' | 'mobile' = 'keyboard',

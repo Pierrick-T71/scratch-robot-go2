@@ -160,6 +160,12 @@ class SimulatedAdapter:
             self._posture = Posture.STAND
             await self._do_wait(1.0, -1, StopSignal())
 
+    def reset_position(self) -> None:
+        """Remet le robot au centre de la carte (position 0,0,0 et cap 0)."""
+        self._position = [0.0, 0.0, 0.0]
+        self._yaw = 0.0
+        self._state = RobotState.IDLE
+
     async def manual_prepare(self) -> None:
         """Le simulateur accepte le mode manuel, sans mouvement réel."""
         await self.prepare_run()

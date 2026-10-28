@@ -27,6 +27,7 @@
     /** Réinitialisation au début d'un nouveau lancement. */
     resetRun?: boolean;
     onOpenRobot: () => void;
+    onResetSimulation?: () => void;
   }
 
   let {
@@ -37,7 +38,12 @@
     action = null,
     resetRun = false,
     onOpenRobot,
+    onResetSimulation,
   }: Props = $props();
+
+  let resetTrigger = $state(0);
+  let isResetting = $state(false);
+  let lidarSceneRef = $state<ReturnType<typeof LidarScene> | undefined>();
 
   /** La caméra du robot est-elle à l'écran ? */
   let camera = $state(false);
@@ -131,12 +137,32 @@
     camera = false;
     cameraFailed = false;
   }
+
+  /** Réinitialise la simulation et recentre le robot au milieu de la scène. */
+  function handleResetSimulation(): void {
+    if (camera) {
+      camera = false;
+      cameraFailed = false;
+    }
+    if (lidar) {
+      lidar = false;
+    }
+    resetTrigger += 1;
+    isResetting = true;
+    setTimeout(() => {
+      isResetting = false;
+    }, 500);
+
+    lidarSceneRef?.recentrer?.();
+    onResetSimulation?.();
+  }
 </script>
 
 <aside class="robot" aria-label="État du robot">
   <div class="scene">
     <div class="scene__robot">
       <LidarScene
+        bind:this={lidarSceneRef}
         volume={lidar ? volume : null}
         {walking}
         {sprinting}
@@ -146,6 +172,7 @@
         position={status.position}
         yawRad={status.yawRad}
         {resetRun}
+        {resetTrigger}
       />
     </div>
 
@@ -206,6 +233,17 @@
             ? 'Robot réel'
             : 'Simulation'}
     </span>
+
+    <button
+      type="button"
+      class="scene__btn scene__btn--bottom-right"
+      class:scene__btn--spinning={isResetting}
+      aria-label="Recentrer le robot au milieu de la carte"
+      title="Recentrer le robot au milieu de la carte"
+      onclick={handleResetSimulation}
+    >
+      <Icon name="refresh" size={18} />
+    </button>
   </div>
 
   <div class="robot__foot">
@@ -359,6 +397,25 @@
 
   .scene__btn--right {
     right: 14px;
+  }
+
+  .scene__btn--bottom-right {
+    top: auto;
+    bottom: 14px;
+    right: 14px;
+  }
+
+  .scene__btn--spinning :global(.icon) {
+    animation: spin-refresh 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  @keyframes spin-refresh {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   /* Bouton actif : la caméra ou le lidar est à l'écran. */

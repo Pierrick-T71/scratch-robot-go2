@@ -446,6 +446,7 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
         action={effectiveAction}
         resetRun={app.execution === 'starting'}
         onOpenRobot={openRobot}
+        onResetSimulation={() => void app.resetSimulation()}
       />
     </div>
 

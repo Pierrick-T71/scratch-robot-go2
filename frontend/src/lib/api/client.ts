@@ -269,6 +269,12 @@ export const api = {
   stop: (): Promise<{ stopping: boolean }> =>
     request('/api/execution/stop', { method: 'POST' }),
 
+  /** Réinitialise la simulation (remet le robot au centre de la carte). */
+  resetSimulation: (): Promise<{ ok: boolean; status: RobotStatus }> =>
+    request<{ ok: boolean; status: RobotStatus }>('/api/simulation/reset', {
+      method: 'POST',
+    }),
+
   /** Ouvre le mode manuel (ZQSD et flèches). Aucun mouvement n'est envoyé ici. */
   startManual: (adultAuthorised: boolean): Promise<{ active: boolean }> =>
     request('/api/manual/start', {

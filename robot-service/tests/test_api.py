@@ -281,6 +281,16 @@ class TestEndToEndExecution:
         assert status["yawRad"] is not None
         assert abs(status["yawRad"]) > 1.0, f"le robot n'a pas tourné : {status['yawRad']}"
 
+    def test_reset_simulation_repositions_robot_to_origin(self, client):
+        # Le robot a bougé ou tourné : reset le remet au centre (0, 0, 0) avec cap 0
+        reset_resp = client.post("/api/simulation/reset")
+        assert reset_resp.status_code == 200
+        assert reset_resp.json()["ok"] is True
+
+        status = client.get("/api/status").json()
+        assert status["position"] == {"x": 0.0, "y": 0.0, "z": 0.0}
+        assert status["yawRad"] == 0.0
+
 
 class TestObstacleSafetySwitch:
     """Le commutateur de sécurité lidar, côté service.

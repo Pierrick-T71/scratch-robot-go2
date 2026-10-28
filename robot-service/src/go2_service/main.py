@@ -774,6 +774,22 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
                 raise HTTPException(status_code=403, detail=str(exc)) from exc
         return await state.status_payload()
 
+    @app.post("/api/simulation/reset")
+    async def reset_simulation() -> dict[str, Any]:
+        """Réinitialise la simulation en replaçant le robot au centre de la carte."""
+        if state.mode == "simulation":
+            if state.engine.is_running:
+                state.engine.request_stop()
+            if hasattr(state.adapter, "reset_position"):
+                state.adapter.reset_position()
+            elif hasattr(state.adapter, "_position"):
+                state.adapter._position = [0.0, 0.0, 0.0]
+                state.adapter._yaw = 0.0
+            await state.hub.broadcast(
+                {"type": "status", "status": await state.status_payload()}
+            )
+        return {"ok": True, "status": await state.status_payload()}
+
     @app.post("/api/safety/obstacles")
     async def set_obstacle_safety(payload: ObstacleSafetyRequest) -> dict[str, Any]:
         if state.standby or state.standby_transition:
