@@ -296,6 +296,15 @@ class ManualCrouchRequest(BaseModel):
     enabled: bool
 
 
+class ManualActionRequest(BaseModel):
+    """Déclenchement d'une action ou posture manuelle (clavier ou manette mobile)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: str
+    source: Literal["keyboard", "mobile", "default"] = "mobile"
+
+
 class SettingsRequest(BaseModel):
     """Modification des limites pédagogiques.
 
@@ -963,6 +972,47 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
 
         try:
             blocked, message = await state.manual.jump(source=source)
+        except ManualNotActive as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        return {
+            "ok": not blocked,
+            "blocked": blocked,
+            "message": message,
+        }
+
+    @app.post("/api/manual/action")
+    async def manual_action(payload: ManualActionRequest) -> dict[str, Any]:
+        """Déclenche une action ou posture en mode manuel (debout, assis, couché, coeur, salut, etc.)."""
+        if state.standby or state.standby_transition:
+            raise HTTPException(
+                status_code=409,
+                detail="Le robot est en veille. Réveille-le avant de le piloter.",
+            )
+        if not state.manual.active:
+            raise HTTPException(
+                status_code=409,
+                detail="Le mode manuel n’est pas ouvert.",
+            )
+        if state.engine.is_running:
+            await state.manual.stop()
+            raise HTTPException(
+                status_code=409,
+                detail="Un programme a pris la main : mode manuel arrêté.",
+            )
+        if state.mode == "real":
+            statut = await state.adapter.get_status()
+            if not statut.connected:
+                await state.manual.stop()
+                raise HTTPException(
+                    status_code=409,
+                    detail="Le robot n’est pas connecté : action manuelle impossible.",
+                )
+
+        try:
+            blocked, message = await state.manual.execute_action(
+                payload.action, source=payload.source
+            )
         except ManualNotActive as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 

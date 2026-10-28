@@ -437,6 +437,30 @@ class AppState {
     }
   }
 
+  /** Déclenche une action ou posture en mode manuel (debout, assis, couché, coeur, salut, etc.). */
+  async actionManual(
+    action: string,
+    source: 'keyboard' | 'mobile' = 'mobile',
+  ): Promise<{ ok: boolean; blocked: boolean; message: string | null }> {
+    if (['stand', 'sit', 'lie_down', 'balance'].includes(action)) {
+      this.status = { ...this.status, posture: action as any };
+    }
+    try {
+      const res = await api.actionManual(action, source);
+      await this.refreshStatus();
+      return res;
+    } catch (error) {
+      return {
+        ok: false,
+        blocked: true,
+        message:
+          error instanceof ServiceError
+            ? error.message
+            : 'Erreur lors de l’action manuelle.',
+      };
+    }
+  }
+
   /** Active ou désactive le mode accroupi manuel (déplacement lent, fluide et stable). */
   async toggleCrouchManual(): Promise<boolean> {
     const target = !(this.status.manualCrouchActive ?? false);

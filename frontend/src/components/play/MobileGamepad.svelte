@@ -2,11 +2,12 @@
   /**
    * Manette mobile en mode paysage pour piloter le Go2 Pro.
    *
-   * Optimisée pour iPhone (iPhone 16 et écrans tactiles récents) :
+   * Optimisée pour smartphones (iPhone, Android) en paysage :
    *  - Utilisation de 100dvh et des safe-area insets pour éviter tout débordement
-   *  - Dimensions adaptées pour que le bouton Sauter et les joysticks soient 100% visibles
-   *  - Bouton Plein Écran pour masquer la barre d'adresse et les onglets du navigateur
    *  - Joystick gauche 2D (ZQSD) et joystick droit (rotation)
+   *  - Boutons d'action rapides sous les deux joysticks avec uniquement les logos
+   *  - Scène 3D robot active qui se déplace en simulation sur la grille comme sur le site
+   *  - Bascule Robot 3D / LiDAR / Caméra et bouton plein écran
    */
   import { onMount, onDestroy } from 'svelte';
   import Icon from './Icon.svelte';
@@ -26,6 +27,11 @@
   let showIosTip = $state(false);
   let tipTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // Recentrage simulation
+  let resetTrigger = $state(0);
+  let isResetting = $state(false);
+  let lidarSceneRef = $state<ReturnType<typeof LidarScene> | undefined>();
+
   // Joystick gauche : 2D (Avance/Recul = Z/S, Gauche/Droite = Q/D)
   let leftX = $state(0);
   let leftY = $state(0);
@@ -39,6 +45,8 @@
 
   let activeDirection = $state<ManualDirection | null>(null);
   let isJumping = $state(false);
+  let runningAction = $state<string | null>(null);
+  let actionTimeout: ReturnType<typeof setTimeout> | null = null;
   let feedbackMessage = $state<string | null>(null);
 
   let renewalTimer: ReturnType<typeof setInterval> | null = null;
@@ -48,6 +56,30 @@
   const MAX_RADIUS = 36;
   const THRESHOLD = 12;
   const cameraUrl = `${SERVICE_URL}/api/robot/camera`;
+
+  // Posture et geste effectifs pour le modèle 3D
+  const effectivePosture = $derived(
+    runningAction === 'sit' || runningAction === 'heart'
+      ? 'sit'
+      : runningAction === 'lie_down'
+        ? 'lie_down'
+        : runningAction === 'stand' ||
+            runningAction === 'balance' ||
+            runningAction === 'salute' ||
+            runningAction === 'stretch' ||
+            runningAction === 'jump'
+          ? 'stand'
+          : (app.status.posture ?? 'stand'),
+  );
+
+  const effectiveAction = $derived(
+    runningAction === 'salute' ||
+      runningAction === 'heart' ||
+      runningAction === 'stretch' ||
+      runningAction === 'jump'
+      ? runningAction
+      : null,
+  );
 
   function checkOrientation(): void {
     if (typeof window !== 'undefined') {
@@ -79,7 +111,6 @@
         } else if (el.webkitRequestFullscreen) {
           await el.webkitRequestFullscreen();
         } else {
-          // iOS Safari sur iPhone ne permet pas requestFullscreen sur l'élément document
           triggerIosTip();
         }
       } else {
@@ -101,6 +132,16 @@
     tipTimer = setTimeout(() => {
       showIosTip = false;
     }, 5000);
+  }
+
+  function handleResetSimulation(): void {
+    resetTrigger += 1;
+    isResetting = true;
+    setTimeout(() => {
+      isResetting = false;
+    }, 500);
+    lidarSceneRef?.recentrer?.();
+    void app.resetSimulation();
   }
 
   function clearRenewal(): void {
@@ -160,6 +201,9 @@
       return;
     }
 
+    // Mise à jour de la position simulée
+    void app.refreshStatus();
+
     clearRenewal();
     renewalTimer = setInterval(async () => {
       if (activeDirection === null) return;
@@ -167,6 +211,9 @@
       if (res.blocked) {
         feedbackMessage = res.message ?? 'Mouvement bloqué.';
         stopAllMotion();
+      } else {
+        // En simulation, rafraîchir le statut met à jour position et yawRad pour faire bouger le robot 3D
+        void app.refreshStatus();
       }
     }, 180);
   }
@@ -268,20 +315,44 @@
     }
   }
 
-  async function handleJump(): Promise<void> {
-    if (isJumping) return;
+  // --- Exécution des actions et postures (boutons sous les joysticks) ---
+  async function triggerAction(actionName: string): Promise<void> {
+    if (isJumping || runningAction !== null) return;
     stopAllMotion();
-    isJumping = true;
     feedbackMessage = null;
+
+    if (actionName === 'jump') {
+      isJumping = true;
+      runningAction = 'jump';
+      try {
+        const result = await app.jumpManual('mobile');
+        if (result.blocked) {
+          feedbackMessage = result.message ?? 'Le robot n’a pas pu sauter.';
+        }
+      } catch {
+        feedbackMessage = 'Erreur lors du saut.';
+      } finally {
+        setTimeout(() => {
+          isJumping = false;
+          runningAction = null;
+        }, 800);
+      }
+      return;
+    }
+
+    runningAction = actionName;
+    if (actionTimeout) clearTimeout(actionTimeout);
+    actionTimeout = setTimeout(() => {
+      runningAction = null;
+    }, 2800);
+
     try {
-      const result = await app.jumpManual('mobile');
-      if (result.blocked) {
-        feedbackMessage = result.message ?? 'Le robot n’a pas pu sauter.';
+      const result = await app.actionManual(actionName, 'mobile');
+      if (result.blocked && result.message) {
+        feedbackMessage = result.message;
       }
     } catch {
-      feedbackMessage = 'Erreur lors du saut.';
-    } finally {
-      isJumping = false;
+      feedbackMessage = 'Erreur lors de l’action.';
     }
   }
 
@@ -324,6 +395,7 @@
     return () => {
       lidarPollingActive = false;
       if (tipTimer) clearTimeout(tipTimer);
+      if (actionTimeout) clearTimeout(actionTimeout);
       window.removeEventListener('resize', checkOrientation);
       window.removeEventListener('orientationchange', checkOrientation);
       window.removeEventListener('fullscreenchange', updateFullscreenState);
@@ -355,30 +427,26 @@
     </div>
   </div>
 {:else}
-  <!-- Manette mobile complète adaptée aux écrans iPhone en paysage -->
+  <!-- Manette mobile complète 100% responsive en mode paysage -->
   <div class="mobile-gamepad" role="region" aria-label="Manette de pilotage mobile">
-    <!-- Notification d'astuce plein écran iOS -->
+    <!-- Notification astuce plein écran iOS -->
     {#if showIosTip}
       <div class="ios-tip-toast" role="status">
-        <span>💡 <strong>Astuce iPhone :</strong> Touchez <strong>Partager ⎋</strong> puis <strong>« Sur l'écran d'accueil ⊞ »</strong> pour cacher totalement l'URL et les onglets !</span>
+        <span>💡 <strong>Astuce iPhone :</strong> Touchez <strong>Partager ⎋</strong> puis <strong>« Sur l'écran d'accueil ⊞ »</strong> pour masquer la barre web !</span>
         <button type="button" class="ios-tip-close" onclick={() => { showIosTip = false; }}>×</button>
       </div>
     {/if}
 
-    <!-- Zone principale : 3 colonnes optimisées (Stick gauche, Scène centrale + Sauter, Stick droit) -->
     <main class="mobile-gamepad__arena">
-      <!-- Colonne Joystick Gauche (Avancer / Reculer / Gauche / Droite) -->
-      <section class="stick-zone stick-zone--left" aria-label="Contrôle déplacement ZQSD">
-        <div class="stick-label stick-label--top" class:stick-label--active={leftDir === 'forward'}>
-          ▲ AVANCER (Z)
-        </div>
-
-        <div class="stick-h-labels">
-          <span class="stick-label" class:stick-label--active={leftDir === 'left'}>
-            ◀ Q
-          </span>
-          <span class="stick-label" class:stick-label--active={leftDir === 'right'}>
-            D ▶
+      <!-- Colonne Gauche : Joystick Déplacement ZQSD + Boutons Posture sous le stick -->
+      <section class="stick-zone stick-zone--left" aria-label="Déplacement">
+        <div class="stick-header">
+          <span class="stick-badge" class:stick-badge--active={leftDir !== null}>
+            {#if leftDir === 'forward'}▲ AVANCER
+            {:else if leftDir === 'backward'}▼ RECULER
+            {:else if leftDir === 'left'}◀ GAUCHE
+            {:else if leftDir === 'right'}DROITE ▶
+            {:else}ZQSD{/if}
           </span>
         </div>
 
@@ -405,15 +473,58 @@
           </div>
         </div>
 
-        <div class="stick-label stick-label--bottom" class:stick-label--active={leftDir === 'backward'}>
-          ▼ RECULER (S)
+        <!-- 4 boutons d'action sous le joystick gauche avec uniquement les logos -->
+        <div class="action-pad" aria-label="Postures du robot">
+          <button
+            type="button"
+            class="action-btn"
+            class:action-btn--active={effectivePosture === 'stand' && runningAction === null}
+            onclick={() => triggerAction('stand')}
+            title="Se mettre debout"
+            aria-label="Se mettre debout"
+          >
+            <Icon name="stand" size={19} />
+          </button>
+
+          <button
+            type="button"
+            class="action-btn"
+            class:action-btn--active={effectivePosture === 'sit' && runningAction === null}
+            onclick={() => triggerAction('sit')}
+            title="S'asseoir"
+            aria-label="S'asseoir"
+          >
+            <Icon name="sit" size={19} />
+          </button>
+
+          <button
+            type="button"
+            class="action-btn"
+            class:action-btn--active={effectivePosture === 'lie_down' && runningAction === null}
+            onclick={() => triggerAction('lie_down')}
+            title="Se coucher"
+            aria-label="Se coucher"
+          >
+            <Icon name="moon" size={19} />
+          </button>
+
+          <button
+            type="button"
+            class="action-btn"
+            class:action-btn--active={effectivePosture === 'balance' && runningAction === null}
+            onclick={() => triggerAction('balance')}
+            title="Faire le beau"
+            aria-label="Faire le beau"
+          >
+            <Icon name="balance" size={19} />
+          </button>
         </div>
       </section>
 
-      <!-- Colonne Centrale (Scène LiDAR/Caméra + Barre d'outils + Bouton Sauter) -->
+      <!-- Colonne Centrale : Scène 3D Robot / LiDAR / Caméra avec mouvement complet en simulation -->
       <section class="center-stage" aria-label="Vue du robot">
-        <!-- Barre de sélection supérieure : Bascule vue + Plein écran -->
-        <div class="center-stage__view-toggle">
+        <!-- Barre supérieure : Bascule vue, état connexion, bouton plein écran -->
+        <header class="center-stage__bar">
           <div class="toggle-group">
             <button
               type="button"
@@ -422,7 +533,7 @@
               onclick={() => { viewMode = 'lidar'; cameraFailed = false; }}
             >
               <Icon name="radar" size={13} />
-              <span>LiDAR 3D</span>
+              <span>Scène 3D</span>
             </button>
             <button
               type="button"
@@ -435,29 +546,55 @@
             </button>
           </div>
 
-          <!-- Bouton Plein écran pour cacher les barres web -->
+          <!-- Indicateur d'état -->
+          <div class="status-indicator">
+            <span class="status-dot" class:status-dot--connected={app.status.connected}></span>
+            <span class="status-text">{app.status.connected ? 'Connecté' : 'Simulation'}</span>
+            {#if app.status.batteryPercent !== null}
+              <span class="status-battery">{Math.round(app.status.batteryPercent)}%</span>
+            {/if}
+          </div>
+
+          <!-- Plein écran -->
           <button
             type="button"
             class="fullscreen-btn"
             class:fullscreen-btn--active={isFullscreen}
             onclick={toggleFullscreen}
-            title={isFullscreen ? 'Quitter le plein écran' : 'Passer en plein écran'}
+            title={isFullscreen ? 'Quitter le plein écran' : 'Plein écran'}
+            aria-label={isFullscreen ? 'Quitter le plein écran' : 'Plein écran'}
           >
             <Icon name={isFullscreen ? 'compress' : 'expand'} size={13} />
-            <span>{isFullscreen ? 'Réduire' : 'Plein écran'}</span>
           </button>
-        </div>
+        </header>
 
-        <!-- Rendu LiDAR ou Caméra : flex 1 pour s'adapter à la hauteur -->
+        <!-- Viewport 3D ou Caméra : le robot bouge en temps réel sur la carte comme sur le site -->
         <div class="center-stage__viewport">
           {#if viewMode === 'lidar'}
-            <div class="center-stage__lidar-wrap">
+            <div class="center-stage__scene-wrap">
               <LidarScene
+                bind:this={lidarSceneRef}
                 volume={lidarVolume}
                 walking={activeDirection !== null}
-                interactive={false}
-                posture={app.status.posture}
+                interactive={true}
+                posture={effectivePosture}
+                action={effectiveAction}
+                position={app.status.position}
+                yawRad={app.status.yawRad}
+                {resetTrigger}
               />
+
+              <!-- Bouton pour recentrer le robot au milieu de la carte -->
+              <button
+                type="button"
+                class="recenter-btn"
+                class:recenter-btn--spinning={isResetting}
+                onclick={handleResetSimulation}
+                title="Recentrer le robot au centre de la carte"
+                aria-label="Recentrer le robot"
+              >
+                <Icon name="refresh" size={16} />
+              </button>
             </div>
           {:else}
             <div class="center-stage__camera-wrap">
@@ -489,31 +626,15 @@
             </div>
           {/if}
         </div>
-
-        <!-- Bouton d'action : Sauter -->
-        <div class="center-stage__actions">
-          <button
-            type="button"
-            class="jump-button"
-            class:jump-button--active={isJumping}
-            disabled={isJumping}
-            onclick={handleJump}
-            title="Faire sauter le robot"
-          >
-            <Icon name="paw" size={16} />
-            <span>{isJumping ? 'Saut...' : 'SAUTER'}</span>
-          </button>
-        </div>
       </section>
 
-      <!-- Colonne Joystick Droit (Rotation Gauche / Droite) -->
-      <section class="stick-zone stick-zone--right" aria-label="Contrôle rotation">
-        <div class="stick-h-labels">
-          <span class="stick-label" class:stick-label--active={rightTurn === 'turn_left'}>
-            ↺ PIVOT G.
-          </span>
-          <span class="stick-label" class:stick-label--active={rightTurn === 'turn_right'}>
-            PIVOT D. ↻
+      <!-- Colonne Droite : Joystick Rotation + Boutons d'Action sous le stick -->
+      <section class="stick-zone stick-zone--right" aria-label="Rotation">
+        <div class="stick-header">
+          <span class="stick-badge" class:stick-badge--active={rightTurn !== null}>
+            {#if rightTurn === 'turn_left'}↺ PIVOT G.
+            {:else if rightTurn === 'turn_right'}PIVOT D. ↻
+            {:else}ROTATION{/if}
           </span>
         </div>
 
@@ -539,8 +660,51 @@
           </div>
         </div>
 
-        <div class="stick-hint">
-          {rightTurn === 'turn_left' ? 'Rotation G' : rightTurn === 'turn_right' ? 'Rotation D' : 'Rotation'}
+        <!-- 4 boutons d'action sous le joystick droit avec uniquement les logos -->
+        <div class="action-pad" aria-label="Actions spéciales">
+          <button
+            type="button"
+            class="action-btn action-btn--jump"
+            class:action-btn--active={isJumping || runningAction === 'jump'}
+            onclick={() => triggerAction('jump')}
+            title="Sauter"
+            aria-label="Sauter"
+          >
+            <Icon name="paw" size={19} />
+          </button>
+
+          <button
+            type="button"
+            class="action-btn"
+            class:action-btn--active={runningAction === 'salute'}
+            onclick={() => triggerAction('salute')}
+            title="Saluer"
+            aria-label="Saluer"
+          >
+            <Icon name="hand" size={19} />
+          </button>
+
+          <button
+            type="button"
+            class="action-btn action-btn--heart"
+            class:action-btn--active={runningAction === 'heart'}
+            onclick={() => triggerAction('heart')}
+            title="Faire un cœur"
+            aria-label="Faire un cœur"
+          >
+            <Icon name="heart" size={19} />
+          </button>
+
+          <button
+            type="button"
+            class="action-btn"
+            class:action-btn--active={runningAction === 'stretch'}
+            onclick={() => triggerAction('stretch')}
+            title="S'étirer"
+            aria-label="S'étirer"
+          >
+            <Icon name="stretch" size={19} />
+          </button>
         </div>
       </section>
     </main>
@@ -661,7 +825,7 @@
     inset: 0;
     z-index: 2000;
     display: flex;
-    background: #0a0f1d;
+    background: #080c16;
     color: #f1f5f9;
     overflow: hidden;
     user-select: none;
@@ -670,17 +834,17 @@
     height: 100vh;
     padding-top: max(4px, env(safe-area-inset-top));
     padding-bottom: max(6px, env(safe-area-inset-bottom));
-    padding-left: max(10px, env(safe-area-inset-left));
-    padding-right: max(10px, env(safe-area-inset-right));
+    padding-left: max(8px, env(safe-area-inset-left));
+    padding-right: max(8px, env(safe-area-inset-right));
     box-sizing: border-box;
   }
 
-  /* Grille 3 colonnes ajustée pour iPhone */
+  /* Grille 3 colonnes ultra-responsive */
   .mobile-gamepad__arena {
     flex: 1;
     display: grid;
-    grid-template-columns: 140px 1fr 140px;
-    gap: 8px;
+    grid-template-columns: clamp(100px, 20vw, 140px) 1fr clamp(100px, 20vw, 140px);
+    gap: clamp(6px, 1.5vw, 12px);
     padding: 2px 4px;
     overflow: hidden;
     height: 100%;
@@ -688,55 +852,61 @@
     box-sizing: border-box;
   }
 
-  /* Colonnes joysticks */
+  /* Colonnes latérales joysticks + boutons d'action */
   .stick-zone {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
-    gap: 4px;
+    justify-content: space-evenly;
+    height: 100%;
+    min-height: 0;
     position: relative;
     touch-action: none;
   }
 
-  .stick-label {
-    font-size: 0.68rem;
-    font-weight: 700;
-    letter-spacing: 0.03em;
-    color: #64748b;
-    transition: color 0.1s ease;
+  .stick-header {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 22px;
   }
 
-  .stick-label--active {
+  .stick-badge {
+    font-size: 0.65rem;
+    font-weight: 750;
+    letter-spacing: 0.04em;
+    color: #64748b;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    transition: all 0.1s ease;
+    white-space: nowrap;
+  }
+
+  .stick-badge--active {
     color: #60a5fa;
+    border-color: rgba(96, 165, 250, 0.4);
+    background: rgba(59, 130, 246, 0.15);
     text-shadow: 0 0 6px rgba(96, 165, 250, 0.6);
   }
 
-  .stick-h-labels {
-    display: flex;
-    justify-content: space-between;
-    width: 125px;
-    padding: 0 2px;
-  }
-
-  .stick-hint {
-    font-size: 0.68rem;
-    color: #64748b;
-  }
-
+  /* Base du joystick */
   .stick-base {
     position: relative;
-    width: 108px;
-    height: 108px;
+    width: clamp(84px, 21vh, 106px);
+    height: clamp(84px, 21vh, 106px);
     border-radius: 50%;
-    background: radial-gradient(circle, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.95) 100%);
-    border: 2px solid rgba(255, 255, 255, 0.12);
-    box-shadow: inset 0 3px 10px rgba(0, 0, 0, 0.6), 0 3px 10px rgba(0, 0, 0, 0.4);
+    background: radial-gradient(circle, rgba(30, 41, 59, 0.85) 0%, rgba(15, 23, 42, 0.98) 100%);
+    border: 2px solid rgba(255, 255, 255, 0.14);
+    box-shadow: inset 0 3px 10px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.4);
     display: grid;
     place-items: center;
     cursor: grab;
     touch-action: none;
     outline: none;
+    flex: none;
     transition: border-color 0.15s;
   }
 
@@ -753,23 +923,23 @@
 
   .stick-axis--vertical {
     width: 3px;
-    height: 74px;
+    height: 70%;
     border-radius: 2px;
   }
 
   .stick-axis--horizontal {
-    width: 74px;
+    width: 70%;
     height: 3px;
     border-radius: 2px;
   }
 
   .stick-knob {
     position: absolute;
-    width: 44px;
-    height: 44px;
+    width: clamp(38px, 9vh, 44px);
+    height: clamp(38px, 9vh, 44px);
     border-radius: 50%;
     background: linear-gradient(145deg, #3b82f6, #1d4ed8);
-    border: 2px solid rgba(255, 255, 255, 0.4);
+    border: 2px solid rgba(255, 255, 255, 0.45);
     box-shadow: 0 3px 8px rgba(0, 0, 0, 0.5), inset 0 2px 3px rgba(255, 255, 255, 0.3);
     display: grid;
     place-items: center;
@@ -784,11 +954,68 @@
   }
 
   .stick-knob__grip {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.2);
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    background: rgba(255, 255, 255, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.35);
+  }
+
+  /* Pavé d'action sous les joysticks (2x2 avec uniquement les logos) */
+  .action-pad {
+    flex: none;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: clamp(5px, 1.2vh, 8px);
+    width: clamp(80px, 18vh, 98px);
+    touch-action: manipulation;
+  }
+
+  .action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 1 / 1;
+    width: 100%;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255, 255, 255, 0.16);
+    background: linear-gradient(145deg, #1e293b, #0f172a);
+    color: #94a3b8;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.1),
+      0 3px 8px rgba(0, 0, 0, 0.45);
+    cursor: pointer;
+    touch-action: manipulation;
+    transition: transform 0.08s ease, background 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+  }
+
+  .action-btn:active {
+    transform: scale(0.92);
+  }
+
+  .action-btn--active {
+    background: linear-gradient(145deg, #3b82f6, #1d4ed8);
+    border-color: #60a5fa;
+    color: #ffffff;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.3),
+      0 0 14px rgba(59, 130, 246, 0.55);
+  }
+
+  .action-btn--jump.action-btn--active {
+    background: linear-gradient(145deg, #ec4899, #be185d);
+    border-color: #f472b6;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.3),
+      0 0 14px rgba(236, 72, 153, 0.55);
+  }
+
+  .action-btn--heart.action-btn--active {
+    background: linear-gradient(145deg, #f43f5e, #be123c);
+    border-color: #fb7185;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.3),
+      0 0 14px rgba(244, 63, 94, 0.55);
   }
 
   /* Colonne centrale */
@@ -800,7 +1027,7 @@
     min-height: 0;
   }
 
-  .center-stage__view-toggle {
+  .center-stage__bar {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -838,10 +1065,40 @@
     box-shadow: 0 2px 6px rgba(37, 99, 235, 0.35);
   }
 
+  .status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.68rem;
+    color: #94a3b8;
+    font-weight: 600;
+  }
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #eab308;
+  }
+
+  .status-dot--connected {
+    background: #22c55e;
+    box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+  }
+
+  .status-battery {
+    padding: 1px 5px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    font-size: 0.65rem;
+    color: #cbd5e1;
+  }
+
   .fullscreen-btn {
     background: rgba(255, 255, 255, 0.06);
     border-color: rgba(255, 255, 255, 0.18);
     color: #cbd5e1;
+    padding: 3px 8px;
   }
 
   .fullscreen-btn:hover,
@@ -851,17 +1108,18 @@
     color: #60a5fa;
   }
 
+  /* Viewport central */
   .center-stage__viewport {
     position: relative;
     flex: 1 1 0;
     min-height: 0;
-    border-radius: 10px;
+    border-radius: 12px;
     background: #030712;
     border: 1px solid rgba(255, 255, 255, 0.1);
     overflow: hidden;
   }
 
-  .center-stage__lidar-wrap,
+  .center-stage__scene-wrap,
   .center-stage__camera-wrap {
     width: 100%;
     height: 100%;
@@ -884,6 +1142,44 @@
     color: #64748b;
     gap: 6px;
     font-size: 0.8rem;
+  }
+
+  /* Bouton de recentrage au centre de la carte */
+  .recenter-btn {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    z-index: 10;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(15, 23, 42, 0.75);
+    color: #cbd5e1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    backdrop-filter: blur(4px);
+    transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease;
+  }
+
+  .recenter-btn:hover {
+    background: rgba(30, 41, 59, 0.9);
+    color: #ffffff;
+  }
+
+  .recenter-btn:active {
+    transform: scale(0.92);
+  }
+
+  .recenter-btn--spinning :global(svg) {
+    animation: spin 0.5s ease-in-out;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
   }
 
   .arbitration-badge {
@@ -910,10 +1206,10 @@
 
   .feedback-badge {
     position: absolute;
-    bottom: 6px;
+    bottom: 8px;
     left: 50%;
     transform: translateX(-50%);
-    background: rgba(239, 68, 68, 0.85);
+    background: rgba(239, 68, 68, 0.88);
     color: #ffffff;
     font-size: 0.72rem;
     font-weight: 600;
@@ -921,44 +1217,6 @@
     border-radius: 999px;
     backdrop-filter: blur(4px);
     box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
-  }
-
-  /* Bouton d'action : Sauter */
-  .center-stage__actions {
-    flex: none;
-    display: flex;
-    justify-content: center;
-    padding-top: 2px;
-  }
-
-  .jump-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 5px;
-    width: 118px;
-    height: 32px;
-    border: none;
-    border-radius: 999px;
-    background: linear-gradient(180deg, #ec4899, #be185d);
-    color: #ffffff;
-    font-size: 0.76rem;
-    font-weight: 750;
-    letter-spacing: 0.04em;
-    cursor: pointer;
-    box-shadow: 0 3px 10px rgba(219, 39, 119, 0.4);
-    transition: transform 0.08s ease, filter 0.15s ease;
-  }
-
-  .jump-button:active,
-  .jump-button--active {
-    transform: translateY(2px) scale(0.98);
-    filter: brightness(1.15);
-    box-shadow: 0 1px 6px rgba(219, 39, 119, 0.6);
-  }
-
-  .jump-button:disabled {
-    opacity: 0.65;
-    cursor: not-allowed;
+    z-index: 10;
   }
 </style>

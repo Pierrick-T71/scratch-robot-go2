@@ -358,7 +358,7 @@
   onMount(() => {
     remoteUrl = computeRemoteUrl();
     void QRCode.toDataURL(remoteUrl, {
-      width: 120,
+      width: 180,
       margin: 1,
       color: {
         dark: '#1e293b',
@@ -623,11 +623,10 @@
 
 <style>
   .manual {
-    width: min(840px, 100%);
-    max-height: calc(100vh - 80px);
-    padding: 14px 18px 10px;
+    width: min(860px, 100%);
+    padding: 18px 22px 14px;
     border: 1px solid #3d465a;
-    border-radius: 20px;
+    border-radius: 22px;
     background: #1e222c;
     box-shadow: 0 16px 36px rgb(0 0 0 / 42%);
     color: #e6ebf5;
@@ -641,7 +640,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding-bottom: 8px;
+    padding-bottom: 12px;
     border-bottom: 1px solid rgb(255 255 255 / 8%);
     flex: none;
   }
@@ -655,26 +654,26 @@
   .manual__icon {
     display: grid;
     place-items: center;
-    width: 38px;
-    height: 38px;
+    width: 44px;
+    height: 44px;
     flex: none;
-    border-radius: 11px;
+    border-radius: 13px;
     background: linear-gradient(180deg, #8570e6, #6650c4);
     color: #fff;
-    box-shadow: 0 4px 12px rgb(102 80 196 / 42%);
+    box-shadow: 0 5px 14px rgb(102 80 196 / 42%);
   }
 
   .manual__title {
     margin: 0;
-    font-size: 20px;
+    font-size: 22px;
     letter-spacing: -0.02em;
     color: #f2f5fa;
   }
 
   .manual__subtitle {
-    margin: 1px 0 0;
+    margin: 2px 0 0;
     color: #a9b4ca;
-    font-size: 12px;
+    font-size: 13px;
   }
 
   .manual__actions {
@@ -685,20 +684,20 @@
 
   .manual__close {
     min-height: 38px;
-    padding: 0 16px;
+    padding: 0 18px;
     border: 1px solid #4a5366;
     border-radius: 999px;
-    background: rgb(255 255 255 / 5%);
+    background: rgb(255 255 255 / 6%);
     color: #d4daea;
     font: inherit;
-    font-size: 13px;
+    font-size: 13.5px;
     font-weight: 650;
     cursor: pointer;
     transition: background 0.15s ease;
   }
 
   .manual__close:hover {
-    background: rgb(255 255 255 / 12%);
+    background: rgb(255 255 255 / 14%);
   }
 
   .manual__close:focus-visible,
@@ -711,7 +710,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    margin: 12px 0 0;
+    margin: 10px 0 0;
     padding: 8px 14px;
     background: rgba(59, 130, 246, 0.15);
     border: 1px solid rgba(59, 130, 246, 0.35);
@@ -725,15 +724,15 @@
   .manual__grid {
     display: grid;
     grid-template-columns: 1.15fr 0.85fr;
-    gap: 12px;
-    margin-top: 8px;
+    gap: 16px;
+    margin-top: 12px;
   }
 
   .manual__pane {
     background: rgba(15, 23, 42, 0.45);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 14px;
-    padding: 10px 14px;
+    border-radius: 16px;
+    padding: 14px 16px;
     display: flex;
     flex-direction: column;
   }
@@ -741,18 +740,18 @@
   .manual__pane-title {
     display: flex;
     align-items: center;
-    gap: 7px;
-    margin: 0 0 4px;
-    font-size: 14px;
+    gap: 8px;
+    margin: 0 0 6px;
+    font-size: 15px;
     font-weight: 700;
     color: #93c5fd;
   }
 
   .manual__lead {
-    margin: 0 0 6px;
+    margin: 0 0 8px;
     color: #c2cadb;
-    font-size: 12px;
-    line-height: 1.35;
+    font-size: 12.5px;
+    line-height: 1.4;
   }
 
   .manual__lead strong {
@@ -760,42 +759,50 @@
   }
 
   .keypad {
+    --key-w: 66px;
+    --key-gap: 6px;
+    --keypad-w: calc(var(--key-w) * 3 + var(--key-gap) * 2);
+
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 5px;
-    margin: 0 auto 6px;
+    gap: var(--key-gap);
+    margin: 0 auto 8px;
     user-select: none;
     touch-action: none;
   }
 
   .keypad__row {
     display: flex;
-    gap: 5px;
+    gap: var(--key-gap);
   }
 
   .keypad__row--turns,
   .keypad__row--jump,
   .keypad__row--sprint {
-    width: 174px;
+    width: var(--keypad-w);
+  }
+
+  .keypad__row--turns {
+    justify-content: space-between;
   }
 
   .key {
     display: grid;
     place-items: center;
-    width: 54px;
-    height: 42px;
+    width: var(--key-w);
+    height: 52px;
     border: 1px solid #4a5366;
-    border-radius: 11px;
+    border-radius: 13px;
     background: linear-gradient(180deg, #353b4b, #2b303d);
     color: #eef2fa;
     font: inherit;
-    font-size: 18px;
+    font-size: 21px;
     font-weight: 750;
     cursor: pointer;
     box-shadow:
       inset 0 1px 0 rgb(255 255 255 / 8%),
-      0 3px 8px rgb(0 0 0 / 24%);
+      0 4px 10px rgb(0 0 0 / 24%);
     transition:
       transform 0.08s ease,
       background 0.12s ease,
@@ -803,15 +810,15 @@
   }
 
   .key--turn {
-    height: 36px;
+    height: 44px;
     color: #cdd8ff;
-    font-size: 20px;
+    font-size: 22px;
   }
 
   .key--jump {
     width: 100%;
-    height: 32px;
-    font-size: 12px;
+    height: 40px;
+    font-size: 13px;
     font-weight: 650;
     letter-spacing: 0.02em;
     color: #e2e8f8;
@@ -819,8 +826,8 @@
 
   .key--sprint {
     width: 100%;
-    height: 32px;
-    font-size: 11.5px;
+    height: 38px;
+    font-size: 12.5px;
     font-weight: 700;
     letter-spacing: 0.02em;
     color: #e0e7ff;
@@ -851,12 +858,12 @@
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
-    gap: 2px 10px;
+    gap: 3px 12px;
     margin: 0;
     padding: 0;
     list-style: none;
     color: #a9b4ca;
-    font-size: 11px;
+    font-size: 11.5px;
   }
 
   .manual__keys strong {
@@ -881,57 +888,57 @@
   }
 
   .manual__qr-lead {
-    margin: 0 0 6px;
-    font-size: 11.5px;
+    margin: 0 0 8px;
+    font-size: 12px;
     color: #94a3b8;
-    line-height: 1.3;
+    line-height: 1.35;
   }
 
   .manual__qr-frame {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 6px;
+    padding: 8px;
     background: #ffffff;
-    border-radius: 10px;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
-    margin-bottom: 6px;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    margin-bottom: 8px;
   }
 
   .manual__qr-img {
     display: block;
-    width: 114px;
-    height: 114px;
-    border-radius: 4px;
+    width: 155px;
+    height: 155px;
+    border-radius: 6px;
   }
 
   .manual__qr-skeleton {
-    width: 114px;
-    height: 114px;
+    width: 155px;
+    height: 155px;
     display: flex;
     align-items: center;
     justify-content: center;
     color: #64748b;
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .manual__qr-url-box {
     display: flex;
     align-items: center;
     width: 100%;
-    max-width: 250px;
-    padding: 2px 4px 2px 8px;
+    max-width: 270px;
+    padding: 3px 6px 3px 10px;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 7px;
-    gap: 5px;
-    margin-bottom: 6px;
+    border-radius: 8px;
+    gap: 6px;
+    margin-bottom: 8px;
   }
 
   .manual__qr-url-text {
     flex: 1;
     font-family: monospace;
-    font-size: 10.5px;
+    font-size: 11px;
     color: #cbd5e1;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -943,10 +950,10 @@
     border: none;
     background: #2563eb;
     color: #ffffff;
-    font-size: 10.5px;
+    font-size: 11px;
     font-weight: 600;
-    padding: 2px 6px;
-    border-radius: 5px;
+    padding: 3px 8px;
+    border-radius: 6px;
     cursor: pointer;
     transition: background 0.15s;
   }
@@ -958,33 +965,33 @@
   .manual__qr-features {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 5px;
     width: 100%;
-    max-width: 250px;
+    max-width: 270px;
     margin-top: auto;
   }
 
   .qr-feature {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 10.5px;
+    gap: 7px;
+    font-size: 11px;
     color: #93c5fd;
     background: rgba(59, 130, 246, 0.08);
     border: 1px solid rgba(59, 130, 246, 0.18);
-    padding: 3px 8px;
-    border-radius: 6px;
+    padding: 4px 10px;
+    border-radius: 7px;
     text-align: left;
   }
 
   .manual__footer {
     display: flex;
     justify-content: flex-end;
-    margin-top: 6px;
-    padding-top: 6px;
+    margin-top: 10px;
+    padding-top: 8px;
     border-top: 1px solid rgb(255 255 255 / 8%);
     color: #9aa5b9;
-    font-size: 11.5px;
+    font-size: 12px;
     flex: none;
   }
 
@@ -993,7 +1000,73 @@
     font-weight: 600;
   }
 
-  @media (max-width: 620px) {
+  /* Grands écrans PC fixe (>= 1700px) */
+  @media (min-width: 1700px) {
+    .manual {
+      width: min(940px, 100%);
+      padding: 22px 26px 16px;
+    }
+
+    .manual__icon {
+      width: 48px;
+      height: 48px;
+    }
+
+    .manual__title {
+      font-size: 24px;
+    }
+
+    .manual__subtitle {
+      font-size: 14px;
+    }
+
+    .manual__grid {
+      gap: 20px;
+      margin-top: 14px;
+    }
+
+    .manual__pane {
+      padding: 16px 20px;
+    }
+
+    .keypad {
+      --key-w: 70px;
+      --key-gap: 8px;
+    }
+
+    .key {
+      height: 56px;
+      font-size: 22px;
+    }
+
+    .key--turn {
+      height: 46px;
+      font-size: 24px;
+    }
+
+    .key--sprint {
+      height: 42px;
+      font-size: 13px;
+    }
+
+    .key--jump {
+      height: 44px;
+      font-size: 13.5px;
+    }
+
+    .manual__qr-img,
+    .manual__qr-skeleton {
+      width: 170px;
+      height: 170px;
+    }
+
+    .manual__qr-url-box,
+    .manual__qr-features {
+      max-width: 290px;
+    }
+  }
+
+  @media (max-width: 640px) {
     .manual__grid {
       grid-template-columns: 1fr;
     }
@@ -1002,16 +1075,14 @@
       padding: 14px 12px 10px;
     }
 
-    .keypad__row--turns,
-    .keypad__row--jump,
-    .keypad__row--sprint {
-      width: 170px;
+    .keypad {
+      --key-w: 54px;
+      --key-gap: 5px;
     }
 
     .key {
-      width: 52px;
-      height: 40px;
-      font-size: 17px;
+      height: 42px;
+      font-size: 18px;
     }
   }
 </style>

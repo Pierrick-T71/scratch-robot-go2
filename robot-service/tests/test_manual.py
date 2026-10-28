@@ -265,3 +265,22 @@ class TestManualEndpoints:
         )
         assert resp.status_code == 200
         assert resp.json()["sprint"] is False
+
+    def test_action_endpoint(self, client):
+        client.post("/api/manual/start", json={"adult_authorised": True})
+
+        # Stand action
+        resp = client.post("/api/manual/action", json={"action": "stand", "source": "mobile"})
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+
+        # Sit action
+        resp = client.post("/api/manual/action", json={"action": "sit", "source": "mobile"})
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+
+        # Unknown action fails cleanly
+        resp = client.post("/api/manual/action", json={"action": "unknown", "source": "mobile"})
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is False
+        assert "Action inconnue" in resp.json()["message"]

@@ -580,6 +580,8 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
     height: 100vh;
     min-height: 0;
     padding: 14px 18px 18px;
+    box-sizing: border-box;
+    overflow: hidden;
   }
 
   .safety {

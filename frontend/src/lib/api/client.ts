@@ -312,6 +312,16 @@ export const api = {
       body: JSON.stringify({ source }),
     }),
 
+  /** Déclenche une action ou posture en mode manuel (debout, assis, couché, coeur, salut, etc.). */
+  actionManual: (
+    action: string,
+    source: 'keyboard' | 'mobile' = 'mobile',
+  ): Promise<{ ok: boolean; blocked: boolean; message: string | null }> =>
+    request('/api/manual/action', {
+      method: 'POST',
+      body: JSON.stringify({ action, source }),
+    }),
+
   /** Active ou désactive le mode accroupi manuel (déplacement lent, fluide et stable). */
   crouchManual: (
     enabled: boolean,

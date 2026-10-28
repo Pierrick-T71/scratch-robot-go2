@@ -18,7 +18,8 @@ import contextlib
 import logging
 import time
 
-from .adapters.base import AdapterError, RobotAdapter, SafetyInterrupt
+from .adapters.base import AdapterError, RobotAdapter, SafetyInterrupt, StopSignal
+from .validation import CommandKind, RobotCommand
 
 log = logging.getLogger(__name__)
 
@@ -269,6 +270,49 @@ class ManualControl:
         except Exception as exc:  # noqa: BLE001
             log.exception("Saut manuel impossible.")
             self._block(f"Le robot n’a pas pu sauter ({exc}).")
+            return True, str(exc)
+
+    async def execute_action(
+        self, action_name: str, source: str = "mobile"
+    ) -> tuple[bool, str | None]:
+        """Exécute une posture ou un geste (debout, assis, couché, coeur, salut, etc.) en mode manuel."""
+        if not self._active:
+            raise ManualNotActive("Le mode manuel n’est pas ouvert.")
+
+        self._direction = None
+        self._sprint = False
+        self._active_source = source
+        self._deadline = 0.0
+        self._stop_motion()
+
+        action_map = {
+            "stand": CommandKind.STAND_UP,
+            "sit": CommandKind.SIT_DOWN,
+            "lie_down": CommandKind.LIE_DOWN,
+            "balance": CommandKind.BALANCE,
+            "jump": CommandKind.FRONT_JUMP,
+            "salute": CommandKind.SALUTE,
+            "heart": CommandKind.FINGER_HEART,
+            "stretch": CommandKind.STRETCH,
+        }
+        kind = action_map.get(action_name)
+        if kind is None:
+            return True, f"Action inconnue : {action_name}"
+
+        cmd = RobotCommand(kind=kind)
+        try:
+            stop_sig = StopSignal()
+            await self._adapter.execute_command(cmd, 0, stop_sig)
+            return False, None
+        except SafetyInterrupt as exc:
+            self._block(str(exc))
+            return True, str(exc)
+        except AdapterError as exc:
+            self._block(str(exc))
+            return True, str(exc)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Action manuelle impossible.")
+            self._block(f"Le robot n’a pas pu exécuter l’action ({exc}).")
             return True, str(exc)
 
     async def set_crouch_mode(self, enabled: bool) -> tuple[bool, str | None]:
