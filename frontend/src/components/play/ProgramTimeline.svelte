@@ -9,7 +9,7 @@
   import BlockTile from './BlockTile.svelte';
   import Icon from './Icon.svelte';
   import type { PlayBlock, PlayBlockKind } from '../../lib/play/blocks';
-  import { readDragPayload, setDragPayload } from '../../lib/play/drag';
+  import { dragSession, readDragPayload, setDragPayload } from '../../lib/play/drag';
   import type { AppNotice } from '../../lib/stores/app.svelte';
 
   interface Props {
@@ -55,6 +55,20 @@
   let stripEl = $state<HTMLDivElement | undefined>();
   let insertion = $state<number | null>(null);
   let dragging = $state<string | null>(null);
+  let overDropzone = $state(false);
+  let overTrashTool = $state(false);
+
+  const isDraggingTimeline = $derived(
+    dragging !== null || dragSession.current?.source === 'timeline',
+  );
+
+  $effect(() => {
+    const handleWindowDragEnd = () => endDrag();
+    window.addEventListener('dragend', handleWindowDragEnd);
+    return () => {
+      window.removeEventListener('dragend', handleWindowDragEnd);
+    };
+  });
 
   /** Position d'insertion d'après le doigt / la souris. */
   function indexAt(clientX: number): number {
@@ -73,19 +87,23 @@
 
   function startDrag(event: DragEvent, block: PlayBlock): void {
     dragging = block.id;
+    dragSession.start({ source: 'timeline', id: block.id });
     setDragPayload(event, { source: 'timeline', id: block.id });
   }
 
   function endDrag(): void {
     dragging = null;
     insertion = null;
+    overDropzone = false;
+    overTrashTool = false;
+    dragSession.end();
   }
 
   function over(event: DragEvent): void {
     event.preventDefault();
     if (event.dataTransfer) {
       const isFile = Array.from(event.dataTransfer.types || []).includes('Files');
-      event.dataTransfer.dropEffect = isFile || !dragging ? 'copy' : 'move';
+      event.dataTransfer.dropEffect = isFile || !isDraggingTimeline ? 'copy' : 'move';
     }
     insertion = indexAt(event.clientX);
   }
@@ -99,9 +117,12 @@
 
   function drop(event: DragEvent): void {
     event.preventDefault();
-    const target = insertion ?? indexAt(event.clientX);
+    const target = insertion;
     insertion = null;
     dragging = null;
+    overDropzone = false;
+    overTrashTool = false;
+    dragSession.end();
 
     // Glisser-déposer d'un fichier JSON externe
     const files = event.dataTransfer?.files;
@@ -113,8 +134,36 @@
 
     const payload = readDragPayload(event);
     if (!payload) return;
-    if (payload.source === 'library') onAdd(payload.kind, target);
-    else onMove(payload.id, target);
+
+    if (payload.source === 'library') {
+      onAdd(payload.kind, target ?? blocks.length);
+    } else if (payload.source === 'timeline') {
+      if (target !== null) {
+        onMove(payload.id, target);
+      } else {
+        // Lâché hors de l'alignement des blocs (« bouger ailleurs ») -> suppression
+        onRemove(payload.id);
+      }
+    }
+  }
+
+  function handleDropzoneDrop(event: DragEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    const payload = readDragPayload(event);
+    overDropzone = false;
+    endDrag();
+
+    const files = event.dataTransfer?.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      if (file) onImportFile?.(file);
+      return;
+    }
+
+    if (payload && payload.source === 'timeline') {
+      onRemove(payload.id);
+    }
   }
 </script>
 
@@ -138,10 +187,29 @@
       <button
         type="button"
         class="tool"
+        class:tool--drop-target={isDraggingTimeline}
+        class:tool--drop-hover={overTrashTool}
         aria-label="Tout effacer"
-        title="Tout effacer"
-        disabled={busy || blocks.length === 0}
+        title={isDraggingTimeline ? "Déposer ici pour supprimer le bloc" : "Tout effacer"}
+        disabled={!isDraggingTimeline && (busy || blocks.length === 0)}
         onclick={onClear}
+        ondragover={(e) => {
+          if (isDraggingTimeline) {
+            e.preventDefault();
+            overTrashTool = true;
+          }
+        }}
+        ondragleave={() => (overTrashTool = false)}
+        ondrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const payload = readDragPayload(e);
+          if (payload && payload.source === 'timeline') {
+            onRemove(payload.id);
+          }
+          overTrashTool = false;
+          endDrag();
+        }}
       >
         <Icon name="trash" size={19} />
       </button>
@@ -189,21 +257,37 @@
     <div
       class="dropzone"
       class:dropzone--over={insertion !== null && blocks.length === 0}
+      class:dropzone--delete={isDraggingTimeline}
+      class:dropzone--delete-over={overDropzone}
       role="button"
       tabindex="0"
       onclick={onChooseFile}
       onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && onChooseFile?.()}
-      title="Cliquer pour choisir un fichier programme JSON, ou glisser-déposer un fichier ou des blocs ici"
+      ondragover={(e) => {
+        e.preventDefault();
+        if (isDraggingTimeline) {
+          overDropzone = true;
+          if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+        }
+      }}
+      ondragleave={() => {
+        overDropzone = false;
+      }}
+      ondrop={handleDropzoneDrop}
+      title={isDraggingTimeline
+        ? 'Relâcher ici pour supprimer ce bloc'
+        : 'Cliquer pour choisir un fichier programme JSON, ou glisser-déposer un fichier ou des blocs ici'}
     >
-      <span class="dropzone__hand" aria-hidden="true">
-        <Icon name="hand" size={28} />
+      <span class="dropzone__icon" aria-hidden="true">
+        <Icon name={isDraggingTimeline ? 'trash' : 'upload'} size={isDraggingTimeline ? 22 : 18} />
       </span>
       <p class="dropzone__text">
-        Glisser-déposer le fichier ou les blocs<br />ici pour programmer
+        {#if isDraggingTimeline}
+          <strong>{overDropzone ? 'Relâcher pour supprimer' : 'Glisser ici pour supprimer'}</strong>
+        {:else}
+          Glisser-déposer le fichier ou les blocs ici pour programmer
+        {/if}
       </p>
-      <span class="dropzone__hand" aria-hidden="true">
-        <Icon name="hand" size={28} />
-      </span>
     </div>
 
     <div
@@ -218,13 +302,14 @@
         {/if}
 
         <!-- Réordonner au doigt ou à la souris. Le clavier garde la main sur
-             l'ajout (bibliothèque) et la suppression (croix du bloc). -->
+             l'ajout (bibliothèque). -->
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
           class="card"
           class:card--dragging={dragging === block.id}
           role="listitem"
           data-index={index}
+          style="z-index: {blocks.length - index};"
           draggable={!busy}
           ondragstart={(event) => startDrag(event, block)}
           ondragend={endDrag}
@@ -234,17 +319,14 @@
             seconds={block.seconds}
             degrees={block.degrees}
             editable={!busy}
-            removable={!busy}
             running={runningIndex === index}
-            onRemove={() => onRemove(block.id)}
+            puzzle={true}
+            isFirst={index === 0}
+            isLast={index === blocks.length - 1}
             onSecondsChange={(value) => onChangeSeconds(block.id, value)}
             onDegreesChange={(value) => onChangeDegrees(block.id, value)}
           />
         </div>
-
-        {#if index < blocks.length - 1}
-          <span class="link" aria-hidden="true">›</span>
-        {/if}
       {/each}
 
       {#if insertion === blocks.length && blocks.length > 0}
@@ -259,7 +341,8 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
-    padding: 14px 18px 16px;
+    overflow-x: hidden;
+    padding: 10px 18px 10px;
     background: #242731;
     border: 1px solid #2f3441;
     border-radius: 22px;
@@ -273,7 +356,7 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 14px;
-    min-height: 44px;
+    min-height: 38px;
   }
 
   .program__title {
@@ -365,6 +448,20 @@
   .tool:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+  }
+
+  .tool--drop-target {
+    border-color: #e0596b;
+    color: #ff6e82;
+    cursor: copy;
+  }
+
+  .tool--drop-hover {
+    background: #e0596b;
+    border-color: #ff3850;
+    color: #ffffff;
+    transform: scale(1.18);
+    box-shadow: 0 0 18px rgba(224, 89, 107, 0.6);
   }
 
   .tool:focus-visible,
@@ -466,24 +563,29 @@
     align-items: stretch;
     gap: 14px;
     min-height: 0;
-    margin-top: 10px;
+    min-width: 0;
+    overflow-x: hidden;
+    margin-top: 4px;
   }
 
   .dropzone {
     cursor: pointer;
     user-select: none;
-    display: flex;
+    display: inline-flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 16px;
+    gap: 8px;
     flex: none;
-    width: clamp(260px, 38%, 460px);
-    min-height: 154px;
-    padding: 14px 18px;
-    border: 2px dashed #3c4353;
-    border-radius: 20px;
+    width: 124px;
+    min-height: 140px;
+    padding: 10px 8px;
+    box-sizing: border-box;
+    border: 1.5px dashed #3c4353;
+    border-radius: 16px;
     background: rgb(255 255 255 / 1.5%);
     color: #7f8899;
+    align-self: flex-start;
     transition:
       border-color 0.15s ease,
       background 0.15s ease,
@@ -507,27 +609,68 @@
     color: #cfe3f8;
   }
 
+  .dropzone--delete {
+    border-color: #e0596b;
+    border-style: dashed;
+    background: rgba(224, 89, 107, 0.12);
+    color: #ff9da8;
+    cursor: copy;
+  }
+
+  .dropzone--delete .dropzone__icon {
+    color: #ff5e73;
+  }
+
+  .dropzone--delete-over {
+    border-color: #ff334e;
+    border-width: 2px;
+    background: rgba(224, 89, 107, 0.35);
+    color: #ffffff;
+    box-shadow:
+      0 0 20px rgba(224, 89, 107, 0.5),
+      inset 0 0 10px rgba(224, 89, 107, 0.25);
+  }
+
+  .dropzone--delete-over .dropzone__icon {
+    color: #ffffff;
+    animation: trash-shake 0.4s ease infinite alternate;
+  }
+
+  @keyframes trash-shake {
+    from {
+      transform: translateY(0) scale(1);
+    }
+    to {
+      transform: translateY(-2px) scale(1.15);
+    }
+  }
+
+  .dropzone__icon {
+    display: grid;
+    place-items: center;
+    color: #8faed9;
+    flex: none;
+    transition: transform 0.15s ease, color 0.15s ease;
+  }
+
   .dropzone__text {
     margin: 0;
-    font-size: 20px;
-    font-weight: 500;
-    line-height: 1.35;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.25;
     text-align: center;
     letter-spacing: -0.01em;
   }
 
-  .dropzone__hand {
-    color: #6e7789;
-    opacity: 0.9;
-  }
-
   .strip {
     display: flex;
-    align-items: center;
-    gap: 12px;
+    align-items: flex-start;
+    gap: 0;
     flex: 1;
     min-width: 0;
-    padding: 22px 8px 18px;
+    min-height: 176px;
+    box-sizing: border-box;
+    padding: 6px 24px 26px 14px;
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: thin;
@@ -549,8 +692,15 @@
 
   .card {
     flex: none;
-    border-radius: 15px;
+    position: relative;
+    width: 124px;
+    height: 144px;
     cursor: grab;
+    transition: transform 0.12s ease;
+  }
+
+  .card:hover {
+    z-index: 50 !important;
   }
 
   .card:active {
@@ -559,20 +709,14 @@
 
   .card--dragging {
     opacity: 0.45;
-  }
-
-  .link {
-    flex: none;
-    color: #6f7889;
-    font-size: 26px;
-    font-weight: 700;
-    line-height: 1;
+    z-index: 60 !important;
   }
 
   .caret {
     flex: none;
     width: 4px;
-    height: 78px;
+    height: 124px;
+    margin: 0 2px;
     border-radius: 999px;
     background: #9fc4ec;
     box-shadow: 0 0 14px rgb(159 196 236 / 70%);
@@ -591,15 +735,11 @@
 
   @media (max-width: 980px) {
     .dropzone {
-      width: 240px;
+      max-width: 180px;
     }
 
     .dropzone__text {
-      font-size: 16px;
-    }
-
-    .dropzone__hand {
-      display: none;
+      font-size: 11.5px;
     }
   }
 

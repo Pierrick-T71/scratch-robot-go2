@@ -358,7 +358,7 @@
   onMount(() => {
     remoteUrl = computeRemoteUrl();
     void QRCode.toDataURL(remoteUrl, {
-      width: 170,
+      width: 120,
       margin: 1,
       color: {
         dark: '#1e293b',
@@ -624,12 +624,16 @@
 <style>
   .manual {
     width: min(840px, 100%);
-    padding: 22px 24px 18px;
+    max-height: calc(100vh - 80px);
+    padding: 14px 18px 10px;
     border: 1px solid #3d465a;
-    border-radius: 24px;
+    border-radius: 20px;
     background: #1e222c;
     box-shadow: 0 16px 36px rgb(0 0 0 / 42%);
     color: #e6ebf5;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
   }
 
   .manual__head {
@@ -637,8 +641,9 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding-bottom: 14px;
+    padding-bottom: 8px;
     border-bottom: 1px solid rgb(255 255 255 / 8%);
+    flex: none;
   }
 
   .manual__identity {
@@ -650,26 +655,26 @@
   .manual__icon {
     display: grid;
     place-items: center;
-    width: 48px;
-    height: 48px;
+    width: 38px;
+    height: 38px;
     flex: none;
-    border-radius: 15px;
+    border-radius: 11px;
     background: linear-gradient(180deg, #8570e6, #6650c4);
     color: #fff;
-    box-shadow: 0 6px 16px rgb(102 80 196 / 42%);
+    box-shadow: 0 4px 12px rgb(102 80 196 / 42%);
   }
 
   .manual__title {
     margin: 0;
-    font-size: 24px;
+    font-size: 20px;
     letter-spacing: -0.02em;
     color: #f2f5fa;
   }
 
   .manual__subtitle {
-    margin: 2px 0 0;
+    margin: 1px 0 0;
     color: #a9b4ca;
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .manual__actions {
@@ -720,15 +725,15 @@
   .manual__grid {
     display: grid;
     grid-template-columns: 1.15fr 0.85fr;
-    gap: 20px;
-    margin-top: 14px;
+    gap: 12px;
+    margin-top: 8px;
   }
 
   .manual__pane {
     background: rgba(15, 23, 42, 0.45);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 18px;
-    padding: 16px 18px;
+    border-radius: 14px;
+    padding: 10px 14px;
     display: flex;
     flex-direction: column;
   }
@@ -736,18 +741,18 @@
   .manual__pane-title {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin: 0 0 8px;
-    font-size: 15px;
+    gap: 7px;
+    margin: 0 0 4px;
+    font-size: 14px;
     font-weight: 700;
     color: #93c5fd;
   }
 
   .manual__lead {
-    margin: 0 0 12px;
+    margin: 0 0 6px;
     color: #c2cadb;
-    font-size: 13px;
-    line-height: 1.45;
+    font-size: 12px;
+    line-height: 1.35;
   }
 
   .manual__lead strong {
@@ -758,46 +763,39 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 8px;
-    margin: 0 auto 12px;
+    gap: 5px;
+    margin: 0 auto 6px;
     user-select: none;
     touch-action: none;
   }
 
   .keypad__row {
     display: flex;
-    gap: 8px;
+    gap: 5px;
   }
 
-  .keypad__row--turns {
-    width: 220px;
-    justify-content: space-between;
-  }
-
-  .keypad__row--jump {
-    width: 220px;
-  }
-
+  .keypad__row--turns,
+  .keypad__row--jump,
   .keypad__row--sprint {
-    width: 220px;
+    width: 174px;
   }
 
   .key {
     display: grid;
     place-items: center;
-    width: 66px;
-    height: 56px;
+    width: 54px;
+    height: 42px;
     border: 1px solid #4a5366;
-    border-radius: 14px;
+    border-radius: 11px;
     background: linear-gradient(180deg, #353b4b, #2b303d);
     color: #eef2fa;
     font: inherit;
-    font-size: 22px;
+    font-size: 18px;
     font-weight: 750;
     cursor: pointer;
     box-shadow:
       inset 0 1px 0 rgb(255 255 255 / 8%),
-      0 4px 10px rgb(0 0 0 / 24%);
+      0 3px 8px rgb(0 0 0 / 24%);
     transition:
       transform 0.08s ease,
       background 0.12s ease,
@@ -805,15 +803,15 @@
   }
 
   .key--turn {
-    height: 46px;
+    height: 36px;
     color: #cdd8ff;
-    font-size: 24px;
+    font-size: 20px;
   }
 
   .key--jump {
     width: 100%;
-    height: 44px;
-    font-size: 13.5px;
+    height: 32px;
+    font-size: 12px;
     font-weight: 650;
     letter-spacing: 0.02em;
     color: #e2e8f8;
@@ -821,8 +819,8 @@
 
   .key--sprint {
     width: 100%;
-    height: 42px;
-    font-size: 13px;
+    height: 32px;
+    font-size: 11.5px;
     font-weight: 700;
     letter-spacing: 0.02em;
     color: #e0e7ff;
@@ -853,12 +851,12 @@
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
-    gap: 4px 14px;
-    margin: 0 0 4px;
+    gap: 2px 10px;
+    margin: 0;
     padding: 0;
     list-style: none;
     color: #a9b4ca;
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .manual__keys strong {
@@ -883,57 +881,57 @@
   }
 
   .manual__qr-lead {
-    margin: 0 0 12px;
-    font-size: 12.5px;
+    margin: 0 0 6px;
+    font-size: 11.5px;
     color: #94a3b8;
-    line-height: 1.4;
+    line-height: 1.3;
   }
 
   .manual__qr-frame {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 10px;
+    padding: 6px;
     background: #ffffff;
-    border-radius: 14px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-    margin-bottom: 12px;
+    border-radius: 10px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
+    margin-bottom: 6px;
   }
 
   .manual__qr-img {
     display: block;
-    width: 170px;
-    height: 170px;
-    border-radius: 6px;
+    width: 114px;
+    height: 114px;
+    border-radius: 4px;
   }
 
   .manual__qr-skeleton {
-    width: 170px;
-    height: 170px;
+    width: 114px;
+    height: 114px;
     display: flex;
     align-items: center;
     justify-content: center;
     color: #64748b;
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .manual__qr-url-box {
     display: flex;
     align-items: center;
     width: 100%;
-    max-width: 290px;
-    padding: 4px 6px 4px 10px;
+    max-width: 250px;
+    padding: 2px 4px 2px 8px;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 8px;
-    gap: 6px;
-    margin-bottom: 12px;
+    border-radius: 7px;
+    gap: 5px;
+    margin-bottom: 6px;
   }
 
   .manual__qr-url-text {
     flex: 1;
     font-family: monospace;
-    font-size: 11.5px;
+    font-size: 10.5px;
     color: #cbd5e1;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -945,10 +943,10 @@
     border: none;
     background: #2563eb;
     color: #ffffff;
-    font-size: 11px;
+    font-size: 10.5px;
     font-weight: 600;
-    padding: 4px 8px;
-    border-radius: 6px;
+    padding: 2px 6px;
+    border-radius: 5px;
     cursor: pointer;
     transition: background 0.15s;
   }
@@ -960,33 +958,34 @@
   .manual__qr-features {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
     width: 100%;
-    max-width: 290px;
+    max-width: 250px;
     margin-top: auto;
   }
 
   .qr-feature {
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 11.5px;
+    gap: 6px;
+    font-size: 10.5px;
     color: #93c5fd;
     background: rgba(59, 130, 246, 0.08);
     border: 1px solid rgba(59, 130, 246, 0.18);
-    padding: 5px 10px;
-    border-radius: 8px;
+    padding: 3px 8px;
+    border-radius: 6px;
     text-align: left;
   }
 
   .manual__footer {
     display: flex;
     justify-content: flex-end;
-    margin-top: 14px;
-    padding-top: 10px;
+    margin-top: 6px;
+    padding-top: 6px;
     border-top: 1px solid rgb(255 255 255 / 8%);
     color: #9aa5b9;
-    font-size: 12px;
+    font-size: 11.5px;
+    flex: none;
   }
 
   .manual__stop {
@@ -994,25 +993,25 @@
     font-weight: 600;
   }
 
-  @media (max-width: 780px) {
+  @media (max-width: 620px) {
     .manual__grid {
       grid-template-columns: 1fr;
     }
 
     .manual {
-      padding: 16px 14px 12px;
+      padding: 14px 12px 10px;
     }
 
     .keypad__row--turns,
     .keypad__row--jump,
     .keypad__row--sprint {
-      width: 190px;
+      width: 170px;
     }
 
     .key {
-      width: 58px;
-      height: 52px;
-      font-size: 20px;
+      width: 52px;
+      height: 40px;
+      font-size: 17px;
     }
   }
 </style>

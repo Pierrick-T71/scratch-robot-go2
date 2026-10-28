@@ -122,7 +122,7 @@ describe('contenu non fiable', () => {
     expect(parseBlock(null)).toBeNull();
     expect(parseBlock('sit')).toBeNull();
     expect(parseBlock({})).toBeNull();
-    expect(parseBlock({ kind: 'balance' })?.kind).toBe('balance');
+    expect(parseBlock({ kind: 'stand' })?.kind).toBe('stand');
   });
 });
 

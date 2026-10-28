@@ -136,14 +136,6 @@ export const BLOCKS: readonly BlockSpec[] = [
     hint: 'Le robot se remet debout',
   },
   {
-    kind: 'balance',
-    label: 'Se stabiliser',
-    category: 'actions',
-    tone: 'mint',
-    icon: 'balance',
-    hint: 'Le robot se stabilise sur ses quatre pattes',
-  },
-  {
     kind: 'lie_down',
     label: 'Se coucher',
     category: 'actions',

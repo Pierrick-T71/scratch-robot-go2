@@ -32,7 +32,6 @@ const KINDS: PlayBlockKind[] = [
   'turn_right',
   'sit',
   'stand',
-  'balance',
   'lie_down',
   'heart',
   'jump',
@@ -41,7 +40,7 @@ const KINDS: PlayBlockKind[] = [
 ];
 
 describe('catalogue', () => {
-  it('ne contient que les douze blocs autorisés', () => {
+  it('ne contient que les blocs autorisés', () => {
     expect(BLOCKS.map((spec) => spec.kind)).toEqual(KINDS);
   });
 
@@ -70,7 +69,6 @@ describe('catalogue', () => {
     for (const kind of [
       'sit',
       'stand',
-      'balance',
       'lie_down',
       'heart',
       'jump',

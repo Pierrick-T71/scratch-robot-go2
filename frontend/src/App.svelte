@@ -411,6 +411,7 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
     <div class="app__library">
       <BlockLibrary
         onAdd={(kind) => addBlock(kind)}
+        onRemove={removeBlock}
         onSettings={() => (showSettings = true)}
         onHelp={() => (showHelp = true)}
       />
@@ -684,12 +685,18 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
     justify-content: center;
     min-width: 0;
     min-height: 0;
-    padding: 20px;
-    overflow: auto;
+    padding: 8px;
+    overflow: hidden;
     border-radius: 24px;
     background: rgb(20 23 30 / 58%);
     backdrop-filter: blur(9px);
     -webkit-backdrop-filter: blur(9px);
+  }
+
+  @media (max-height: 520px) {
+    .app__manual {
+      overflow-y: auto;
+    }
   }
 
   /* Fenêtre de branchement : étroite, elle ne prend pas l'écran des blocs. */

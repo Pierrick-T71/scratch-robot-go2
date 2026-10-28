@@ -39,8 +39,8 @@
       : status.mode === 'simulation'
         ? 'Simulation'
         : status.connected
-          ? 'Go2 Connecté'
-          : 'Go2 hors ligne',
+          ? 'Optimus connecté'
+          : 'Optimus hors ligne',
   );
   const tone = $derived(
     status.safetyReason
@@ -132,22 +132,10 @@
 <header class="bar">
   <div class="brand">
     <span class="brand__logo" aria-hidden="true">
-      <svg viewBox="0 0 64 64" width="46" height="46">
-        <ellipse cx="17" cy="21" rx="8.5" ry="12" fill="#3a3f4c" transform="rotate(-14 17 21)" />
-        <ellipse cx="47" cy="21" rx="8.5" ry="12" fill="#3a3f4c" transform="rotate(14 47 21)" />
-        <circle cx="32" cy="34" r="20" fill="#f4f6fb" />
-        <circle cx="32" cy="38" r="15" fill="#e9edf6" />
-        <circle cx="24.5" cy="32" r="7.2" fill="none" stroke="#2b3140" stroke-width="2.2" />
-        <circle cx="39.5" cy="32" r="7.2" fill="none" stroke="#2b3140" stroke-width="2.2" />
-        <path d="M31.7 32h0.6" stroke="#2b3140" stroke-width="2.2" stroke-linecap="round" />
-        <circle cx="24.5" cy="32" r="2.4" fill="#2b3140" />
-        <circle cx="39.5" cy="32" r="2.4" fill="#2b3140" />
-        <ellipse cx="32" cy="43" rx="5" ry="3.6" fill="#2b3140" />
-        <path d="M32 46.6v3" stroke="#2b3140" stroke-width="2" stroke-linecap="round" />
-      </svg>
+      <img src="/pillon-icon.png" alt="Optimus" class="brand__img" width="48" height="48" />
     </span>
     <h1 class="brand__name">
-      Go2&nbsp;Play
+      Optimus
       <span class="brand__sparkle" aria-hidden="true">
         <Icon name="sparkle" size={16} />
       </span>
@@ -277,6 +265,14 @@
     box-shadow:
       inset 0 1px 0 rgb(255 255 255 / 8%),
       0 8px 18px rgb(0 0 0 / 32%);
+    overflow: hidden;
+  }
+
+  .brand__img {
+    width: 48px;
+    height: 48px;
+    object-fit: contain;
+    border-radius: 12px;
   }
 
   .brand__name {
