@@ -24,7 +24,6 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
   import ManualPanel from './components/play/ManualPanel.svelte';
   import RobotStage from './components/play/RobotStage.svelte';
   import RobotConnect from './components/RobotConnect.svelte';
-  import SettingsPanel from './components/SettingsPanel.svelte';
   import HelpModal from './components/HelpModal.svelte';
   import ModeSwitch from './components/ModeSwitch.svelte';
   import { app } from './lib/stores/app.svelte';
@@ -47,7 +46,6 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
 
   let showHelp = $state(false);
   let showMode = $state(false);
-  let showSettings = $state(false);
   let showRobot = $state(false);
   let showSafetyOffConfirm = $state(false);
   let manualMode = $state(false);
@@ -124,7 +122,7 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
       runningKind === 'stretch' ||
       runningKind === 'jump'
       ? runningKind
-      : null,
+      : (app.manualAction ?? null),
   );
 
   $effect(() => {
@@ -412,7 +410,6 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
       <BlockLibrary
         onAdd={(kind) => addBlock(kind)}
         onRemove={removeBlock}
-        onSettings={() => (showSettings = true)}
         onHelp={() => (showHelp = true)}
       />
     </div>
@@ -471,10 +468,6 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
 
 {#if showMode}
   <ModeSwitch onClose={() => (showMode = false)} />
-{/if}
-
-{#if showSettings}
-  <SettingsPanel onClose={() => (showSettings = false)} />
 {/if}
 
 {#if showRobot}

@@ -188,6 +188,7 @@ class SimulatedAdapter:
         ):
             raise AdapterError(f"Direction manuelle inconnue : {direction}")
         self._state = RobotState.MOVING
+        self._posture = Posture.STAND
         vx = 0.0
         vy = 0.0
         vyaw = 0.0
@@ -209,8 +210,20 @@ class SimulatedAdapter:
         self._state = RobotState.IDLE
 
     async def manual_jump(self) -> None:
-        """Simule un saut en mode manuel."""
-        await asyncio.sleep(0.2)
+        """Simule un saut en mode manuel : bondit et avance de 50 cm vers l'avant."""
+        self._posture = Posture.STAND
+        self._state = RobotState.MOVING
+        total_duration = 1.5
+        jump_distance = 0.5  # 50 cm vers l'avant
+        jump_speed = jump_distance / 0.60
+        elapsed = 0.0
+        step = self._sim_step()
+        while elapsed < total_duration:
+            await asyncio.sleep(self._real_sleep)
+            if 0.35 <= elapsed < 0.95:
+                self._advance(jump_speed, 0.0, 0.0, step)
+            elapsed += step
+        self._state = RobotState.IDLE
 
     @property
     def crouch_mode_active(self) -> bool:
@@ -283,12 +296,15 @@ class SimulatedAdapter:
                 return await self._do_wait(2.5, index, should_stop)
             case CommandKind.SALUTE:
                 # Saluer : geste de salut de 3 secondes, sans déplacement.
+                self._posture = Posture.STAND
                 return await self._do_wait(3.0, index, should_stop)
             case CommandKind.STRETCH:
                 # S'étirer dure un peu plus longtemps qu'un salut.
+                self._posture = Posture.STAND
                 return await self._do_wait(3.0, index, should_stop)
             case CommandKind.FRONT_JUMP:
                 # Le vrai robot saute vers l'avant : le simulateur avance également.
+                self._posture = Posture.STAND
                 return await self._do_front_jump(index, should_stop)
             case CommandKind.STOP:
                 await self.request_stop()
@@ -372,6 +388,7 @@ class SimulatedAdapter:
         self, index: int, should_stop: StopSignal
     ) -> CommandOutcome:
         """Simule un saut vers l'avant : bondit et avance vers l'avant comme le vrai robot."""
+        self._posture = Posture.STAND
         total_duration = 1.5
         jump_distance = 0.5  # 50 cm vers l'avant
         start_xy = (self._position[0], self._position[1])

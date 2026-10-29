@@ -19,11 +19,10 @@
   interface Props {
     onAdd: (kind: PlayBlockKind) => void;
     onRemove?: (id: string) => void;
-    onSettings?: () => void;
     onHelp?: () => void;
   }
 
-  let { onAdd, onRemove, onSettings, onHelp }: Props = $props();
+  let { onAdd, onRemove, onHelp }: Props = $props();
 
   type LibraryFilter = 'all' | PlayCategory;
   let category = $state<LibraryFilter>('movement');
@@ -92,15 +91,6 @@
     </h2>
 
     <div class="library__tools">
-      <button
-        type="button"
-        class="lib-tool"
-        aria-label="Réglages du robot"
-        title="Réglages"
-        onclick={() => onSettings?.()}
-      >
-        <Icon name="settings" size={20} />
-      </button>
       <button
         type="button"
         class="lib-tool lib-tool--help"

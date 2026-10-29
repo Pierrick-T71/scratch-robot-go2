@@ -59,17 +59,13 @@
 
   // Posture et geste effectifs pour le modèle 3D
   const effectivePosture = $derived(
-    runningAction === 'sit' || runningAction === 'heart'
+    runningAction === 'heart'
       ? 'sit'
-      : runningAction === 'lie_down'
-        ? 'lie_down'
-        : runningAction === 'stand' ||
-            runningAction === 'balance' ||
-            runningAction === 'salute' ||
-            runningAction === 'stretch' ||
-            runningAction === 'jump'
-          ? 'stand'
-          : (app.status.posture ?? 'stand'),
+      : runningAction === 'salute' ||
+          runningAction === 'stretch' ||
+          runningAction === 'jump'
+        ? 'stand'
+        : (app.status.posture ?? 'stand'),
   );
 
   const effectiveAction = $derived(
@@ -151,6 +147,15 @@
     }
   }
 
+  function cancelRunningAction(): void {
+    if (actionTimeout !== null) {
+      clearTimeout(actionTimeout);
+      actionTimeout = null;
+    }
+    isJumping = false;
+    runningAction = null;
+  }
+
   function stopAllMotion(): void {
     clearRenewal();
     leftX = 0;
@@ -180,7 +185,6 @@
   }
 
   async function updateMotion(): Promise<void> {
-    if (isJumping) return;
     const nextDir = resolveCombinedDirection(leftDir, rightTurn);
     if (nextDir === activeDirection) return;
 
@@ -189,6 +193,13 @@
       activeDirection = null;
       void app.moveManual(null, nextManualSequence(), 'mobile');
       return;
+    }
+
+    // Le déplacement manuel annule immédiatement tout geste ou posture assise/couchée
+    cancelRunningAction();
+    if (app.status.posture !== 'stand') {
+      app.status = { ...app.status, posture: 'stand' };
+      void app.actionManual('stand', 'mobile');
     }
 
     activeDirection = nextDir;
@@ -317,13 +328,36 @@
 
   // --- Exécution des actions et postures (boutons sous les joysticks) ---
   async function triggerAction(actionName: string): Promise<void> {
-    if (isJumping || runningAction !== null) return;
+    // Annuler immédiatement l'action précédente en cours (timeout, saut ou geste)
+    cancelRunningAction();
     stopAllMotion();
     feedbackMessage = null;
+
+    // Déterminer la nouvelle posture selon l'action : toute action remplace la précédente
+    let targetPosture: 'stand' | 'sit' | 'lie_down' | 'balance' = 'stand';
+    if (actionName === 'sit' || actionName === 'heart') {
+      targetPosture = 'sit';
+    } else if (actionName === 'lie_down') {
+      targetPosture = 'lie_down';
+    } else if (actionName === 'balance') {
+      targetPosture = 'balance';
+    } else {
+      // stand, jump, salute, stretch -> posture debout
+      targetPosture = 'stand';
+    }
+
+    // Appliquer immédiatement la posture cible dans l'état global
+    app.status = { ...app.status, posture: targetPosture };
 
     if (actionName === 'jump') {
       isJumping = true;
       runningAction = 'jump';
+      actionTimeout = setTimeout(() => {
+        isJumping = false;
+        runningAction = null;
+        actionTimeout = null;
+      }, 1500);
+
       try {
         const result = await app.jumpManual('mobile');
         if (result.blocked) {
@@ -331,20 +365,27 @@
         }
       } catch {
         feedbackMessage = 'Erreur lors du saut.';
-      } finally {
-        setTimeout(() => {
-          isJumping = false;
-          runningAction = null;
-        }, 800);
       }
       return;
     }
 
-    runningAction = actionName;
-    if (actionTimeout) clearTimeout(actionTimeout);
-    actionTimeout = setTimeout(() => {
+    // Gestes avec animation temporaire (salut, coeur, étirement)
+    const isGesture = ['salute', 'heart', 'stretch'].includes(actionName);
+    if (isGesture) {
+      runningAction = actionName;
+      const duration =
+        actionName === 'stretch' || actionName === 'salute'
+          ? 3000
+          : 2800; // 'heart'
+      actionTimeout = setTimeout(() => {
+        runningAction = null;
+        actionTimeout = null;
+      }, duration);
+    } else {
+      // Pour les postures ('stand', 'sit', 'lie_down', 'balance'),
+      // aucune temporisation bloquante n'est conservée.
       runningAction = null;
-    }, 2800);
+    }
 
     try {
       const result = await app.actionManual(actionName, 'mobile');
@@ -395,7 +436,7 @@
     return () => {
       lidarPollingActive = false;
       if (tipTimer) clearTimeout(tipTimer);
-      if (actionTimeout) clearTimeout(actionTimeout);
+      cancelRunningAction();
       window.removeEventListener('resize', checkOrientation);
       window.removeEventListener('orientationchange', checkOrientation);
       window.removeEventListener('fullscreenchange', updateFullscreenState);
@@ -406,6 +447,7 @@
   });
 
   onDestroy(() => {
+    cancelRunningAction();
     stopAllMotion();
   });
 </script>

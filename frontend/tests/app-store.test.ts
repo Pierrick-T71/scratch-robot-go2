@@ -24,6 +24,8 @@ const apiMock = {
   setObstacleSafety: vi.fn(),
   connectRobot: vi.fn(),
   jumpManual: vi.fn(),
+  actionManual: vi.fn(),
+  moveManual: vi.fn(),
   setStandby: vi.fn(),
   resetSimulation: vi.fn(),
 };
@@ -279,5 +281,53 @@ describe('réinitialisation de la simulation', () => {
     expect(apiMock.resetSimulation).toHaveBeenCalled();
     expect(app.status.position).toEqual({ x: 0, y: 0, z: 0 });
     expect(app.status.yawRad).toBe(0);
+  });
+});
+
+describe('actions et postures manuelles', () => {
+  it('un saut manuel annule la posture assise précédente et passe en posture debout', async () => {
+    app.status.posture = 'sit';
+    apiMock.jumpManual.mockResolvedValueOnce({ ok: true, blocked: false, message: null });
+    apiMock.getStatus.mockResolvedValueOnce({
+      ...statutDeBase(),
+      posture: 'stand',
+    });
+
+    await app.jumpManual('mobile');
+
+    expect(app.status.posture).toBe('stand');
+    expect(apiMock.jumpManual).toHaveBeenCalledWith('mobile');
+  });
+
+  it('un geste comme saluer ou s’étirer passe en posture debout, tandis que coeur passe en assis', async () => {
+    app.status.posture = 'sit';
+    apiMock.actionManual.mockResolvedValue({ ok: true, blocked: false, message: null });
+    apiMock.getStatus.mockResolvedValue({
+      ...statutDeBase(),
+      posture: 'stand',
+    });
+
+    await app.actionManual('salute', 'mobile');
+    expect(app.status.posture).toBe('stand');
+
+    await app.actionManual('stretch', 'mobile');
+    expect(app.status.posture).toBe('stand');
+
+    apiMock.getStatus.mockResolvedValue({
+      ...statutDeBase(),
+      posture: 'sit',
+    });
+    await app.actionManual('heart', 'mobile');
+    expect(app.status.posture).toBe('sit');
+  });
+
+  it('un déplacement manuel annule la posture assise et passe immédiatement en posture debout', async () => {
+    app.status.posture = 'sit';
+    apiMock.moveManual.mockResolvedValueOnce({ active: true, blocked: false, message: null });
+
+    await app.moveManual('forward', 1, 'mobile');
+
+    expect(app.status.posture).toBe('stand');
+    expect(apiMock.moveManual).toHaveBeenCalledWith('forward', 1, 'mobile', false);
   });
 });

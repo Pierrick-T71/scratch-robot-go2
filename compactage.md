@@ -221,3 +221,33 @@
   - Le parseur `parseBlocksFromJson` et le modèle `PlayBlock` préservent l'ensemble des clés et paramètres personnalisés (`[key: string]: unknown`).
   - Tolérance aux blocs futurs dans `specOfOrFallback` pour afficher tout futur bloc sans rupture.
   - Rétro-compatibilité assurée avec les formats de déclarations backend (`statements`).
+
+---
+
+## 9. Nettoyage Interface, Enchaînement d'Actions Mobile & Corrections Simulation
+
+**Date :** 29/10/2026
+
+### 9.1. Annulation Réactive des Postures et Actions sur Mobile (`MobileGamepad.svelte`)
+- **Problématique résolue** : Sur mobile, lorsqu'on ordonnait une posture (ex. s'asseoir) puis qu'on demandait un saut ou un mouvement au joystick, le robot se rasseyait immédiatement à cause d'anciennes actions ou d'un statut en retard.
+- **Correctifs** :
+  - Mécanisme d'annulation immédiate `cancelRunningAction()` lors de tout nouvel ordre ou mouvement au stick.
+  - Dérivation de posture dynamique : dès qu'un mouvement de joystick ou un saut survient, la posture assise/couchée est rompue et repasse à `STAND`.
+  - Jetons de séquence d'action (`#actionSeq`) dans `app.svelte.ts` pour ignorer les réponses `refreshStatus()` périmées arrivant après une commande utilisateur.
+  - Synchronisation de l'animation 3D sur le saut manuel (`manualAction`).
+
+### 9.2. Corrections Mode Simulation & Clavier (`simulated.py` & `ManualPanel.svelte`)
+- **Saut clavier (Espace) et boutons** :
+  - Déclenchement garanti avec support multi-claviers (`Space`, `Spacebar`, ` `).
+  - En simulation (`simulated.py`), le saut manuel applique désormais un bond franc de +50 cm vers l'avant et réinitialise la posture à `STAND`.
+- **Réactivité ZQSD / Flèches** :
+  - Support normalisé pour ZQSD, WASD et flèches directionnelles.
+  - Réinitialisation de la posture à `STAND` lors de toute commande de vitesse manuelle ou déplacement.
+
+### 9.3. Éradication du Panneau de Réglages Superflu
+- **Suppression du bouton ⚙️ et de la modale Réglages** :
+  - Retrait du bouton outil dans `BlockLibrary.svelte` et de la modale associée dans `App.svelte`.
+  - L'interface reste 100% dédiée à l'enfant, sans menus de configuration inutiles.
+- **Garantie de Sécurité Intégrée** :
+  - Les limites de sécurité physique restent strictement vérifiées côté serveur via `config.HARD_CEILINGS` (vitesse max 0,5 m/s, plafonds d'angles et distances).
+  - Mise à jour du `README.md` reflétant la simplification de l'interface et l'autorité native du backend.

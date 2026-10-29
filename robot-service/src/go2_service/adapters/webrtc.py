@@ -1431,6 +1431,7 @@ class WebRTCAdapter:
 
         self._programme_en_cours = True
         self._state = RobotState.MOVING
+        self._posture = Posture.STAND
         self._envoyer_move(vx, vy, vyaw)
 
     async def manual_session_end(self) -> None:
@@ -1484,6 +1485,7 @@ class WebRTCAdapter:
             log.info("FrontJump code=%s, tentative FrontPounce", code)
             code = await self._commander("FrontPounce", timeout_s=self.POSTURE_TIMEOUT_S)
 
+        self._posture = Posture.STAND
         await asyncio.sleep(0.5)
         self._prendre_la_main()
 
@@ -2190,6 +2192,10 @@ class WebRTCAdapter:
                         detail="Le robot n’a pas voulu s’allonger.",
                     )
                 self._posture = Posture.LIE_DOWN
+        elif nom == "FingerHeart":
+            self._posture = Posture.SIT
+        else:
+            self._posture = Posture.STAND
 
         if reprendre_la_main:
             self._prendre_la_main()

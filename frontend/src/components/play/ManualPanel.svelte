@@ -43,8 +43,14 @@
 
   const keyDirections: Record<string, string> = {
     z: 'forward',
+    w: 'forward',
+    arrowup: 'forward',
+    up: 'forward',
     s: 'backward',
+    arrowdown: 'backward',
+    down: 'backward',
     q: 'left',
+    a: 'left',
     d: 'right',
     arrowleft: 'turn_left',
     left: 'turn_left',
@@ -127,23 +133,30 @@
     let turn: 'turn_left' | 'turn_right' | null = null;
     let strafe: 'left' | 'right' | null = null;
 
-    if (heldKeys.has('z') && !heldKeys.has('s')) linear = 'forward';
-    else if (heldKeys.has('s') && !heldKeys.has('z')) linear = 'backward';
+    const isForward =
+      heldKeys.has('z') ||
+      heldKeys.has('w') ||
+      heldKeys.has('arrowup') ||
+      heldKeys.has('up');
+    const isBackward =
+      heldKeys.has('s') ||
+      heldKeys.has('arrowdown') ||
+      heldKeys.has('down');
 
-    if (
-      (heldKeys.has('arrowleft') || heldKeys.has('left')) &&
-      !(heldKeys.has('arrowright') || heldKeys.has('right'))
-    ) {
-      turn = 'turn_left';
-    } else if (
-      (heldKeys.has('arrowright') || heldKeys.has('right')) &&
-      !(heldKeys.has('arrowleft') || heldKeys.has('left'))
-    ) {
-      turn = 'turn_right';
-    }
+    if (isForward && !isBackward) linear = 'forward';
+    else if (isBackward && !isForward) linear = 'backward';
 
-    if (heldKeys.has('q') && !heldKeys.has('d')) strafe = 'left';
-    else if (heldKeys.has('d') && !heldKeys.has('q')) strafe = 'right';
+    const isTurnLeft = heldKeys.has('arrowleft') || heldKeys.has('left');
+    const isTurnRight = heldKeys.has('arrowright') || heldKeys.has('right');
+
+    if (isTurnLeft && !isTurnRight) turn = 'turn_left';
+    else if (isTurnRight && !isTurnLeft) turn = 'turn_right';
+
+    const isLeft = heldKeys.has('q') || heldKeys.has('a');
+    const isRight = heldKeys.has('d');
+
+    if (isLeft && !isRight) strafe = 'left';
+    else if (isRight && !isLeft) strafe = 'right';
 
     // Combinaisons avancer/reculer + tourner
     if (linear === 'forward' && turn === 'turn_left') return 'forward+turn_left';
@@ -173,6 +186,7 @@
     inFlight = true;
     try {
       const result = await onMove(direction, nextManualSequence(), sprint);
+      void app.refreshStatus();
       if (
         token !== requestToken ||
         activeDirection !== direction ||
@@ -216,6 +230,7 @@
 
     const token = ++requestToken;
     const result = await onMove(nextDir, nextManualSequence(), nextSprint);
+    void app.refreshStatus();
     if (
       token !== requestToken ||
       activeDirection !== nextDir ||
@@ -248,13 +263,16 @@
     message = null;
     try {
       const result = await onJump();
+      void app.refreshStatus();
       if (result.blocked) {
         message = result.message ?? 'Le robot n’a pas pu sauter.';
       }
     } catch {
       message = 'Erreur de communication lors du saut.';
     } finally {
-      isJumping = false;
+      setTimeout(() => {
+        isJumping = false;
+      }, 1500);
     }
   }
 
@@ -285,7 +303,7 @@
     }
 
     const k = event.key.toLowerCase();
-    if (event.code === 'Space' || k === ' ') {
+    if (event.code === 'Space' || k === ' ' || k === 'spacebar') {
       event.preventDefault();
       event.stopPropagation();
       void triggerJump();
@@ -313,7 +331,7 @@
     }
 
     const k = event.key.toLowerCase();
-    if (event.code === 'Space' || k === ' ') {
+    if (event.code === 'Space' || k === ' ' || k === 'spacebar') {
       event.preventDefault();
       event.stopPropagation();
       return;

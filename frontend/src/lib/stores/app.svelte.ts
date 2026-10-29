@@ -80,6 +80,8 @@ class AppState {
   blockedNotice = $state<BlockedNotice | null>(null);
   /** Consigne de pilotage manuel en cours (direction et sprint). */
   manualMotion = $state<{ direction: ManualDirection | null; sprint: boolean } | null>(null);
+  /** Action ou geste manuel en cours pour l'animation 3D (ex: saut). */
+  manualAction = $state<string | null>(null);
   /** Programme en attente de confirmation (mode reel). */
   pendingStart = $state<Program | null>(null);
   /** Reglages en vigueur, fournis par le service (bornes incluses). */
@@ -88,6 +90,8 @@ class AppState {
   runId: string | null = null;
   /** Revision des reglages au moment de la derniere verification. */
   #validatedRevision = 0;
+  #actionSeq = 0;
+  #manualActionTimer: ReturnType<typeof setTimeout> | null = null;
 
   #lease: LeaseKeeper | null = null;
   #stream: EventStream | null = null;
@@ -374,6 +378,12 @@ class AppState {
     source: 'keyboard' | 'mobile' = 'keyboard',
     sprint: boolean = false,
   ): Promise<ManualMoveResult> {
+    if (direction !== null) {
+      this.#actionSeq++;
+      if (this.status.posture !== 'stand') {
+        this.status = { ...this.status, posture: 'stand' };
+      }
+    }
     this.manualMotion = direction !== null ? { direction, sprint } : null;
     try {
       const result = await api.moveManual(direction, seq, source, sprint);
@@ -423,8 +433,24 @@ class AppState {
   async jumpManual(
     source: 'keyboard' | 'mobile' = 'keyboard',
   ): Promise<{ ok: boolean; blocked: boolean; message: string | null }> {
+    this.#actionSeq++;
+    const currentSeq = this.#actionSeq;
+    this.status = { ...this.status, posture: 'stand' };
+    this.manualAction = 'jump';
+    if (this.#manualActionTimer !== null) {
+      clearTimeout(this.#manualActionTimer);
+    }
+    this.#manualActionTimer = setTimeout(() => {
+      this.manualAction = null;
+      this.#manualActionTimer = null;
+    }, 1500);
+
     try {
-      return await api.jumpManual(source);
+      const res = await api.jumpManual(source);
+      if (currentSeq === this.#actionSeq) {
+        await this.refreshStatus();
+      }
+      return res;
     } catch (error) {
       return {
         ok: false,
@@ -442,12 +468,20 @@ class AppState {
     action: string,
     source: 'keyboard' | 'mobile' = 'mobile',
   ): Promise<{ ok: boolean; blocked: boolean; message: string | null }> {
+    this.#actionSeq++;
+    const currentSeq = this.#actionSeq;
     if (['stand', 'sit', 'lie_down', 'balance'].includes(action)) {
       this.status = { ...this.status, posture: action as any };
+    } else if (['jump', 'salute', 'stretch'].includes(action)) {
+      this.status = { ...this.status, posture: 'stand' };
+    } else if (action === 'heart') {
+      this.status = { ...this.status, posture: 'sit' };
     }
     try {
       const res = await api.actionManual(action, source);
-      await this.refreshStatus();
+      if (currentSeq === this.#actionSeq) {
+        await this.refreshStatus();
+      }
       return res;
     } catch (error) {
       return {
@@ -616,6 +650,7 @@ class AppState {
         break;
       case 'step_completed':
         this.#updateStep(event.index, { state: 'done' });
+        void this.refreshStatus();
         break;
       case 'step_finished':
         // « mesuré » n'est affiché QUE si une mesure a réellement été
@@ -638,6 +673,7 @@ class AppState {
               ? event.message
               : describeOutcome(event.outcome, event.measured),
         });
+        void this.refreshStatus();
         if (event.outcome === 'blocked') {
           this.blockedNotice = {
             title: blockedTitle(event.label),
@@ -662,6 +698,7 @@ class AppState {
         break;
       case 'execution_finished':
         this.#onFinished(event.reason);
+        void this.refreshStatus();
         break;
       case 'error':
         this.#setNotice('error', event.message);

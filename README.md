@@ -45,43 +45,24 @@ consignes.
 - **Fenêtre d'obstacle** : le message complet s'affiche au centre de l'écran, avec un bouton **Fermer**.
 - **Interrupteur « Sécurité »** : en haut à droite, il coupe ou réactive la vérification de place du **service** (confirmation adulte). L'anti-obstacle interne du Go2 et les autres protections restent actifs.
 - **Mode simulation** par défaut, jamais confondu avec le pilotage réel.
-- **Panneau Configuration** : réglages du robot (réservés à un adulte) et préférences.
+- **Plafonds de sécurité intégrés** : le service robot applique directement des limites strictes (vitesse, distance, rotations, durées) définies côté backend sans encombrer l'interface de boutons de configuration superflus.
 
-### Configuration depuis l'interface
+### Sécurité et plafonds stricts
 
-Bouton **⚙️ Configuration** en haut à droite, ou la carte « Configuration » dans
-la colonne de droite.
+L'interface est épurée pour les enfants : aucun réglage complexe ni panneau de configuration encombrant. La sécurité est assurée de manière native par le service :
 
-**Réglages du robot** (adultes uniquement) — 10 curseurs :
-
-| Réglage | Plage |
-|---|---|
-| Vitesse maximale | 0,10 – 0,50 m/s |
-| Rotation maximale | 0,20 – 1,20 rad/s |
-| Distance par déplacement | 40 – 200 cm |
-| Rotation par déplacement | 45 – 180° |
-| Attente maximale | 3 – 10 s |
-| Durée totale du programme | 30 – 120 s |
-| Distance totale | 300 – 1500 cm |
-| Rotations totales | 900 – 3600° |
-| Nombre de pas | 50 – 500 |
-| Répétitions par bloc | 3 – 20 |
-
-Trois garanties sur ces réglages :
-
-1. **Le service est l'autorité.** Les curseurs ne font que proposer ; c'est le
-   service qui applique, et qui refuse.
-2. **Les plafonds sont écrits dans le code** (`config.HARD_CEILINGS`), pas dans
-   l'interface. Un client modifié ne peut pas s'attribuer des droits
-   supérieurs : `POST /api/settings` renvoie 422 au-delà du plafond.
-3. **Mot de confirmation obligatoire** (« RÉGLAGES ») plus autorisation adulte
-   explicite. La modification est refusée pendant une exécution.
-
-Un changement de réglage invalide le rapport de vérification affiché : le
-programme doit être revérifié avec les nouvelles limites.
-
-**Préférences** — adresse du service robot, thème. Purement locales, sans effet
-sur la sécurité. Seules les URL `http://` et `https://` sont acceptées.
+1. **Le service est l'autorité.** Les limites de déplacement, de vitesse et de rotation sont vérifiées et appliquées directement par le backend.
+2. **Les plafonds sont gravés dans le code** (`config.HARD_CEILINGS`) :
+   - Vitesse maximale : 0,50 m/s
+   - Rotation maximale : 1,20 rad/s
+   - Distance par déplacement : 40 à 200 cm
+   - Rotation par déplacement : 45 à 180°
+   - Attente maximale : 3 à 10 s
+   - Durée totale du programme : 30 à 120 s
+   - Distance totale : 300 à 1500 cm
+   - Rotations totales : 900 à 3600°
+   - Nombre de pas : 50 à 500
+3. **Aucun contournement possible côté client** : tout ordre hors-limites est rejeté avant tout mouvement physique du robot.
 
 ---
 
