@@ -164,7 +164,9 @@ class SimulatedAdapter:
         """Remet le robot au centre de la carte (position 0,0,0 et cap 0)."""
         self._position = [0.0, 0.0, 0.0]
         self._yaw = 0.0
+        self._posture = Posture.STAND
         self._state = RobotState.IDLE
+        self._crouch_mode = False
 
     async def manual_prepare(self) -> None:
         """Le simulateur accepte le mode manuel, sans mouvement réel."""
@@ -425,6 +427,8 @@ class SimulatedAdapter:
     async def _do_move(
         self, command: RobotCommand, index: int, should_stop: StopSignal
     ) -> CommandOutcome:
+        self._posture = Posture.STAND
+        self._state = RobotState.MOVING
         plan = plan_command(command, self._limits)
         if plan is None:
             raise AdapterError(f"Commande non gérée par le simulateur : {command.kind.value}")

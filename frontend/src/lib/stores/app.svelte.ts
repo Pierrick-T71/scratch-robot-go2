@@ -82,6 +82,8 @@ class AppState {
   manualMotion = $state<{ direction: ManualDirection | null; sprint: boolean } | null>(null);
   /** Action ou geste manuel en cours pour l'animation 3D (ex: saut). */
   manualAction = $state<string | null>(null);
+  /** Déclencheur pour recentrer la scène 3D (sur refresh ou bouton). */
+  resetSimulationTrigger = $state(0);
   /** Programme en attente de confirmation (mode reel). */
   pendingStart = $state<Program | null>(null);
   /** Reglages en vigueur, fournis par le service (bornes incluses). */
@@ -420,12 +422,30 @@ class AppState {
       ...this.status,
       position: { x: 0, y: 0, z: 0 },
       yawRad: 0,
+      posture: 'stand',
     };
+    this.resetSimulationTrigger += 1;
     try {
       const res = await api.resetSimulation();
       this.status = res.status;
     } catch {
       /* si le service n'est pas joignable, l'état local a déjà été remis à zéro */
+    }
+  }
+
+  /**
+   * Initialisation au chargement / rechargement de page :
+   * Arrête tout mode manuel résiduel et replace le robot au centre si on est en simulation.
+   */
+  async initPageRefresh(): Promise<void> {
+    try {
+      await api.stopManual();
+    } catch {
+      /* ignore */
+    }
+    await this.refreshStatus();
+    if (this.status.mode === 'simulation') {
+      await this.resetSimulation();
     }
   }
 

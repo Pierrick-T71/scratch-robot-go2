@@ -150,6 +150,7 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
     blocks = loadBlocks();
     app.connect();
     void app.refreshSettings();
+    void app.initPageRefresh();
     const poll = setInterval(() => void app.refreshStatus(), 2000);
 
     const checkRemote = () => {
@@ -443,6 +444,7 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
         posture={effectivePosture}
         action={effectiveAction}
         resetRun={app.execution === 'starting'}
+        resetTrigger={app.resetSimulationTrigger}
         onOpenRobot={openRobot}
         onResetSimulation={() => void app.resetSimulation()}
       />

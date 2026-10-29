@@ -786,6 +786,8 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
     @app.post("/api/simulation/reset")
     async def reset_simulation() -> dict[str, Any]:
         """Réinitialise la simulation en replaçant le robot au centre de la carte."""
+        if state.manual.active:
+            await state.manual.stop()
         if state.mode == "simulation":
             if state.engine.is_running:
                 state.engine.request_stop()
@@ -1080,10 +1082,7 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
                 status_code=409, detail="Un programme est déjà en cours."
             )
         if state.manual.active:
-            raise HTTPException(
-                status_code=409,
-                detail="Quitte d’abord le mode manuel avant de lancer un programme.",
-            )
+            await state.manual.stop()
         if state.autonomous.active:
             await state.autonomous.stop()
 

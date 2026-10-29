@@ -251,3 +251,22 @@
 - **Garantie de Sécurité Intégrée** :
   - Les limites de sécurité physique restent strictement vérifiées côté serveur via `config.HARD_CEILINGS` (vitesse max 0,5 m/s, plafonds d'angles et distances).
   - Mise à jour du `README.md` reflétant la simplification de l'interface et l'autorité native du backend.
+
+---
+
+## 10. Recentrage Automatique au Rechargement & Déblocage Exécution Simulateur
+
+**Date :** 29/10/2026
+
+### 10.1. Recentrage au Rechargement de Page (Refresh F5)
+- **Nettoyage automatique au montage (`initPageRefresh`)** :
+  - Dès le montage de l'application (`App.svelte` / `onMount`), `app.initPageRefresh()` arrête tout mode manuel résiduel et ordonne un recentrage complet en simulation.
+  - Utilisation de `keepalive: true` sur `/api/manual/stop` et `/api/execution/stop` dans `client.ts` pour garantir la transmission réseau même en cas de fermeture ou rafraîchissement brusque de la page du navigateur.
+  - Câblage de l'événement Three.js `recentrer()` via `resetSimulationTrigger` synchronisé entre le store `app.svelte.ts`, `RobotStage.svelte`, `MobileGamepad.svelte` et `LidarScene.svelte` : le modèle 3D du robot revient immédiatement au centre (0, 0, 0), son cap est remis à zéro, et la caméra se repositionne immédiatement derrière lui.
+
+### 10.2. Déblocage du Mode Manuel Résiduel sur Simulateur
+- **Suppression du refus HTTP 409 intempestif** :
+  - Dans `main.py` (`/api/execution/start`), le blocage qui levait l'erreur *« Quitte d’abord le mode manuel avant de lancer un programme »* a été remplacé par un arrêt automatique et propre du mode manuel (`await state.manual.stop()`), aligné sur le comportement du mode autonome.
+  - Dans `/api/simulation/reset`, le mode manuel est également arrêté automatiquement pour éviter tout état fantôme.
+- **Garantie de Déplacement Simulateur** :
+  - Dans `simulated.py` (`_do_move`), la posture est remise à `STAND` et l'état à `MOVING` pour assurer que le robot avance systématiquement même s'il était préalablement assis ou couché.

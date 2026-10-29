@@ -26,6 +26,8 @@
     action?: string | null;
     /** Réinitialisation au début d'un nouveau lancement. */
     resetRun?: boolean;
+    /** Déclencheur externe pour recentrer le robot au milieu de la scène. */
+    resetTrigger?: number;
     onOpenRobot: () => void;
     onResetSimulation?: () => void;
   }
@@ -37,11 +39,13 @@
     posture = null,
     action = null,
     resetRun = false,
+    resetTrigger = 0,
     onOpenRobot,
     onResetSimulation,
   }: Props = $props();
 
-  let resetTrigger = $state(0);
+  let localResetTrigger = $state(0);
+  const effectiveResetTrigger = $derived(resetTrigger + localResetTrigger);
   let isResetting = $state(false);
   let lidarSceneRef = $state<ReturnType<typeof LidarScene> | undefined>();
 
@@ -147,7 +151,7 @@
     if (lidar) {
       lidar = false;
     }
-    resetTrigger += 1;
+    localResetTrigger += 1;
     isResetting = true;
     setTimeout(() => {
       isResetting = false;
@@ -172,7 +176,7 @@
         position={status.position}
         yawRad={status.yawRad}
         {resetRun}
-        {resetTrigger}
+        resetTrigger={effectiveResetTrigger}
       />
     </div>
 

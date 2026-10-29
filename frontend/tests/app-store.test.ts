@@ -28,6 +28,7 @@ const apiMock = {
   moveManual: vi.fn(),
   setStandby: vi.fn(),
   resetSimulation: vi.fn(),
+  stopManual: vi.fn(),
 };
 
 vi.mock('../src/lib/api/client', async (importOriginal) => {
@@ -329,5 +330,52 @@ describe('actions et postures manuelles', () => {
 
     expect(app.status.posture).toBe('stand');
     expect(apiMock.moveManual).toHaveBeenCalledWith('forward', 1, 'mobile', false);
+  });
+
+  it('resetSimulation remet le robot au centre et incrémente le déclencheur de recentrage', async () => {
+    app.status.position = { x: 5, y: 3, z: 0 };
+    app.status.yawRad = 1.2;
+    const initialTrigger = app.resetSimulationTrigger;
+    apiMock.resetSimulation.mockResolvedValueOnce({
+      ok: true,
+      status: {
+        ...statutDeBase(),
+        position: { x: 0, y: 0, z: 0 },
+        yawRad: 0,
+        posture: 'stand',
+      },
+    });
+
+    await app.resetSimulation();
+
+    expect(app.status.position).toEqual({ x: 0, y: 0, z: 0 });
+    expect(app.status.yawRad).toBe(0);
+    expect(app.status.posture).toBe('stand');
+    expect(app.resetSimulationTrigger).toBe(initialTrigger + 1);
+    expect(apiMock.resetSimulation).toHaveBeenCalled();
+  });
+
+  it('initPageRefresh stoppe le mode manuel et réinitialise la simulation', async () => {
+    apiMock.stopManual.mockResolvedValueOnce({ active: false });
+    apiMock.getStatus.mockResolvedValueOnce({
+      ...statutDeBase(),
+      mode: 'simulation',
+      position: { x: 2, y: 1, z: 0 },
+    });
+    apiMock.resetSimulation.mockResolvedValueOnce({
+      ok: true,
+      status: {
+        ...statutDeBase(),
+        position: { x: 0, y: 0, z: 0 },
+        yawRad: 0,
+        posture: 'stand',
+      },
+    });
+
+    await app.initPageRefresh();
+
+    expect(apiMock.stopManual).toHaveBeenCalled();
+    expect(apiMock.resetSimulation).toHaveBeenCalled();
+    expect(app.status.position).toEqual({ x: 0, y: 0, z: 0 });
   });
 });

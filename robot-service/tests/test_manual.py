@@ -284,3 +284,28 @@ class TestManualEndpoints:
         assert resp.status_code == 200
         assert resp.json()["ok"] is False
         assert "Action inconnue" in resp.json()["message"]
+
+    def test_start_execution_auto_stops_manual(self, client):
+        client.post("/api/manual/start", json={"adult_authorised": True})
+        assert client.get("/api/status").json()["manualActive"] is True
+
+        resp = client.post(
+            "/api/execution/start",
+            json={
+                "program": {"statements": [{"kind": "wait", "seconds": 1}]},
+                "adult_authorised": True,
+            },
+        )
+        assert resp.status_code == 200
+        assert client.get("/api/status").json()["manualActive"] is False
+
+    def test_simulation_reset_stops_manual_and_centers_robot(self, client):
+        client.post("/api/manual/start", json={"adult_authorised": True})
+        assert client.get("/api/status").json()["manualActive"] is True
+
+        resp = client.post("/api/simulation/reset")
+        assert resp.status_code == 200
+        status = client.get("/api/status").json()
+        assert status["manualActive"] is False
+        assert status["position"] == {"x": 0.0, "y": 0.0, "z": 0.0}
+        assert status["posture"] == "stand"

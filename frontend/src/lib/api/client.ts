@@ -267,7 +267,7 @@ export const api = {
     }),
 
   stop: (): Promise<{ stopping: boolean }> =>
-    request('/api/execution/stop', { method: 'POST' }),
+    request('/api/execution/stop', { method: 'POST', keepalive: true }),
 
   /** Réinitialise la simulation (remet le robot au centre de la carte). */
   resetSimulation: (): Promise<{ ok: boolean; status: RobotStatus }> =>
@@ -301,7 +301,7 @@ export const api = {
 
   /** Ferme le mode manuel et arrête le robot. */
   stopManual: (): Promise<{ active: boolean }> =>
-    request('/api/manual/stop', { method: 'POST' }),
+    request('/api/manual/stop', { method: 'POST', keepalive: true }),
 
   /** Déclenche un saut en mode manuel (barre espace ou manette mobile). */
   jumpManual: (

@@ -623,7 +623,7 @@
                 action={effectiveAction}
                 position={app.status.position}
                 yawRad={app.status.yawRad}
-                {resetTrigger}
+                resetTrigger={resetTrigger + app.resetSimulationTrigger}
               />
 
               <!-- Bouton pour recentrer le robot au milieu de la carte -->
