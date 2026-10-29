@@ -385,6 +385,9 @@ class AppState {
       if (this.status.posture !== 'stand') {
         this.status = { ...this.status, posture: 'stand' };
       }
+      if (!this.status.manualActive) {
+        await this.startManual();
+      }
     }
     this.manualMotion = direction !== null ? { direction, sprint } : null;
     try {
@@ -465,6 +468,10 @@ class AppState {
       this.#manualActionTimer = null;
     }, 1500);
 
+    if (!this.status.manualActive) {
+      await this.startManual();
+    }
+
     try {
       const res = await api.jumpManual(source);
       if (currentSeq === this.#actionSeq) {
@@ -496,6 +503,9 @@ class AppState {
       this.status = { ...this.status, posture: 'stand' };
     } else if (action === 'heart') {
       this.status = { ...this.status, posture: 'sit' };
+    }
+    if (!this.status.manualActive) {
+      await this.startManual();
     }
     try {
       const res = await api.actionManual(action, source);

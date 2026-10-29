@@ -150,7 +150,9 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
     blocks = loadBlocks();
     app.connect();
     void app.refreshSettings();
-    void app.initPageRefresh();
+    if (!isRemoteMode) {
+      void app.initPageRefresh();
+    }
     const poll = setInterval(() => void app.refreshStatus(), 2000);
 
     const checkRemote = () => {

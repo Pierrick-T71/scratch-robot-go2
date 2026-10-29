@@ -48,6 +48,33 @@
   let runningAction = $state<string | null>(null);
   let actionTimeout: ReturnType<typeof setTimeout> | null = null;
   let feedbackMessage = $state<string | null>(null);
+  let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function setFeedback(msg: string | null): void {
+    if (feedbackTimer !== null) {
+      clearTimeout(feedbackTimer);
+      feedbackTimer = null;
+    }
+    feedbackMessage = msg;
+    if (msg) {
+      feedbackTimer = setTimeout(() => {
+        feedbackMessage = null;
+        feedbackTimer = null;
+      }, 4000);
+    }
+  }
+
+  function dismissError(): void {
+    setFeedback(null);
+    app.notice = null;
+  }
+
+  const activeError = $derived(
+    feedbackMessage ??
+      (app.notice && app.notice.tone === 'error' ? app.notice.message : null) ??
+      (app.status.safetyReason ? `Sécurité : ${app.status.safetyReason}` : null) ??
+      (app.status.mode === 'real' && !app.status.connected ? 'Robot réel non connecté' : null)
+  );
 
   let renewalTimer: ReturnType<typeof setInterval> | null = null;
   let lidarPollingActive = true;
@@ -203,11 +230,11 @@
     }
 
     activeDirection = nextDir;
-    feedbackMessage = null;
+    setFeedback(null);
 
     const result = await app.moveManual(nextDir, nextManualSequence(), 'mobile');
     if (result.blocked) {
-      feedbackMessage = result.message ?? 'Mouvement bloqué.';
+      setFeedback(result.message ?? 'Mouvement bloqué.');
       stopAllMotion();
       return;
     }
@@ -220,7 +247,7 @@
       if (activeDirection === null) return;
       const res = await app.moveManual(activeDirection, nextManualSequence(), 'mobile');
       if (res.blocked) {
-        feedbackMessage = res.message ?? 'Mouvement bloqué.';
+        setFeedback(res.message ?? 'Mouvement bloqué.');
         stopAllMotion();
       } else {
         // En simulation, rafraîchir le statut met à jour position et yawRad pour faire bouger le robot 3D
@@ -331,16 +358,14 @@
     // Annuler immédiatement l'action précédente en cours (timeout, saut ou geste)
     cancelRunningAction();
     stopAllMotion();
-    feedbackMessage = null;
+    setFeedback(null);
 
     // Déterminer la nouvelle posture selon l'action : toute action remplace la précédente
-    let targetPosture: 'stand' | 'sit' | 'lie_down' | 'balance' = 'stand';
+    let targetPosture: 'stand' | 'sit' | 'lie_down' = 'stand';
     if (actionName === 'sit' || actionName === 'heart') {
       targetPosture = 'sit';
     } else if (actionName === 'lie_down') {
       targetPosture = 'lie_down';
-    } else if (actionName === 'balance') {
-      targetPosture = 'balance';
     } else {
       // stand, jump, salute, stretch -> posture debout
       targetPosture = 'stand';
@@ -361,10 +386,10 @@
       try {
         const result = await app.jumpManual('mobile');
         if (result.blocked) {
-          feedbackMessage = result.message ?? 'Le robot n’a pas pu sauter.';
+          setFeedback(result.message ?? 'Le robot n’a pas pu sauter.');
         }
       } catch {
-        feedbackMessage = 'Erreur lors du saut.';
+        setFeedback('Erreur lors du saut.');
       }
       return;
     }
@@ -382,7 +407,7 @@
         actionTimeout = null;
       }, duration);
     } else {
-      // Pour les postures ('stand', 'sit', 'lie_down', 'balance'),
+      // Pour les postures ('stand', 'sit', 'lie_down'),
       // aucune temporisation bloquante n'est conservée.
       runningAction = null;
     }
@@ -390,10 +415,10 @@
     try {
       const result = await app.actionManual(actionName, 'mobile');
       if (result.blocked && result.message) {
-        feedbackMessage = result.message;
+        setFeedback(result.message);
       }
     } catch {
-      feedbackMessage = 'Erreur lors de l’action.';
+      setFeedback('Erreur lors de l’action.');
     }
   }
 
@@ -405,9 +430,20 @@
     window.addEventListener('fullscreenchange', updateFullscreenState);
     window.addEventListener('webkitfullscreenchange', updateFullscreenState);
     window.addEventListener('blur', stopAllMotion);
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') stopAllMotion();
-    });
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        stopAllMotion();
+      } else if (document.visibilityState === 'visible') {
+        app.connect();
+        void app.refreshStatus().then(() => {
+          if (!app.status.manualActive) {
+            void app.startManual();
+          }
+        });
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
 
     app.connect();
     void app.refreshStatus().then(() => {
@@ -415,6 +451,8 @@
         void app.startManual();
       }
     });
+
+    const statusPoll = setInterval(() => void app.refreshStatus(), 2000);
 
     const pollLidar = async () => {
       while (lidarPollingActive) {
@@ -434,14 +472,17 @@
     void pollLidar();
 
     return () => {
+      clearInterval(statusPoll);
       lidarPollingActive = false;
       if (tipTimer) clearTimeout(tipTimer);
+      if (feedbackTimer) clearTimeout(feedbackTimer);
       cancelRunningAction();
       window.removeEventListener('resize', checkOrientation);
       window.removeEventListener('orientationchange', checkOrientation);
       window.removeEventListener('fullscreenchange', updateFullscreenState);
       window.removeEventListener('webkitfullscreenchange', updateFullscreenState);
       window.removeEventListener('blur', stopAllMotion);
+      document.removeEventListener('visibilitychange', onVisibility);
       stopAllMotion();
     };
   });
@@ -476,6 +517,22 @@
       <div class="ios-tip-toast" role="status">
         <span>💡 <strong>Astuce iPhone :</strong> Touchez <strong>Partager ⎋</strong> puis <strong>« Sur l'écran d'accueil ⊞ »</strong> pour masquer la barre web !</span>
         <button type="button" class="ios-tip-close" onclick={() => { showIosTip = false; }}>×</button>
+      </div>
+    {/if}
+
+    <!-- Bannière d'erreur haute visibilité sur smartphone -->
+    {#if activeError}
+      <div class="mobile-error-toast" role="alert">
+        <span class="mobile-error-toast__icon">🛑</span>
+        <span class="mobile-error-toast__text">{activeError}</span>
+        <button
+          type="button"
+          class="mobile-error-toast__close"
+          onclick={dismissError}
+          aria-label="Fermer l'alerte"
+        >
+          ×
+        </button>
       </div>
     {/if}
 
@@ -515,8 +572,8 @@
           </div>
         </div>
 
-        <!-- 4 boutons d'action sous le joystick gauche avec uniquement les logos -->
-        <div class="action-pad" aria-label="Postures du robot">
+        <!-- 3 boutons de posture sous le joystick gauche (identiques aux blocs puzzle) -->
+        <div class="action-pad action-pad--postures" aria-label="Postures du robot">
           <button
             type="button"
             class="action-btn"
@@ -548,17 +605,6 @@
             aria-label="Se coucher"
           >
             <Icon name="moon" size={19} />
-          </button>
-
-          <button
-            type="button"
-            class="action-btn"
-            class:action-btn--active={effectivePosture === 'balance' && runningAction === null}
-            onclick={() => triggerAction('balance')}
-            title="Faire le beau"
-            aria-label="Faire le beau"
-          >
-            <Icon name="balance" size={19} />
           </button>
         </div>
       </section>
@@ -861,6 +907,62 @@
     padding: 0 4px;
   }
 
+  /* Toast d'erreur haute visibilité rouge vif sur smartphone */
+  .mobile-error-toast {
+    position: fixed;
+    top: max(env(safe-area-inset-top, 8px), 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: #dc2626;
+    color: #ffffff;
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 6px 14px;
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.2);
+    z-index: 6000;
+    max-width: 90vw;
+    pointer-events: auto;
+    animation: slideDown 0.2s ease-out;
+  }
+
+  .mobile-error-toast__icon {
+    font-size: 0.95rem;
+    flex-shrink: 0;
+  }
+
+  .mobile-error-toast__text {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-error-toast__close {
+    background: rgba(255, 255, 255, 0.2);
+    border: none;
+    color: #ffffff;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    margin-left: 4px;
+    flex-shrink: 0;
+  }
+
+  .mobile-error-toast__close:active {
+    background: rgba(255, 255, 255, 0.4);
+  }
+
   /* Manette complète paysage avec support Safe Area iOS */
   .mobile-gamepad {
     position: fixed;
@@ -1011,6 +1113,11 @@
     gap: clamp(5px, 1.2vh, 8px);
     width: clamp(80px, 18vh, 98px);
     touch-action: manipulation;
+  }
+
+  .action-pad--postures {
+    grid-template-columns: repeat(3, 1fr);
+    width: clamp(100px, 22vh, 126px);
   }
 
   .action-btn {

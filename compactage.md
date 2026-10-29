@@ -270,3 +270,27 @@
   - Dans `/api/simulation/reset`, le mode manuel est également arrêté automatiquement pour éviter tout état fantôme.
 - **Garantie de Déplacement Simulateur** :
   - Dans `simulated.py` (`_do_move`), la posture est remise à `STAND` et l'état à `MOVING` pour assurer que le robot avance systématiquement même s'il était préalablement assis ou couché.
+
+---
+
+## 11. Résolution Affichage Erreurs & Fiabilisation Contrôleur Smartphone
+
+**Date :** 29/10/2026
+
+### 11.1. Visibilité des Erreurs et Avertissements sur Smartphone
+- **Bannière d'alerte rouge haute visibilité (`.mobile-error-toast`)** :
+  - Ajout d'une bannière rouge vif (`#dc2626`) flottant au sommet de la vue paysage du smartphone avec l'icône `🛑`.
+  - Affiche instantanément les erreurs de blocage de mouvement, échecs d'actions, alertes de sécurité et déconnexions du service robot.
+  - Auto-fermeture au bout de 4 secondes et bouton de fermeture immédiate (✕).
+
+### 11.2. Fiabilisation de la Connexion et Déblocage des Actions Mobile
+- **Éradication de la condition de course à l'ouverture (`?remote=1`)** :
+  - `App.svelte` n'appelle plus `initPageRefresh()` si `isRemoteMode` est actif, évitant de fermer le mode manuel au moment même où le téléphone l'ouvre.
+  - Dans le store (`app.svelte.ts`), `actionManual`, `jumpManual` et `moveManual` vérifient l'état `manualActive` et auto-démarrent le mode manuel si nécessaire avant l'envoi de la consigne.
+- **Maintien de la connexion en tâche de fond** :
+  - Ajout d'un cycle de rafraîchissement d'état régulier à 2 secondes dans `MobileGamepad.svelte`.
+  - Reconnexion et réouverture automatique de session manuelle dès le retour au premier plan ou réveil d'écran (`visibilitychange: visible`).
+
+### 11.3. Clarification et Suppression du Bouton « Faire le beau »
+- **Origine** : Ce bouton correspondait à l'ancienne commande SDK interne `balance` qui n'a aucun équivalent dans les blocs de programmation Scratch, ne possède aucune animation 3D et n'est pas gérée par le vrai Go2.
+- **Harmonisation** : Suppression du bouton orphelin. Le pavé gauche regroupe désormais les 3 vraies postures Scratch parfaitement alignées sous le joystick : Se mettre debout (`stand`), S'asseoir (`sit`), Se coucher (`lie_down`).
