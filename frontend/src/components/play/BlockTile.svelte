@@ -116,9 +116,15 @@
   </svg>
 
   <span class="blk__content">
-    <span class="blk__icon" aria-hidden="true">
-      <Icon name={spec.icon} size={22} />
-    </span>
+    {#if spec.sticker}
+      <span class="blk__sticker" aria-hidden="true">
+        <img src={spec.sticker} alt="" class="blk__sticker-img" draggable="false" />
+      </span>
+    {:else}
+      <span class="blk__icon" aria-hidden="true">
+        <Icon name={spec.icon} size={22} />
+      </span>
+    {/if}
 
     <span class="blk__bottom">
       <span class="blk__label">{spec.label}</span>
@@ -171,6 +177,8 @@
     --blk-svg-size: 142.6px;
     --blk-icon-size: 36px;
     --blk-icon-svg: 22px;
+    --blk-sticker-w: 84px;
+    --blk-sticker-h: 58px;
     --blk-font-size: 13.5px;
     --blk-max-w: 96px;
     --blk-pill-height: 25px;
@@ -295,6 +303,34 @@
     height: var(--blk-icon-svg);
   }
 
+  .blk__sticker {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: var(--blk-sticker-w);
+    height: var(--blk-sticker-h);
+    margin-bottom: 2px;
+    pointer-events: none;
+  }
+
+  .blk__sticker-img {
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.2));
+    user-select: none;
+    -webkit-user-drag: none;
+    transition: transform 0.15s ease, filter 0.15s ease;
+  }
+
+  .blk:hover .blk__sticker-img {
+    filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.28));
+    transform: scale(1.05);
+  }
+
   .blk__bottom {
     display: flex;
     flex-direction: column;
@@ -407,6 +443,8 @@
       --blk-svg-size: 167.9px;
       --blk-icon-size: 44px;
       --blk-icon-svg: 27px;
+      --blk-sticker-w: 96px;
+      --blk-sticker-h: 68px;
       --blk-font-size: 15.5px;
       --blk-max-w: 114px;
       --blk-pill-height: 29px;
@@ -443,6 +481,8 @@
       --blk-svg-size: 181.7px;
       --blk-icon-size: 48px;
       --blk-icon-svg: 30px;
+      --blk-sticker-w: 108px;
+      --blk-sticker-h: 76px;
       --blk-font-size: 17px;
       --blk-max-w: 126px;
       --blk-pill-height: 33px;
@@ -501,6 +541,9 @@
     }
     .blk--running {
       animation: none;
+    }
+    .blk__sticker-img {
+      transition: none;
     }
   }
 </style>

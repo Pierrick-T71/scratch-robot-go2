@@ -63,6 +63,8 @@ export interface BlockSpec {
   category: PlayCategory;
   tone: BlockTone;
   icon: string;
+  /** Image sticker (robot) pour les blocs d'actions */
+  sticker?: string;
   /** Champ réglable, s'il y en a un. */
   editable?: EditableField;
   /** Phrase lue par les lecteurs d'écran. */
@@ -125,6 +127,7 @@ export const BLOCKS: readonly BlockSpec[] = [
     category: 'actions',
     tone: 'peach',
     icon: 'sit',
+    sticker: '/stickers/assis.png',
     hint: 'Le robot s’assoit',
   },
   {
@@ -133,6 +136,7 @@ export const BLOCKS: readonly BlockSpec[] = [
     category: 'actions',
     tone: 'peach',
     icon: 'stand',
+    sticker: '/stickers/debout.png',
     hint: 'Le robot se remet debout',
   },
   {
@@ -141,6 +145,7 @@ export const BLOCKS: readonly BlockSpec[] = [
     category: 'actions',
     tone: 'sky',
     icon: 'moon',
+    sticker: '/stickers/couche.png',
     hint: 'Le robot s’allonge par terre',
   },
   {
@@ -149,6 +154,7 @@ export const BLOCKS: readonly BlockSpec[] = [
     category: 'actions',
     tone: 'rose',
     icon: 'heart',
+    sticker: '/stickers/coeur.png',
     hint: 'Le robot fait un cœur avec ses pattes',
   },
   {
@@ -157,6 +163,7 @@ export const BLOCKS: readonly BlockSpec[] = [
     category: 'actions',
     tone: 'sun',
     icon: 'arrow-up',
+    sticker: '/stickers/sauter.png',
     hint: 'Le robot saute',
   },
   {
@@ -165,6 +172,7 @@ export const BLOCKS: readonly BlockSpec[] = [
     category: 'actions',
     tone: 'sky',
     icon: 'wave',
+    sticker: '/stickers/coucou.png',
     hint: 'Le robot salue',
   },
   {
@@ -173,6 +181,7 @@ export const BLOCKS: readonly BlockSpec[] = [
     category: 'actions',
     tone: 'mint',
     icon: 'stretch',
+    sticker: '/stickers/etirement.png',
     hint: 'Le robot s’étire',
   },
 ];

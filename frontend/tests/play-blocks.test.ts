@@ -79,6 +79,16 @@ describe('catalogue', () => {
     }
   });
 
+  it('associe un sticker aux actions disponibles', () => {
+    expect(specOf('sit').sticker).toBe('/stickers/assis.png');
+    expect(specOf('stand').sticker).toBe('/stickers/debout.png');
+    expect(specOf('lie_down').sticker).toBe('/stickers/couche.png');
+    expect(specOf('jump').sticker).toBe('/stickers/sauter.png');
+    expect(specOf('salute').sticker).toBe('/stickers/coucou.png');
+    expect(specOf('stretch').sticker).toBe('/stickers/etirement.png');
+    expect(specOf('heart').sticker).toBe('/stickers/coeur.png');
+  });
+
   it('refuse un bloc inconnu', () => {
     expect(isPlayBlockKind('fly')).toBe(false);
     expect(isPlayBlockKind(42)).toBe(false);
