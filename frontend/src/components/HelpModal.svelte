@@ -46,7 +46,7 @@
           <h3 class="help-card__title">Assemble tes pièces de puzzle</h3>
           <p class="help-card__text">
             Dans la <strong>Bibliothèque de blocs</strong>, choisis un mouvement ou une action
-            (<em>Avancer</em>, <em>Tourner</em>, <em>Danser</em>, <em>Coucou</em>...).
+            (<em>Avancer</em>, <em>Tourner</em>, <em>Saluer</em>, <em>Faire un cœur</em>...).
             Clique dessus ou glisse-le dans la zone <strong>Mon Programme</strong> en bas.
             Les blocs s'emboîtent automatiquement comme de vraies pièces de puzzle !
           </p>

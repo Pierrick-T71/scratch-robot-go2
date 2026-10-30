@@ -43,6 +43,7 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
   } from './lib/play/storage';
 
   let blocks = $state<PlayBlock[]>([]);
+  let isLoaded = $state(false);
 
   let showHelp = $state(false);
   let showMode = $state(false);
@@ -146,8 +147,21 @@ import StandbyOverlay from './components/play/StandbyOverlay.svelte';
     }
   });
 
+  $effect(() => {
+    if (!isLoaded) return;
+    const current = blocks;
+    untrack(() => {
+      try {
+        saveBlocks(current);
+      } catch {
+        // En mode navigation privée ou quota dépassé, on ignore silencieusement
+      }
+    });
+  });
+
   onMount(() => {
     blocks = loadBlocks();
+    isLoaded = true;
     app.connect();
     void app.refreshSettings();
     if (!isRemoteMode) {

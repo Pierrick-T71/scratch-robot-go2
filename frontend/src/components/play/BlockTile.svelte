@@ -60,6 +60,14 @@
   const spec = $derived(specOfOrFallback(kind));
   const canEdit = $derived(editable && spec.editable !== undefined);
 
+  let imgFailed = $state(false);
+
+  $effect(() => {
+    // Si kind change, re-tenter le sticker
+    void kind;
+    imgFailed = false;
+  });
+
   /**
    * Contour géométrique de la pièce de puzzle carrée (100x100 de base, s'étendant à 115x115 avec tenons) :
    * - Haut : creux femelle arrondi (y=0 à y=15)
@@ -116,9 +124,15 @@
   </svg>
 
   <span class="blk__content">
-    {#if spec.sticker}
+    {#if spec.sticker && !imgFailed}
       <span class="blk__sticker" aria-hidden="true">
-        <img src={spec.sticker} alt="" class="blk__sticker-img" draggable="false" />
+        <img
+          src={spec.sticker}
+          alt=""
+          class="blk__sticker-img"
+          draggable="false"
+          onerror={() => (imgFailed = true)}
+        />
       </span>
     {:else}
       <span class="blk__icon" aria-hidden="true">

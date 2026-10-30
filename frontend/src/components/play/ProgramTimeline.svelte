@@ -86,6 +86,11 @@
   }
 
   function startDrag(event: DragEvent, block: PlayBlock): void {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('select') || target?.closest('.blk__pill--edit')) {
+      event.preventDefault();
+      return;
+    }
     dragging = block.id;
     dragSession.start({ source: 'timeline', id: block.id });
     setDragPayload(event, { source: 'timeline', id: block.id });
