@@ -89,6 +89,11 @@ describe('catalogue', () => {
     expect(specOf('heart').sticker).toBe('/stickers/coeur.png');
   });
 
+  it('associe une flèche haut à avancer et une flèche bas à reculer', () => {
+    expect(specOf('forward').icon).toBe('arrow-up');
+    expect(specOf('backward').icon).toBe('arrow-down');
+  });
+
   it('refuse un bloc inconnu', () => {
     expect(isPlayBlockKind('fly')).toBe(false);
     expect(isPlayBlockKind(42)).toBe(false);

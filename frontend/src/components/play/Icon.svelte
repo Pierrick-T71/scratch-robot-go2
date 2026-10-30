@@ -56,12 +56,13 @@
 
 >
 
-  {#if name === 'arrow-right'}
-
+  {#if name === 'arrow-up'}
+    <path d="M12 20V6M6 12l6-6 6 6" />
+  {:else if name === 'arrow-down'}
+    <path d="M12 4v14M6 12l6 6 6-6" />
+  {:else if name === 'arrow-right'}
     <path d="M4 12h14M12 6l6 6-6 6" />
-
   {:else if name === 'arrow-left'}
-
     <path d="M20 12H6M12 6l-6 6 6 6" />
 
   {:else if name === 'turn-left'}
@@ -201,10 +202,6 @@
     <circle cx="12" cy="12" r="4.5" />
 
     <path d="M12 12 19 5" />
-
-  {:else if name === 'arrow-up'}
-
-    <path d="M12 20V5M12 5 6 11M12 5l6 6" />
 
   {:else if name === 'moon'}
 
