@@ -529,3 +529,22 @@
 - **Tests unitaires Frontend (`frontend`)** : **234 / 234 tests passants (100%)**.
 - **Typage et diagnostics Svelte (`npm run check`)** : 0 erreurs, 0 avertissements.
 - **Build de production Vite (`npm run build`)** : Bundle de production généré avec succès en 0.98s.
+
+---
+
+## 18. Intégration des Stickers Chien Gauche et Chien Droite sur les Pièces de Puzzle
+
+**Date :** 05/11/2026
+
+### 18.1. Description
+- Ajout des nouveaux visuels pour les blocs de rotation :
+  - `chien_gauche.png` sur le bloc **« Tourner à gauche »** (`kind: 'turn_left'`).
+  - `chien_droite.png` (provenant de `chien-droite.png`) sur le bloc **« Tourner à droite »** (`kind: 'turn_right'`).
+- Fichiers copiés depuis `C:\Users\ptokarek\Documents\Pierrick\alternance\image` vers `frontend/public/stickers/`.
+- Déclarés dans `frontend/src/lib/play/blocks.ts`.
+- Intégration naturelle avec la classe `.blk--has-pill` de `BlockTile.svelte` : l'image du chien s'affiche au-dessus du menu déroulant de l'angle en degrés avec des proportions adaptées.
+
+### 18.2. Bilan des Tests et Validation
+- **Tests unitaires Frontend (`frontend`)** : **234 / 234 tests passants (100%)**.
+- **Typage et diagnostics Svelte (`npm run check`)** : 0 erreurs, 0 avertissements.
+- **Build de production Vite (`npm run build`)** : Bundle de production généré avec succès en 1.79s.
