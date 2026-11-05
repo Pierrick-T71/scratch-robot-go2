@@ -424,6 +424,9 @@ class AppState {
 
   /** Réinitialise la simulation en replaçant le robot au centre de la carte. */
   async resetSimulation(): Promise<void> {
+    if (this.status.mode === 'real' && this.status.connected) {
+      return;
+    }
     this.status = {
       ...this.status,
       position: { x: 0, y: 0, z: 0 },

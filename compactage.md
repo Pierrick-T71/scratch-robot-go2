@@ -333,3 +333,47 @@
 - **Tests unitaires Frontend (`frontend`)** : **234 / 234 tests passants (100%)**.
 - **Typage et diagnostics Svelte (`npm run check`)** : 0 erreurs, 0 avertissements.
 - **Build de production Vite (`npm run build`)** : Bundle de production généré avec succès.
+
+---
+
+## 13. Calage Robuste du Sol LiDAR 3D & Désactivation du Bouton Recentrer Robot Connecté
+
+**Date :** 05/11/2026
+
+### 13.1. Calage du Sol et Prévention de l'Enfouissement du Robot sous les Voxels (`LidarScene.svelte`, `obstacles.py`, `webrtc.py`)
+- **Diagnostic de la cause racine** :
+  - Dans `LidarScene.svelte`, le plan du sol était calculé via `const solY = minimum` sur l'ensemble des voxels du nuage.
+  - Dès qu'un point de bruit lidar, un reflet sur sol ciré/verre ou une cage d'escalier descendante apparaissait sous le sol (ex: `z = -0.8 m`), `minimum` s'effondrait à cette valeur négative.
+  - La translation appliquée à chaque cube `z - solY` augmentait alors artificiellement la hauteur de tous les voxels du sol réel (ex: `-0.3 - (-0.8) = +0.5 m`), les faisant léviter au-dessus du niveau `0.0`.
+  - Le modèle 3D du robot restant calé avec ses pattes au sol Three.js `Y = 0.0`, l'ensemble du décor s'élevait au-dessus de lui, le laissant complètement immergé/enterré sous les blocs de voxels.
+- **Résolution et calage robuste** :
+  - **Côté Service (`obstacles.py` & `webrtc.py`)** :
+    - Exposition de la fonction `ground_level_m(cases, origin_z, resolution)` basée sur la médiane des hauteurs (breakdown point 50%, totalement insensible aux points bas aberrants).
+    - Transmission de `ground_z: round(ground_z, 3)` et `robot.z` dans le payload `volume_3d`.
+  - **Côté Frontend (`LidarScene.svelte`)** :
+    - Calcul du sol local via le 20e percentile des voxels situés dans un rayon de 1,5 m autour de la pose réelle du robot (`hauteursProches`), avec repli sur `donnees.ground_z` et la médiane globale des hauteurs.
+    - Lissage exponentiel (EMA) de `solY` entre les trames pour éliminer toute vibration verticale.
+    - Normalisation de la coloration par hauteur relative (`relH = Math.max(0, z - solY) / 1.6`) : les cubes du sol restent fidèlement verts (`0x4be86a`), et la gradation (vert, lime, orange, violet) est indépendante des voxels parasites sous le sol.
+    - Priorisation de `volume.robot` sur `status.position` lorsque la vue LiDAR est ouverte, assurant que le modèle 3D est toujours parfaitement recalé dans le référentiel SLAM / odométrie de la carte.
+
+### 13.2. Désactivation du Bouton de Recentrage / Refresh quand le Robot Réel est Connecté
+- **Problématique résolue** :
+  - Le bouton refresh (`handleResetSimulation`) réinitialisait la position simulée au centre `(0, 0, 0)`.
+  - Quand le vrai chien Go2 est connecté en mode réel, recentrer la simulation n'a aucun sens physique et risquait de désynchroniser la scène 3D ou tromper l'utilisateur.
+- **Modifications appliquées** :
+  - **`RobotStage.svelte`** :
+    - Bouton `<Icon name="refresh" />` désactivé via `disabled={isConnectedRobot}` où `isConnectedRobot = status.mode === 'real' && status.connected`.
+    - Infobulle explicite : `"Recentrage indisponible quand le robot réel est connecté"`.
+    - Verrou de sécurité dans `handleResetSimulation()` : `if (isConnectedRobot) return;`.
+    - Styles CSS `.scene__btn:disabled` : opacité réduite (0.35), `cursor: not-allowed`, `pointer-events: none`.
+  - **`MobileGamepad.svelte`** :
+    - Bouton `.recenter-btn` désactivé avec `disabled={isConnectedRobot}`, tooltip explicatif et styles CSS `.recenter-btn:disabled`.
+    - Verrou dans `handleResetSimulation()` : `if (isConnectedRobot) return;`.
+  - **Store (`app.svelte.ts`)** :
+    - Garde `if (this.status.mode === 'real' && this.status.connected) return;` dans `resetSimulation()`.
+
+### 13.3. Bilan des Tests et Validation
+- **Tests unitaires et intégration Backend (`robot-service`)** : **365 / 365 tests passants (100%)**.
+- **Tests unitaires Frontend (`frontend`)** : **234 / 234 tests passants (100%)**.
+- **Typage et diagnostics Svelte (`npm run check`)** : 0 erreurs, 0 avertissements.
+- **Build de production Vite (`npm run build`)** : Bundle de production généré avec succès en 1.13s.

@@ -141,7 +141,9 @@ export interface LidarVolume {
    * robot n'est pas forcément au centre de la grille, et il ne regarde pas
    * forcément dans l'axe x. C'est cette pose qui rend la vue réaliste.
    */
-  robot: { x: number; y: number; cap: number };
+  robot: { x: number; y: number; z?: number; cap: number };
+  /** Altitude estimée du sol (médiane), en mètres dans le repère odom. */
+  ground_z?: number;
   positions: string;
   sommets: number;
 }

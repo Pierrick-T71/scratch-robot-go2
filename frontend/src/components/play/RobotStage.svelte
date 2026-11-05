@@ -48,6 +48,7 @@
   const effectiveResetTrigger = $derived(resetTrigger + localResetTrigger);
   let isResetting = $state(false);
   let lidarSceneRef = $state<ReturnType<typeof LidarScene> | undefined>();
+  const isConnectedRobot = $derived(status.mode === 'real' && status.connected);
 
   /** La caméra du robot est-elle à l'écran ? */
   let camera = $state(false);
@@ -144,6 +145,7 @@
 
   /** Réinitialise la simulation et recentre le robot au milieu de la scène. */
   function handleResetSimulation(): void {
+    if (isConnectedRobot) return;
     if (camera) {
       camera = false;
       cameraFailed = false;
@@ -242,8 +244,13 @@
       type="button"
       class="scene__btn scene__btn--bottom-right"
       class:scene__btn--spinning={isResetting}
-      aria-label="Recentrer le robot au milieu de la carte"
-      title="Recentrer le robot au milieu de la carte"
+      disabled={isConnectedRobot}
+      aria-label={isConnectedRobot
+        ? 'Recentrage indisponible quand le robot réel est connecté'
+        : 'Recentrer le robot au milieu de la carte'}
+      title={isConnectedRobot
+        ? 'Recentrage indisponible quand le robot réel est connecté'
+        : 'Recentrer le robot au milieu de la carte'}
       onclick={handleResetSimulation}
     >
       <Icon name="refresh" size={18} />
@@ -388,6 +395,13 @@
   .scene__btn:hover {
     background: rgb(22 26 33 / 78%);
     transform: translateY(-1px);
+  }
+
+  .scene__btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    pointer-events: none;
+    transform: none;
   }
 
   .scene__btn:focus-visible {

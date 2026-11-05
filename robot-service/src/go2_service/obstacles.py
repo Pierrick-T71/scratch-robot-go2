@@ -149,6 +149,27 @@ def corridor_half_width_m(direction: str) -> float:
     )
 
 
+def ground_level_m(
+    cases: Iterable[tuple[int, int, int]],
+    origin_z: float,
+    resolution: float,
+) -> float:
+    """Niveau du sol estimé par la médiane des hauteurs de voxels.
+
+    Le sol est la surface dominante, mais il s'étale sur plusieurs couches :
+    bruit du lidar, inclinaison du robot, voxels aberrants sous le sol.
+    La médiane donne le niveau du sol de façon robuste sans être trompée
+    par un minimum isolé.
+    """
+    if resolution <= 0.0:
+        return origin_z
+    cases_list = list(cases)
+    if not cases_list:
+        return origin_z
+    hauteurs = [origin_z + case[2] * resolution for case in cases_list]
+    return float(median(hauteurs))
+
+
 def obstacle_cells(
     cases: Iterable[tuple[int, int, int]],
     origin: tuple[float, float, float],
@@ -164,22 +185,16 @@ def obstacle_cells(
     """
     if resolution <= 0.0:
         return []
-    cases = list(cases)
-    ox, oy, oz = origin
-    hauteurs = [oz + case[2] * resolution for case in cases]
-    if not hauteurs:
+    cases_list = list(cases)
+    if not cases_list:
         return []
-    # Le sol est la surface dominante, mais il s'étale sur plusieurs
-    # couches : bruit du lidar, inclinaison du robot, voxels aberrants.
-    # Le minimum ou un percentile bas prennent le dessous du sol et
-    # laissent passer son dessus pour un mur. La médiane donne le niveau
-    # du sol ; le filtre de 25 cm écarte ensuite les couches basses.
-    sol = median(hauteurs)
+    ox, oy, oz = origin
+    sol = ground_level_m(cases_list, oz, resolution)
     bas = sol + OBSTACLE_HEIGHT_MIN_M
     haut = sol + OBSTACLE_HEIGHT_MAX_M
 
     cellules: set[tuple[float, float]] = set()
-    for ix, iy, iz in cases:
+    for ix, iy, iz in cases_list:
         z = oz + iz * resolution
         if z < bas or z > haut:
             continue

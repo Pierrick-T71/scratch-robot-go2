@@ -222,6 +222,10 @@
   let cibleZ = $state(0);
   let cibleCap = $state(0);
 
+  /** Hauteur de calage du sol pour les cubes du lidar. */
+  let solYActuel = 0;
+  let solYInitialise = false;
+
   // Geste en cours ('heart' | 'jump' | 'salute' | 'stretch' | null)
   let gesteActif = $state<string | null>(null);
   let gesteTemps = 0;
@@ -806,18 +810,55 @@
       scene?.add(cubes);
     }
 
-    // Les hauteurs, pour colorier chaque cube et poser le sol.
-    let minimum = Infinity;
-    let maximum = -Infinity;
-    for (let i = 2; i < octets.length; i += 3) {
-      const z = (origine[2] ?? 0) + (octets[i] ?? 0) * pas;
-      if (z < minimum) minimum = z;
-      if (z > maximum) maximum = z;
-    }
-    const etendue = Math.max(0.001, maximum - minimum);
+    // Les hauteurs, pour colorier chaque cube et caler le sol.
+    // ⚠️ On n'utilise PAS le minimum brut : un voxel de bruit, une marche ou
+    // un reflet sous le sol ferait s'envoler tous les blocs du décor au-dessus
+    // du chien, donnant l'impression qu'il est enterré sous les cubes.
+    const hauteurs: number[] = [];
+    const hauteursProches: number[] = [];
 
-    // Le sol est la case la plus basse : on la met a zero, et le robot avec.
-    const solY = minimum;
+    const rx = donnees?.robot?.x;
+    const ry = donnees?.robot?.y;
+    const hasRobot = typeof rx === 'number' && typeof ry === 'number';
+
+    for (let i = 0; i < nbCases; i += 1) {
+      const z = (origine[2] ?? 0) + (octets[i * 3 + 2] ?? 0) * pas;
+      hauteurs.push(z);
+
+      if (hasRobot) {
+        const x = (origine[0] ?? 0) + (octets[i * 3] ?? 0) * pas;
+        const y = (origine[1] ?? 0) + (octets[i * 3 + 1] ?? 0) * pas;
+        const dx = x - rx;
+        const dy = y - ry;
+        if (dx * dx + dy * dy < 2.25) { // rayon de 1.5 m autour du chien
+          hauteursProches.push(z);
+        }
+      }
+    }
+
+    let solYCalcule: number;
+    if (typeof donnees.ground_z === 'number' && Number.isFinite(donnees.ground_z)) {
+      solYCalcule = donnees.ground_z;
+    } else if (hauteursProches.length >= 8) {
+      hauteursProches.sort((a, b) => a - b);
+      // 20e percentile des voxels proches : surface du sol sous ses pattes
+      solYCalcule = hauteursProches[Math.floor(hauteursProches.length * 0.2)] ?? 0;
+    } else if (hauteurs.length > 0) {
+      hauteurs.sort((a, b) => a - b);
+      // Médiane globale des hauteurs (robuste aux voxels aberrants sous le sol)
+      solYCalcule = hauteurs[Math.floor(hauteurs.length * 0.5)] ?? 0;
+    } else {
+      solYCalcule = 0;
+    }
+
+    // Lissage pour éviter les micro-sauts verticaux entre trames
+    if (!solYInitialise || Math.abs(solYCalcule - solYActuel) > 0.6) {
+      solYActuel = solYCalcule;
+      solYInitialise = true;
+    } else {
+      solYActuel += (solYCalcule - solYActuel) * 0.35;
+    }
+    const solY = solYActuel;
 
     const matrice = new THREE.Matrix4();
     for (let i = 0; i < nbCases; i += 1) {
@@ -828,7 +869,9 @@
       // haut. Three.js a Y en haut : on inverse la gauche et la droite.
       matrice.makeTranslation(x, z - solY, -y);
       cubes.setMatrixAt(i, matrice);
-      cubes.setColorAt(i, couleurHauteur((z - minimum) / etendue));
+      // Hauteur relative au-dessus du sol : 0 au sol (vert), plus haut orange/violet
+      const relH = Math.max(0, z - solY) / 1.6;
+      cubes.setColorAt(i, couleurHauteur(relH));
     }
     cubes.count = nbCases;
     cubes.instanceMatrix.needsUpdate = true;
@@ -870,17 +913,17 @@
   });
 
   $effect(() => {
-    if (position) {
-      cibleX = position.x;
-      cibleZ = -position.y;
-    } else if (volume?.robot) {
+    if (volume?.robot) {
       cibleX = volume.robot.x ?? 0;
       cibleZ = -(volume.robot.y ?? 0);
+    } else if (position) {
+      cibleX = position.x;
+      cibleZ = -position.y;
     }
-    if (yawRad !== null && yawRad !== undefined) {
-      cibleCap = yawRad;
-    } else if (volume?.robot?.cap !== undefined) {
+    if (volume?.robot?.cap !== undefined) {
       cibleCap = volume.robot.cap;
+    } else if (yawRad !== null && yawRad !== undefined) {
+      cibleCap = yawRad;
     }
   });
 
@@ -910,6 +953,7 @@
     gesteActif = null;
     gesteTemps = 0;
     capChien = 0;
+    solYInitialise = false;
     suiviDesactiveParClicDroit = false;
     clicDroitEnCours = false;
     if (chien) {

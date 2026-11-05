@@ -24,6 +24,7 @@ from go2_service.obstacles import (  # noqa: E402
     corridor_half_width_m,
     direction_of,
     free_distance_m,
+    ground_level_m,
     motion_direction,
     obstacle_cells,
     obstacle_message,
@@ -97,6 +98,12 @@ class TestObstacleCells:
         assert (0.4, 0.4) not in cellules
         # La couche haute du sol ne doit pas devenir un mur.
         assert (0.0, 0.25) not in cellules
+
+    def test_ground_level_m_is_robust_to_negative_outliers(self):
+        cases = {(ix, iy, 0) for ix in range(10) for iy in range(10)}
+        cases.add((0, 0, -10))  # bruit aberrant à -0,50 m
+        cases.add((20, 0, 10))  # mur
+        assert ground_level_m(cases, 0.0, 0.05) == pytest.approx(0.0)
 
 
 class TestFreeDistance:

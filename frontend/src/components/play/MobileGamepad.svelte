@@ -159,7 +159,10 @@
     }, 5000);
   }
 
+  const isConnectedRobot = $derived(app.status.mode === 'real' && app.status.connected);
+
   function handleResetSimulation(): void {
+    if (isConnectedRobot) return;
     resetTrigger += 1;
     isResetting = true;
     setTimeout(() => {
@@ -690,9 +693,14 @@
                 type="button"
                 class="recenter-btn"
                 class:recenter-btn--spinning={isResetting}
+                disabled={isConnectedRobot}
                 onclick={handleResetSimulation}
-                title="Recentrer le robot au centre de la carte"
-                aria-label="Recentrer le robot"
+                title={isConnectedRobot
+                  ? 'Recentrage indisponible quand le robot réel est connecté'
+                  : 'Recentrer le robot au centre de la carte'}
+                aria-label={isConnectedRobot
+                  ? 'Recentrage indisponible quand le robot réel est connecté'
+                  : 'Recentrer le robot'}
               >
                 <Icon name="refresh" size={16} />
               </button>
@@ -1329,6 +1337,13 @@
   .recenter-btn:hover {
     background: rgba(30, 41, 59, 0.9);
     color: #ffffff;
+  }
+
+  .recenter-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    pointer-events: none;
+    transform: none;
   }
 
   .recenter-btn:active {

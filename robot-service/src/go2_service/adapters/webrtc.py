@@ -47,6 +47,7 @@ from typing import Any
 from ..config import Limits
 from ..obstacles import (
     free_distance_m,
+    ground_level_m,
     motion_direction,
     obstacle_cells,
     obstacle_message,
@@ -2957,6 +2958,7 @@ class WebRTCAdapter:
 
         origine = (x0, y0, z0)
         obstacles = obstacle_cells(cases, origine, pas)
+        ground_z = ground_level_m(cases, z0, pas)
 
         cases_2d = {(round(x0 + ix * pas, 1), round(y0 + iy * pas, 1)) for ix, iy, _ in cases}
         points_2d = [[x, y] for x, y in cases_2d]
@@ -2971,8 +2973,10 @@ class WebRTCAdapter:
             "robot": {
                 "x": round(float(pose.get("x", 0.0)), 3),
                 "y": round(float(pose.get("y", 0.0)), 3),
+                "z": round(float(pose.get("z", 0.0)), 3),
                 "cap": round(float(pose.get("cap", 0.0)), 4),
             },
+            "ground_z": round(ground_z, 3),
             "positions": base64.b64encode(octets).decode("ascii"),
             "sommets": len(cases),
         }
@@ -3025,6 +3029,7 @@ class WebRTCAdapter:
         try:
             x = float(position["x"])
             y = float(position["y"])
+            z = float(position.get("z", 0.0))
             qx = float(orientation.get("x", 0.0))
             qy = float(orientation.get("y", 0.0))
             qz = float(orientation.get("z", 0.0))
@@ -3036,7 +3041,7 @@ class WebRTCAdapter:
             2 * (qw * qz + qx * qy),
             1 - 2 * (qy * qy + qz * qz),
         )
-        self._pose_robot = {"x": x, "y": y, "cap": cap}
+        self._pose_robot = {"x": x, "y": y, "z": z, "cap": cap}
         self._pose_robot_at = time.monotonic()
         if not self._pose_vue:
             self._pose_vue = True
