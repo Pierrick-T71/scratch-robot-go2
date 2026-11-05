@@ -230,9 +230,8 @@
   let gesteActif = $state<string | null>(null);
   let gesteTemps = 0;
 
-  /** Le suivi automatique de la caméra est-il désactivé suite à un déplacement au clic droit ? */
-  let suiviDesactiveParClicDroit = $state(false);
-  let clicDroitEnCours = false;
+  /** L'utilisateur manipule-t-il actuellement la vue à la souris / au doigt ? */
+  let utilisateurGlisse = false;
   let nettoyageEcouteurs: (() => void) | null = null;
 
   /**
@@ -244,8 +243,8 @@
    */
   function poserCameraDerriere(): void {
     if (!camera) return;
-    const x = chien?.position.x ?? 0;
-    const z = chien?.position.z ?? 0;
+    const x = chien?.position.x ?? robotX;
+    const z = chien?.position.z ?? robotZ;
     // Le museau pointe vers +X quand le cap vaut 0 ; un cap positif tourne
     // vers la GAUCHE du robot, c'est-à-dire vers -Z.
     const avantX = Math.cos(capChien);
@@ -339,13 +338,12 @@
     renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio ?? 1, 1.5));
 
     controles = new OrbitControls(camera, canvas);
-    controles.enableDamping = true;
-    controles.dampingFactor = 0.08;
-    controles.minDistance = 0.6;
-    controles.maxDistance = 20;
-    controles.maxPolarAngle = Math.PI * 0.52;
-    controles.enablePan = true;
-    controles.screenSpacePanning = true;
+    controles.enableDamping = false;
+    controles.minDistance = 0.8;
+    controles.maxDistance = 12;
+    controles.maxPolarAngle = Math.PI * 0.49;
+    controles.minPolarAngle = 0.15;
+    controles.enablePan = false;
     controles.enabled = interactive;
     // Cadrage de départ : la caméra se place derrière le robot.
     poserCameraDerriere();
@@ -415,36 +413,25 @@
     const onContextMenu = (e: MouseEvent): void => {
       e.preventDefault();
     };
-    const onPointerDown = (e: PointerEvent): void => {
-      if (e.button === 2) {
-        clicDroitEnCours = true;
-      }
+    const onPointerDown = (): void => {
+      utilisateurGlisse = true;
     };
-    const onPointerMove = (e: PointerEvent): void => {
-      if (clicDroitEnCours) {
-        suiviDesactiveParClicDroit = true;
-      }
-    };
-    const onPointerUp = (e: PointerEvent): void => {
-      if (e.button === 2) {
-        clicDroitEnCours = false;
-      }
+    const onPointerUp = (): void => {
+      utilisateurGlisse = false;
     };
     const onDblClick = (): void => {
-      suiviDesactiveParClicDroit = false;
+      utilisateurGlisse = false;
       poserCameraDerriere();
     };
 
     canvas.addEventListener('contextmenu', onContextMenu);
     canvas.addEventListener('pointerdown', onPointerDown);
-    globalThis.addEventListener('pointermove', onPointerMove);
     globalThis.addEventListener('pointerup', onPointerUp);
     canvas.addEventListener('dblclick', onDblClick);
 
     nettoyageEcouteurs = () => {
       canvas?.removeEventListener('contextmenu', onContextMenu);
       canvas?.removeEventListener('pointerdown', onPointerDown);
-      globalThis.removeEventListener('pointermove', onPointerMove);
       globalThis.removeEventListener('pointerup', onPointerUp);
       canvas?.removeEventListener('dblclick', onDblClick);
       globalThis.removeEventListener('resize', redimensionner);
@@ -716,7 +703,13 @@
       const vitesseInterpolation = sprintDemandee ? 22 : 12;
       robotX += (cibleX - robotX) * (1 - Math.exp(-delta * vitesseInterpolation));
       robotZ += (cibleZ - robotZ) * (1 - Math.exp(-delta * vitesseInterpolation));
-      robotCap += (cibleCap - robotCap) * (1 - Math.exp(-delta * vitesseInterpolation));
+
+      // Plus court chemin angulaire : évite de tourner à 360° quand le cap traverse ±π
+      let diffCap = (cibleCap - robotCap) % (2 * Math.PI);
+      if (diffCap > Math.PI) diffCap -= 2 * Math.PI;
+      else if (diffCap < -Math.PI) diffCap += 2 * Math.PI;
+      robotCap += diffCap * (1 - Math.exp(-delta * vitesseInterpolation));
+      robotCap = ((robotCap + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
       capChien = robotCap;
 
       if (chien) {
@@ -726,7 +719,7 @@
         chien.position.y = hauteurChien + 0.008 * Math.abs(Math.sin(phase)) * marche;
       }
 
-      // Suivi de la caméra ("la caméra suit")
+      // Suivi de la caméra : reste toujours bien placée DERRIÈRE le robot
       if (camera && controles) {
         if (!cameraPlacee) {
           cameraPlacee = true;
@@ -739,29 +732,39 @@
           prevChienX = robotX;
           prevChienZ = robotZ;
 
-          // Si l'utilisateur a déplacé la caméra avec le clic droit, on n'impose aucun suivi du robot
-          if (!suiviDesactiveParClicDroit) {
+          const avantX = Math.cos(capChien);
+          const avantZ = -Math.sin(capChien);
+
+          // Point visé : devant le robot à hauteur de son dos
+          const viseX = robotX + avantX * CAMERA_VISEE;
+          const viseY = CAMERA_VISEE_Y;
+          const viseZ = robotZ + avantZ * CAMERA_VISEE;
+
+          // Position idéale de la caméra : derrière le robot et à hauteur constante
+          const camCibleX = robotX - avantX * CAMERA_RECUL;
+          const camCibleY = CAMERA_HAUTEUR;
+          const camCibleZ = robotZ - avantZ * CAMERA_RECUL;
+
+          if (utilisateurGlisse) {
+            // L'utilisateur manipule manuellement la vue :
+            // on suit seulement la translation du robot pour qu'il reste centré
             camera.position.x += deltaX;
             camera.position.z += deltaZ;
             controles.target.x += deltaX;
             controles.target.z += deltaZ;
+          } else {
+            // Suivi synchrone et doux : la cible et la caméra avancent au même rythme
+            // sans déformation ni rotation parasite
+            const cameraVitesse = sprintDemandee ? 12 : 7;
+            const alpha = 1 - Math.exp(-delta * cameraVitesse);
 
-            const avantX = Math.cos(capChien);
-            const avantZ = -Math.sin(capChien);
-            const viseX = robotX + avantX * CAMERA_VISEE;
-            const viseZ = robotZ + avantZ * CAMERA_VISEE;
+            controles.target.x += (viseX - controles.target.x) * alpha;
+            controles.target.y += (viseY - controles.target.y) * alpha;
+            controles.target.z += (viseZ - controles.target.z) * alpha;
 
-            controles.target.x += (viseX - controles.target.x) * (1 - Math.exp(-delta * 6));
-            controles.target.z += (viseZ - controles.target.z) * (1 - Math.exp(-delta * 6));
-
-            // Quand le robot se déplace ou marche, la caméra se repositionne souplement derrière son cap
-            if (walking || Math.abs(deltaX) > 0.0005 || Math.abs(deltaZ) > 0.0005) {
-              const camCibleX = robotX - avantX * CAMERA_RECUL;
-              const camCibleZ = robotZ - avantZ * CAMERA_RECUL;
-              const cameraVitesse = sprintDemandee ? 9 : 4;
-              camera.position.x += (camCibleX - camera.position.x) * (1 - Math.exp(-delta * cameraVitesse));
-              camera.position.z += (camCibleZ - camera.position.z) * (1 - Math.exp(-delta * cameraVitesse));
-            }
+            camera.position.x += (camCibleX - camera.position.x) * alpha;
+            camera.position.y += (camCibleY - camera.position.y) * alpha;
+            camera.position.z += (camCibleZ - camera.position.z) * alpha;
           }
         }
       }
@@ -884,6 +887,10 @@
       cibleCap = donnees.robot.cap ?? 0;
 
       if (!cameraPlacee) {
+        robotX = cibleX;
+        robotZ = cibleZ;
+        robotCap = cibleCap;
+        capChien = cibleCap;
         cameraPlacee = true;
         poserCameraDerriere();
       }
@@ -954,8 +961,7 @@
     gesteTemps = 0;
     capChien = 0;
     solYInitialise = false;
-    suiviDesactiveParClicDroit = false;
-    clicDroitEnCours = false;
+    utilisateurGlisse = false;
     if (chien) {
       chien.position.x = 0;
       chien.position.z = 0;

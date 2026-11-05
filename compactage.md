@@ -377,3 +377,45 @@
 - **Tests unitaires Frontend (`frontend`)** : **234 / 234 tests passants (100%)**.
 - **Typage et diagnostics Svelte (`npm run check`)** : 0 erreurs, 0 avertissements.
 - **Build de production Vite (`npm run build`)** : Bundle de production généré avec succès en 1.13s.
+
+---
+
+## 14. Stabilisation du Cadrage Caméra 3D & Élimination des Rotations Parasites
+
+**Date :** 05/11/2026
+
+### 14.1. Analyse des Causes des Rotations Parasites de la Caméra (`LidarScene.svelte`)
+- **Bug du passage de cap à ±π (rotation folle à 360°)** :
+  - L'orientation du robot dans la scène interpolait via `robotCap += (cibleCap - robotCap) * ...`.
+  - Quand `yawRad` ou `volume.robot.cap` traversait la discontinuité $\pm\pi$ (ex: passage de $+3.10$ rad à $-3.10$ rad lors d'une oscillation normale de boussole), l'écart calculé était de $-6.20$ rad ($-355^\circ$).
+  - Le modèle du chien et la caméra faisaient alors un tour complet violent à 360° en sens inverse pour rattraper les quelques degrés réels.
+- **Désynchronisation asymétrique entre `target` et `camera.position`** :
+  - `controles.target` convergeait en permanence vers le nez du robot à une vitesse 6.
+  - Mais `camera.position` n'était mise à jour **que** si `walking` était actif ou en cas de déplacement linéaire supérieur à 0.5 mm (`deltaX > 0.0005`).
+  - Lors des rotations pures sur place (`turn_left`, `turn_right`), des gestes (`heart`, `jump`, `salute`, `stretch`) ou des changements de posture (`sit`, `lie_down`, `stand`), la caméra ne tournait pas derrière le robot, alors que le point visé pivotait.
+  - La caméra se retrouvait donc de profil ou de face, puis pivotait brutalement dès le premier pas de translation.
+- **Blocage irréversible du suivi (`suiviDesactiveParClicDroit`)** :
+  - Un simple clic droit (ou geste tactile trackpad à deux doigts) activait un flag qui coupait définitivement tout suivi de caméra, laissant le robot sortir du champ visuel.
+- **Interférence d'inertie OrbitControls (`enableDamping`)** :
+  - L'inertie propre d'OrbitControls superposée à l'interpolation exponentielle cartésienne induisait un couple de rotation parasite et des oscillations.
+
+### 14.2. Correctifs Appliqués (`LidarScene.svelte`)
+- **Interpolation sur le plus court chemin angulaire (`ecartAngulaire`)** :
+  - Normalisation de l'écart dans $[-\pi, +\pi]$ : `((cibleCap - robotCap) % 2π + 3π) % 2π - π`.
+  - Le robot tourne toujours du chemin le plus direct (ex: 5° au lieu de 355°), éliminant tout risque de rotation à 360°.
+- **Suivi caméra 3e personne synchrone et verrouillé derrière le robot** :
+  - `controles.target` (point visé 0.45 m devant le dos) et `camera.position` (1.7 m derrière et 1.1 m de haut) sont interpolés avec le **même facteur alpha** synchrone (`1 - exp(-delta * cameraVitesse)`).
+  - La caméra reste fermement et doucement alignée dans l'axe dorsal du chien lors de tous ses mouvements, virages, actions et postures.
+- **Contrôles OrbitControls épurés** :
+  - `enableDamping = false` : élimination de l'effet d'inertie qui luttait contre la position de la caméra.
+  - `enablePan = false` : empêche de déplacer le robot hors de l'écran par erreur.
+  - Borne polaire `minPolarAngle = 0.15` et `maxPolarAngle = π * 0.49` pour empêcher les retournements verticaux au zénith ou sous le sol.
+- **Suppression du flag de blocage et gestion propre du drag souris/toucher** :
+  - Détection simple `utilisateurGlisse` : pendant qu'un clic/doigt est enfoncé, l'utilisateur peut tourner autour pour inspecter ; dès relâchement, la caméra se replace avec fluidité derrière le robot.
+  - Double-clic sur le canvas pour recentrage instantané derrière le robot (`poserCameraDerriere()`).
+
+### 14.3. Bilan des Tests et Validation
+- **Tests unitaires et intégration Backend (`robot-service`)** : **365 / 365 tests passants (100%)**.
+- **Tests unitaires Frontend (`frontend`)** : **234 / 234 tests passants (100%)**.
+- **Typage et diagnostics Svelte (`npm run check`)** : 0 erreurs, 0 avertissements.
+- **Build de production Vite (`npm run build`)** : Bundle de production généré avec succès en 1.05s.
