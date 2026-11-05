@@ -110,6 +110,8 @@ export interface ManualMoveResult {
   message: string | null;
   /** Vitesse maximale de sprint active. */
   sprint?: boolean;
+  /** État complet du robot retourné directement dans la réponse sans requête GET séparée. */
+  status?: RobotStatus;
 }
 
 /** Cases occupées de la carte du lidar, vues du dessus, en mètres. */

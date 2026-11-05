@@ -186,7 +186,6 @@
     inFlight = true;
     try {
       const result = await onMove(direction, nextManualSequence(), sprint);
-      void app.refreshStatus();
       if (
         token !== requestToken ||
         activeDirection !== direction ||
@@ -230,7 +229,6 @@
 
     const token = ++requestToken;
     const result = await onMove(nextDir, nextManualSequence(), nextSprint);
-    void app.refreshStatus();
     if (
       token !== requestToken ||
       activeDirection !== nextDir ||

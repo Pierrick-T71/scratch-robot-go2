@@ -77,6 +77,8 @@
   );
 
   let renewalTimer: ReturnType<typeof setInterval> | null = null;
+  let inFlight = false;
+  let motionToken = 0;
   let lidarPollingActive = true;
 
   // Rayon et seuil adaptés aux écrans compacts en paysage
@@ -185,6 +187,7 @@
 
   function stopAllMotion(): void {
     clearRenewal();
+    motionToken += 1;
     leftX = 0;
     leftY = 0;
     leftDir = null;
@@ -217,6 +220,7 @@
 
     if (nextDir === null) {
       clearRenewal();
+      motionToken += 1;
       activeDirection = null;
       void app.moveManual(null, nextManualSequence(), 'mobile');
       return;
@@ -232,26 +236,33 @@
     activeDirection = nextDir;
     setFeedback(null);
 
-    const result = await app.moveManual(nextDir, nextManualSequence(), 'mobile');
-    if (result.blocked) {
-      setFeedback(result.message ?? 'Mouvement bloqué.');
-      stopAllMotion();
-      return;
+    const token = ++motionToken;
+    inFlight = true;
+    try {
+      const result = await app.moveManual(nextDir, nextManualSequence(), 'mobile');
+      if (token !== motionToken || activeDirection !== nextDir) return;
+      if (result.blocked) {
+        setFeedback(result.message ?? 'Mouvement bloqué.');
+        stopAllMotion();
+        return;
+      }
+    } finally {
+      inFlight = false;
     }
-
-    // Mise à jour de la position simulée
-    void app.refreshStatus();
 
     clearRenewal();
     renewalTimer = setInterval(async () => {
-      if (activeDirection === null) return;
-      const res = await app.moveManual(activeDirection, nextManualSequence(), 'mobile');
-      if (res.blocked) {
-        setFeedback(res.message ?? 'Mouvement bloqué.');
-        stopAllMotion();
-      } else {
-        // En simulation, rafraîchir le statut met à jour position et yawRad pour faire bouger le robot 3D
-        void app.refreshStatus();
+      if (inFlight || activeDirection === null || token !== motionToken) return;
+      inFlight = true;
+      try {
+        const res = await app.moveManual(activeDirection, nextManualSequence(), 'mobile');
+        if (token !== motionToken || activeDirection === null) return;
+        if (res.blocked) {
+          setFeedback(res.message ?? 'Mouvement bloqué.');
+          stopAllMotion();
+        }
+      } finally {
+        inFlight = false;
       }
     }, 180);
   }
@@ -456,17 +467,19 @@
 
     const pollLidar = async () => {
       while (lidarPollingActive) {
-        if (viewMode === 'lidar') {
+        // En déplacement actif, suspendre le streaming lourd des voxels 3D pour préserver 100%
+        // de la bande passante Wi-Fi et des connexions pour les commandes de déplacement
+        if (viewMode === 'lidar' && activeDirection === null) {
           try {
             const res = await api.getLidar();
-            if (lidarPollingActive) {
+            if (lidarPollingActive && activeDirection === null) {
               lidarVolume = res.volume;
             }
           } catch {
             if (lidarPollingActive) lidarVolume = null;
           }
         }
-        await new Promise((r) => setTimeout(r, 400));
+        await new Promise((r) => setTimeout(r, 800));
       }
     };
     void pollLidar();

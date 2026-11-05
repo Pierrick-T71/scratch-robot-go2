@@ -45,8 +45,8 @@ DIRECTIONS = (
 #: le mouvement devenait haché et semblait beaucoup plus lent.
 MANUAL_TTL_S = 2.0
 
-#: Période de la boucle de pilotage.
-MANUAL_TICK_S = 0.1
+#: Période de la boucle de pilotage (20 Hz pour un asservissement fluide sans saccade).
+MANUAL_TICK_S = 0.05
 
 #: Vitesse du mode manuel.
 #:
@@ -225,6 +225,10 @@ class ManualControl:
         self._sprint = bool(sprint) and ("forward" in direction)
         self._active_source = source
         self._deadline = now + MANUAL_TTL_S
+        # Émission immédiate dès réception de l'ordre pour éliminer toute latence
+        # sans attendre le prochain tour de la boucle asyncio.
+        if self._prepared:
+            self._emit_velocity()
         return False, None
 
     async def jump(self, source: str = "keyboard") -> tuple[bool, str | None]:
@@ -416,6 +420,30 @@ class ManualControl:
         except RuntimeError:
             pass
 
+    def _emit_velocity(self) -> None:
+        """Émet immédiatement la consigne de vitesse vers l'adaptateur."""
+        if not self._active or self._direction is None or not self._prepared:
+            return
+        securite = getattr(self._adapter, "safety_stop_reason", None)
+        if securite:
+            self._block(str(securite))
+            return
+        try:
+            emettre = getattr(self._adapter, "manual_velocity", None)
+            if not callable(emettre):
+                self._block(
+                    "Le pilotage manuel n’est pas disponible sur ce robot."
+                )
+                return
+            emettre(self._direction, self.speed_mps, self.turn_speed_rps)
+        except SafetyInterrupt as exc:
+            self._block(str(exc))
+        except AdapterError as exc:
+            self._block(str(exc))
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Pilotage manuel : commande impossible.")
+            self._block(f"Le robot n’a pas pu bouger ({exc}).")
+
     async def _loop(self) -> None:
         """Maintient la vitesse jusqu'au relâchement, puis s'arrête."""
         try:
@@ -447,25 +475,7 @@ class ManualControl:
                     await asyncio.sleep(MANUAL_TICK_S)
                     continue
 
-                try:
-                    emettre = getattr(self._adapter, "manual_velocity", None)
-                    if not callable(emettre):
-                        self._block(
-                            "Le pilotage manuel n’est pas disponible sur ce robot."
-                        )
-                        continue
-                    emettre(direction, self.speed_mps, self.turn_speed_rps)
-                except SafetyInterrupt as exc:
-                    self._block(str(exc))
-                    continue
-                except AdapterError as exc:
-                    self._block(str(exc))
-                    continue
-                except Exception as exc:  # noqa: BLE001
-                    log.exception("Pilotage manuel : commande impossible.")
-                    self._block(f"Le robot n’a pas pu bouger ({exc}).")
-                    continue
-
+                self._emit_velocity()
                 await asyncio.sleep(MANUAL_TICK_S)
         except asyncio.CancelledError:
             raise

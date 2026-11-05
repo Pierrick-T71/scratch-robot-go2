@@ -1,6 +1,6 @@
 # Compactage des Développements - Go2 Play
 
-**Dernière mise à jour :** 27/10/2026 10:45 (Europe/Paris)
+**Dernière mise à jour :** 05/11/2026 08:55 (Europe/Paris)
 
 ---
 
@@ -294,3 +294,42 @@
 ### 11.3. Clarification et Suppression du Bouton « Faire le beau »
 - **Origine** : Ce bouton correspondait à l'ancienne commande SDK interne `balance` qui n'a aucun équivalent dans les blocs de programmation Scratch, ne possède aucune animation 3D et n'est pas gérée par le vrai Go2.
 - **Harmonisation** : Suppression du bouton orphelin. Le pavé gauche regroupe désormais les 3 vraies postures Scratch parfaitement alignées sous le joystick : Se mettre debout (`stand`), S'asseoir (`sit`), Se coucher (`lie_down`).
+
+---
+
+## 12. Éradication des Latences de Pilotage Robot & Optimisations Temps Réel
+
+**Date :** 05/11/2026
+
+### 12.1. Émission Immédiate des Consignes de Vitesse & Asservissement 20 Hz (`manual.py`)
+- **Suppression du délai d'attente de boucle** : Auparavant, `set_direction` se contentait d'enregistrer la variable `_direction` sans rien envoyer au robot. L'ordre n'était expédié que lors du réveil périodique de `_loop()`, induisant jusqu'à 100 ms de retard pur à chaque appui ou changement de direction.
+- **Ajout de `_emit_velocity()` immédiat** : Dès réception de l'appel `/api/manual/move`, la vitesse est transmise instantanément (0 ms de latence ajoutée) à l'adaptateur WebRTC / robot.
+- **Cadence portée à 20 Hz (`MANUAL_TICK_S = 0.05 s`)** : Renouvellement à 20 Hz aligné sur la fréquence nominale recommandée du contrôleur Unitree Go2 (`sportmod`), éliminant les micro-saccades de marche.
+
+### 12.2. Déport Asynchrone du Traitement LiDAR Hors de la Boucle Asyncio (`webrtc.py`)
+- **Problématique résolue** : La conversion synchrone de cartes LiDAR de plusieurs centaines de milliers de voxels bloquait l'event loop asyncio principal pendant 1 à 2 secondes (notamment entre les mouvements ou en arrêt temporaire), gelant l'acceptation de toutes les requêtes HTTP et paquets WebRTC.
+- **Décodage déporté en Thread Pool (`asyncio.to_thread`)** : Le décodage lourd est désormais exécuté dans un thread de fond via `_traiter_lidar_background` et `_decoder_lidar_cpu`.
+- **Politique de frame-dropping (`_lidar_en_cours`)** : Si une trame LiDAR est déjà en cours de décodage, les nouvelles trames brutes sont ignorées sans empilement, garantissant un temps de cycle maîtrisé sans jamais bloquer le thread principal.
+- **Contournement intelligent du maillage** : Pendant le pilotage actif (manuel ou blocs), le traitement de maillage est court-circuité sauf si le mode autonome est engagé ou si un client a activement demandé la vue 3D dans les 2 dernières secondes.
+
+### 12.3. Suppression des Tempêtes de Requêtes HTTP & Protection Anti-Queue Mobile (`MobileGamepad.svelte` & `ManualPanel.svelte`)
+- **Verrou `inFlight` et jetons de séquence (`motionToken`)** :
+  - Sur mobile, les `setInterval(180ms)` empilaient des requêtes HTTP concurrentes dans la file du navigateur en cas de gigue Wi-Fi.
+  - Ajout d'un contrôle strict `inFlight` : aucune nouvelle requête de renouvellement n'est lancée tant que la précédente n'a pas répondu.
+  - Les requêtes obsolètes sont ignorées via `motionToken`.
+- **Suppression des doubles appels `refreshStatus()`** :
+  - Dans `ManualPanel.svelte` et `MobileGamepad.svelte`, la requête superflue `void app.refreshStatus()` exécutée à chaque tick de déplacement (qui doublait le volume de requêtes à ~12 req/s) a été éliminée.
+- **Mise en pause de l'interrogation LiDAR en déplacement mobile (`pollLidar`)** :
+  - Pendant que l'utilisateur manipule activement le joystick (`activeDirection !== null`), `pollLidar` suspend le rafraîchissement lourd des voxels 3D, allouant 100% de la bande passante et des sockets mobiles aux commandes de déplacement.
+  - Fréquence de polling LiDAR au repos ajustée de 400 ms à 800 ms.
+
+### 12.4. Ingestion Directe du Statut dans `/api/manual/move` & Cache Réseau (`main.py`, `client.ts`, `app.svelte.ts`)
+- **Réponse enrichie `/api/manual/move`** : L'API renvoie désormais directement `status: await state.status_payload()` dans la réponse JSON du POST. Le frontend met à jour `app.status` immédiatement sans aucune requête réseau supplémentaire.
+- **Mise en cache IP locale (`_detect_lan_ip`)** : Mise en cache 30 secondes de la détection d'IP LAN, évitant l'ouverture/fermeture intempestive de sockets UDP à chaque requête de statut.
+- **Diffusion WebSocket adaptative (`_status_pusher`)** : Envoi à 50 ms uniquement lors des mouvements effectifs (moteur en cours, déplacement manuel ou autonome), et fréquence allégée au repos (2 s), réduisant la charge CPU à quasi zéro au repos.
+
+### 12.5. Bilan des Tests et Validation
+- **Tests unitaires et intégration Backend (`robot-service`)** : **364 / 364 tests passants (100%)**.
+- **Tests unitaires Frontend (`frontend`)** : **234 / 234 tests passants (100%)**.
+- **Typage et diagnostics Svelte (`npm run check`)** : 0 erreurs, 0 avertissements.
+- **Build de production Vite (`npm run build`)** : Bundle de production généré avec succès.

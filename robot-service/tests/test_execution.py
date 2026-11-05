@@ -646,6 +646,7 @@ class TestSafety:
         assert engine._active.stop_signal.reason == FINISH_SAFETY  # noqa: SLF001
         assert chien.trips == 1
 
+    @pytest.mark.asyncio
     async def test_le_chien_de_garde_est_relance_apres_branchement(self):
         # `adopt_robot_adapter` reconstruit le moteur ET le chien de garde.
         # Sans redémarrage explicite de ce dernier, plus aucun bail n'était

@@ -368,6 +368,8 @@ class WebRTCAdapter:
         self._allonge_demande = False
         #: État d'alimentation du LiDAR physique sur rt/utlidar/switch.
         self._lidar_physique_actif = True
+        #: Décodage LiDAR lourd en cours dans un thread d'arrière-plan.
+        self._lidar_en_cours = False
         #: Horodatage du dernier besoin effectif du LiDAR.
         self._derniere_requete_lidar: float = time.monotonic()
         #: Un programme est-il en cours ? Pendant un programme, c'est lui
@@ -2830,10 +2832,8 @@ class WebRTCAdapter:
     def _sur_lidar(self, message: Any) -> None:
         """Une carte du lidar est arrivée.
 
-        Le SDK décode la carte de voxels en un MAILLAGE : les sommets
-        (`positions`) sont les coins des voxels occupés, repérés par leur
-        indice dans la grille. On en tire la vue de dessus (x, y), celle
-        que l'application affiche.
+        Le décodage CPU lourd est exécuté en tâche de fond (thread pool) pour
+        ne JAMAIS bloquer la boucle asyncio principale ni le pilotage en temps réel.
         """
         donnees = (message or {}).get("data") or {}
         if not isinstance(donnees, dict):
@@ -2853,94 +2853,119 @@ class WebRTCAdapter:
             self._sur_etat_lidar(donnees)
             return
 
-        # Pendant un déplacement en bloc (ex. rotation), on allège le traitement
-        # pour ne pas saturer l'event loop asyncio.
-        # En revanche, en mode autonome, le traitement continu des obstacles lidar
-        # est impératif pour assurer la détection et la trajectoire d'évitement.
-        if self._state == RobotState.MOVING and not getattr(self, "_en_autonome", False):
+        # Si un traitement LiDAR est déjà en cours dans le thread pool,
+        # on ignore la trame pour éviter toute saturation ou retard accumulé.
+        if self._lidar_en_cours:
+            return
+
+        # Pendant un déplacement physique (manuel ou Scratch hors mode autonome),
+        # le pilotage et la réactivité priment à 100%.
+        en_autonome = getattr(self, "_en_autonome", False)
+        if (self._state == RobotState.MOVING or self._programme_en_cours) and not en_autonome:
             return
 
         if not self._lidar_physique_actif:
             return
 
         maintenant = time.monotonic()
+        # Si aucun client n'a demandé la vue lidar récemment et qu'on n'est pas en mode autonome,
+        # inutile de décoder les centaines de milliers de voxels.
+        if not en_autonome and (maintenant - self._derniere_requete_lidar > self.LIDAR_PERIME_S):
+            return
+
         if maintenant - self._lidar_traite_at < self.LIDAR_TRAITEMENT_S:
             return
         self._lidar_traite_at = maintenant
 
-        cells = self._cellules_2d(donnees)
-        if cells:
-            self._points_lidar = cells
-            self._points_lidar_at = time.monotonic()
-            if (
-                self._lidar_compte_at is None
-                or time.monotonic() - self._lidar_compte_at > 5
-            ):
-                self._lidar_compte_at = time.monotonic()
-                log.info(
-                    "Lidar : %d cases occupées autour du robot.", len(cells)
-                )
+        # Lancement asynchrone non bloquant dans le thread pool
+        self._lidar_en_cours = True
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._traiter_lidar_background(donnees))
+        except RuntimeError:
+            self._lidar_en_cours = False
 
-        maillage = self._maillage_3d(donnees)
-        if maillage is not None:
-            self._volume_lidar = maillage
-            self._volume_lidar_at = time.monotonic()
-            if self._lidar_origine_at is None:
-                self._lidar_origine_at = time.monotonic()
-                log.info(
-                    "Lidar : origine de la grille %s, robot a %s.",
-                    maillage["origin"],
-                    self._position,
-                )
+    async def _traiter_lidar_background(self, donnees: dict[str, Any]) -> None:
+        """Décode la carte LiDAR dans un thread d'arrière-plan sans bloquer la boucle asyncio."""
+        try:
+            pose = dict(self._pose_robot) if self._pose_robot else None
+            points, volume, obstacles = await asyncio.to_thread(
+                self._decoder_lidar_cpu, donnees, pose
+            )
+            maintenant = time.monotonic()
+            if points is not None:
+                self._points_lidar = points
+                self._points_lidar_at = maintenant
+                if (
+                    self._lidar_compte_at is None
+                    or maintenant - self._lidar_compte_at > 5
+                ):
+                    self._lidar_compte_at = maintenant
+                    log.info(
+                        "Lidar : %d cases occupées autour du robot.", len(points)
+                    )
+            if volume is not None:
+                self._volume_lidar = volume
+                self._volume_lidar_at = maintenant
+                if self._lidar_origine_at is None:
+                    self._lidar_origine_at = maintenant
+                    log.info(
+                        "Lidar : origine de la grille %s, robot a %s.",
+                        volume["origin"],
+                        self._position,
+                    )
+            if obstacles is not None:
+                self._obstacles_lidar = obstacles
+                self._obstacles_lidar_at = maintenant
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Décodage LiDAR en tâche de fond impossible : %s", exc)
+        finally:
+            self._lidar_en_cours = False
 
-    def _maillage_3d(self, donnees: dict[str, Any]) -> dict[str, Any] | None:
-        """Le volume de voxels, prêt à être dessiné en 3D.
-
-        Le SDK livre un maillage dont les sommets sont les INDICES des
-        voxels dans la grille (0..127), trois par sommet. On en tire les
-        cases occupées (les sommets d'un même cube se répètent), et on les
-        renvoie en base64 : c'est quelques kilo-octets pour toute la carte,
-        au lieu de 200 Ko de JSON. Le navigateur reconstitue la grille.
-        """
+    @staticmethod
+    def _decoder_lidar_cpu(
+        donnees: dict[str, Any], pose_robot: dict[str, Any] | None
+    ) -> tuple[list[list[float]] | None, dict[str, Any] | None, list[tuple[float, float]] | None]:
+        """Décode le maillage LiDAR en un seul parcours CPU optimisé."""
         mesh = donnees.get("data")
         if not isinstance(mesh, dict):
-            return None
+            return None, None, None
         positions = mesh.get("positions")
         origin = donnees.get("origin")
         resolution = donnees.get("resolution")
         if positions is None or origin is None or resolution is None:
-            return None
+            return None, None, None
         try:
             valeurs = positions.tolist() if hasattr(positions, "tolist") else list(positions)
-        except (TypeError, ValueError):
-            return None
+            pas = float(resolution)
+            x0 = float(origin[0])
+            y0 = float(origin[1])
+            z0 = float(origin[2])
+        except (TypeError, ValueError, IndexError):
+            return None, None, None
+
+        n = len(valeurs)
+        if n < 3:
+            return None, None, None
 
         cases: set[tuple[int, int, int]] = set()
-        for i in range(0, len(valeurs) - 2, 3):
-            cases.add(
-                (
-                    int(valeurs[i]),
-                    int(valeurs[i + 1]),
-                    int(valeurs[i + 2]),
-                )
-            )
+        for i in range(0, n - 2, 3):
+            cases.add((int(valeurs[i]), int(valeurs[i + 1]), int(valeurs[i + 2])))
+
         if not cases:
-            return None
+            return None, None, None
+
+        origine = (x0, y0, z0)
+        obstacles = obstacle_cells(cases, origine, pas)
+
+        cases_2d = {(round(x0 + ix * pas, 1), round(y0 + iy * pas, 1)) for ix, iy, _ in cases}
+        points_2d = [[x, y] for x, y in cases_2d]
 
         largeur = donnees.get("width") or [0, 0, 0]
-        pas = float(resolution)
-        # Ou est le robot, et vers quoi il regarde (pose « odom »).
-        pose = self._pose_robot or {}
-
-        # Les memes cases, mais sans le sol : c'est ce que le service
-        # interroge avant chaque deplacement pour savoir s'il y a la place.
-        origine = (float(origin[0]), float(origin[1]), float(origin[2]))
-        self._obstacles_lidar = obstacle_cells(cases, origine, pas)
-        self._obstacles_lidar_at = time.monotonic()
-
+        pose = pose_robot or {}
         octets = bytes(v for case in cases for v in case)
-        return {
-            "origin": [float(v) for v in origin],
+        volume_3d = {
+            "origin": [x0, y0, z0],
             "resolution": pas,
             "largeur": [int(v) for v in largeur],
             "robot": {
@@ -2951,6 +2976,7 @@ class WebRTCAdapter:
             "positions": base64.b64encode(octets).decode("ascii"),
             "sommets": len(cases),
         }
+        return points_2d, volume_3d, obstacles
 
     async def lidar_volume(self) -> dict[str, Any] | None:
         """Le volume de voxels du lidar, pour la vue en 3D.
@@ -2966,51 +2992,19 @@ class WebRTCAdapter:
             return None
         return self._volume_lidar
 
+    def _maillage_3d(self, donnees: dict[str, Any]) -> dict[str, Any] | None:
+        """Le volume de voxels, prêt à être dessiné en 3D."""
+        pose = self._pose_robot or {}
+        _, volume, obstacles = self._decoder_lidar_cpu(donnees, pose)
+        if obstacles is not None:
+            self._obstacles_lidar = obstacles
+            self._obstacles_lidar_at = time.monotonic()
+        return volume
+
     def _cellules_2d(self, donnees: dict[str, Any]) -> list[list[float]] | None:
-        """Les cases occupées de la carte, vues du dessus, en mètres.
-
-        La grille du lidar a 5 cm de côté et part de `origin`. On rend la
-        liste des cases occupées : c'est ce que l'application dessine, et
-        c'est bien plus léger que le maillage complet.
-        """
-        mesh = donnees.get("data")
-        if not isinstance(mesh, dict):
-            self._signaler("la carte n'a pas de maillage")
-            return None
-        positions = mesh.get("positions")
-        origin = donnees.get("origin")
-        resolution = donnees.get("resolution")
-        if positions is None or origin is None or resolution is None:
-            self._signaler(
-                f"il manque une donnee (positions={positions is not None}, "
-                f"origin={origin is not None}, resolution={resolution is not None})"
-            )
-            return None
-        try:
-            valeurs = positions.tolist() if hasattr(positions, "tolist") else list(positions)
-            pas = float(resolution)
-            x0 = float(origin[0])
-            y0 = float(origin[1])
-        except (TypeError, ValueError, IndexError) as exc:
-            self._signaler(f"la carte est illisible ({exc})")
-            return None
-
-        if not valeurs:
-            self._signaler("la carte est vide")
-            return None
-
-        cases: set[tuple[float, float]] = set()
-        for i in range(0, len(valeurs) - 2, 3):
-            # Au centime, la carte est plus lisible ; au centieme, elle est
-            # deux fois plus legere sur le reseau. Le dessin n'a pas besoin
-            # de plus de precision que 10 cm.
-            cases.add(
-                (
-                    round(x0 + valeurs[i] * pas, 1),
-                    round(y0 + valeurs[i + 1] * pas, 1),
-                )
-            )
-        return [[x, y] for x, y in cases]
+        """Les cases occupées de la carte, vues du dessus, en mètres."""
+        points, _, _ = self._decoder_lidar_cpu(donnees, None)
+        return points
 
     def _sur_pose(self, message: Any) -> None:
         """La pose du robot dans le repere de la carte du lidar.

@@ -142,26 +142,39 @@ ROBOT_AES_KEY_FILE = os.environ.get(
 )
 
 
+_cached_lan_ip: str | None = None
+_cached_lan_ip_at: float = 0.0
+
+
 def _detect_lan_ip() -> str:
-    """Détecte l'adresse IP locale joignable sur le réseau local."""
+    """Détecte l'adresse IP locale joignable sur le réseau local (mise en cache 30s)."""
+    global _cached_lan_ip, _cached_lan_ip_at
+    now = time.monotonic()
+    if _cached_lan_ip is not None and now - _cached_lan_ip_at < 30.0:
+        return _cached_lan_ip
+
     env_ip = os.environ.get("SERVICE_LAN_IP", "").strip()
     if env_ip:
+        _cached_lan_ip = env_ip
+        _cached_lan_ip_at = now
         return env_ip
+    ip = "172.16.13.41"
     try:
         import socket
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("172.16.13.1", 80))
-            return s.getsockname()[0]
+            ip = s.getsockname()[0]
     except Exception:
-        pass
-    try:
-        import socket
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
-    except Exception:
-        pass
-    return "172.16.13.41" 
+        try:
+            import socket
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("8.8.8.8", 80))
+                ip = s.getsockname()[0]
+        except Exception:
+            pass
+    _cached_lan_ip = ip
+    _cached_lan_ip_at = now
+    return ip 
 
 
 def _robot_aes_key() -> str | None:
@@ -941,6 +954,7 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
             "blocked": blocked,
             "message": message,
             "sprint": state.manual.sprint,
+            "status": await state.status_payload(),
         }
 
     @app.post("/api/manual/jump")
@@ -1444,14 +1458,15 @@ async def _status_pusher(state: ServiceState) -> None:
     """Pousse l'état robot à intervalle régulier sur le WebSocket."""
     try:
         while True:
-            # En cours d'exécution ou en simulation, on diffuse l'odométrie
-            # plus fréquemment (50 ms) pour une trajectoire 3D fluide.
-            is_active = (
+            # En cours d'exécution active ou de mouvement manuel/autonome,
+            # on diffuse l'odométrie à haute fréquence (50 ms) pour une 3D fluide.
+            # Au repos, une fréquence modérée évite de saturer le CPU et le réseau.
+            is_moving = (
                 state.engine.is_running
-                or getattr(state.adapter, "name", None) == "simulation"
-                or state.manual.active
+                or (state.manual.active and state.manual.direction is not None)
+                or state.autonomous.active
             )
-            delai = 0.05 if is_active else (state.limits.safety.frontend_poll_timeout_ms / 1000.0)
+            delai = 0.05 if is_moving else (state.limits.safety.frontend_poll_timeout_ms / 1000.0)
             await asyncio.sleep(delai)
             payload = await state.status_payload()
             await state.hub.broadcast({"type": "status", "status": payload})

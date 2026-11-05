@@ -392,6 +392,9 @@ class AppState {
     this.manualMotion = direction !== null ? { direction, sprint } : null;
     try {
       const result = await api.moveManual(direction, seq, source, sprint);
+      if (result.status) {
+        this.status = result.status;
+      }
       if (result.blocked) {
         this.manualMotion = null;
       }
