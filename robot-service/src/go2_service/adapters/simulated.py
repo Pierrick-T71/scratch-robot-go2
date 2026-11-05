@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import math
 import random
+import time
 
 from ..config import Limits
 from ..validation import Capability, CommandKind, RobotCommand
@@ -94,6 +95,7 @@ class SimulatedAdapter:
         self._battery = 100.0
         self._posture = Posture.SIT
         self._crouch_mode = False
+        self._dernier_manuel_at = 0.0
 
         # Points d'injection de panne, pour les tests.
         self.fail_next_command = False
@@ -167,6 +169,7 @@ class SimulatedAdapter:
         self._posture = Posture.STAND
         self._state = RobotState.IDLE
         self._crouch_mode = False
+        self._dernier_manuel_at = 0.0
 
     async def manual_prepare(self) -> None:
         """Le simulateur accepte le mode manuel, sans mouvement réel."""
@@ -191,25 +194,44 @@ class SimulatedAdapter:
             raise AdapterError(f"Direction manuelle inconnue : {direction}")
         self._state = RobotState.MOVING
         self._posture = Posture.STAND
+
+        maintenant = time.monotonic()
+        if self._dernier_manuel_at > 0.0:
+            dt = maintenant - self._dernier_manuel_at
+            if dt > 0.10 or dt <= 0.0:
+                dt = 0.05
+        else:
+            dt = 0.05
+        self._dernier_manuel_at = maintenant
+
+        # Modération des vitesses pour la simulation :
+        # - Vitesse de marche fluide et réaliste à 0,25 m/s (ou 0,45 m/s en sprint).
+        # - Vitesse de rotation douce et maniable à 0,45 rad/s (~26°/s) pour tourner
+        #   avec précision et éviter tout survirage brutal.
+        est_sprint = speed_mps > 1.0
+        v_marche = 0.45 if est_sprint else min(speed_mps, 0.25)
+        v_rotation = min(turn_speed_rps, 0.45)
+
         vx = 0.0
         vy = 0.0
         vyaw = 0.0
         if "forward" in direction:
-            vx = speed_mps
+            vx = v_marche
         elif "backward" in direction:
-            vx = -speed_mps
+            vx = -v_marche
         if "left" in direction and "turn" not in direction:
-            vy = speed_mps
+            vy = v_marche
         elif "right" in direction and "turn" not in direction:
-            vy = -speed_mps
+            vy = -v_marche
         if "turn_left" in direction:
-            vyaw = turn_speed_rps
+            vyaw = v_rotation
         elif "turn_right" in direction:
-            vyaw = -turn_speed_rps
-        self._advance(vx, vy, vyaw, 0.1)
+            vyaw = -v_rotation
+        self._advance(vx, vy, vyaw, dt)
 
     def manual_stop(self) -> None:
         self._state = RobotState.IDLE
+        self._dernier_manuel_at = 0.0
 
     async def manual_jump(self) -> None:
         """Simule un saut en mode manuel : bondit et avance de 50 cm vers l'avant."""

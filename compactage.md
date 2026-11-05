@@ -464,3 +464,32 @@
 - **Tests unitaires Frontend (`frontend`)** : **234 / 234 tests passants (100%)**.
 - **Typage et diagnostics Svelte (`npm run check`)** : 0 erreurs, 0 avertissements.
 - **Build de production Vite (`npm run build`)** : Bundle de production généré avec succès en 1.70s.
+
+---
+
+## 16. Modération des Vitesses de Marche et de Rotation en Mode Manuel Simulé
+
+**Date :** 05/11/2026
+
+### 16.1. Origine des Vitesses Excessives en Simulation
+- **Multiplicateur temporel caché (`dt = 0.1` à 20 Hz)** :
+  - Dans `simulated.py`, la méthode `manual_velocity` utilisait un pas d'intégration en dur `self._advance(vx, vy, vyaw, 0.1)`.
+  - Depuis le passage de la boucle manuelle à 20 Hz (`MANUAL_TICK_S = 0.05`), la méthode était appelée 20 fois par seconde.
+  - Le simulateur intégrait donc `20 × 0.1 = 2.0 s` de déplacement par seconde réelle (vitesse doublée à 200%).
+- **Vitesses nominales inadaptées à la simulation 3D** :
+  - La consigne de trot réel (`0.6 m/s`) et de rotation (`1.0 rad/s = 57.3°/s`), doublée par le bug de `dt`, propulsait le chien simulé à `1.2 m/s` et le faisait pivoter à `115°/s` (un tour complet en 3 secondes !), le rendant incontrôlable au clavier ou sur manette mobile.
+
+### 16.2. Correctifs Appliqués (`simulated.py`)
+- **Intégration temporelle dynamique exacte (`dt`)** :
+  - Calcul de l'intervalle réel écoulé entre deux trames manuelles via `time.monotonic() - self._dernier_manuel_at` avec borne de sécurité `[0.01 s, 0.10 s]` (repli nominal à `0.05 s`).
+  - Réinitialisation de `_dernier_manuel_at = 0.0` à l'arrêt (`manual_stop`) et au recentrage (`reset_position`).
+- **Plafonnement des vitesses simulées pour un contrôle fluide et précis** :
+  - *Vitesse de marche normale* : plafonnée à **`0.25 m/s`** (soit 25 cm/s, allure d'un pas canin naturel et lisible sur la grille 3D).
+  - *Vitesse de sprint* : autorisée jusqu'à **`0.45 m/s`** si la touche Maj est maintenue.
+  - *Vitesse de rotation* : plafonnée à **`0.45 rad/s (~26°/s)`**, permettant de pivoter de 90° en environ 3,5 secondes pour un alignement au degré près sans aucun survirage.
+- Préservation intégrale du mode réel (`WebRTCAdapter`), qui conserve ses consignes physiques d'origine.
+
+### 16.3. Bilan des Tests et Validation
+- **Tests unitaires et intégration Backend (`robot-service`)** : **365 / 365 tests passants (100%)**.
+- **Tests unitaires Frontend (`frontend`)** : **234 / 234 tests passants (100%)**.
+- **Typage et diagnostics Svelte (`npm run check`)** : 0 erreurs, 0 avertissements.
