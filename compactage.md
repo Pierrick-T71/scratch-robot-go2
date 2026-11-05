@@ -482,11 +482,13 @@
 ### 16.2. Correctifs Appliqués (`simulated.py`)
 - **Intégration temporelle dynamique exacte (`dt`)** :
   - Calcul de l'intervalle réel écoulé entre deux trames manuelles via `time.monotonic() - self._dernier_manuel_at` avec borne de sécurité `[0.01 s, 0.10 s]` (repli nominal à `0.05 s`).
+  - Élimination définitive du bug d'intégration à double vitesse (`200%`).
   - Réinitialisation de `_dernier_manuel_at = 0.0` à l'arrêt (`manual_stop`) et au recentrage (`reset_position`).
-- **Plafonnement des vitesses simulées pour un contrôle fluide et précis** :
-  - *Vitesse de marche normale* : plafonnée à **`0.25 m/s`** (soit 25 cm/s, allure d'un pas canin naturel et lisible sur la grille 3D).
-  - *Vitesse de sprint* : autorisée jusqu'à **`0.45 m/s`** si la touche Maj est maintenue.
-  - *Vitesse de rotation* : plafonnée à **`0.45 rad/s (~26°/s)`**, permettant de pivoter de 90° en environ 3,5 secondes pour un alignement au degré près sans aucun survirage.
+- **Alignement strict sur la vitesse des blocs puzzle en simulation** :
+  - *Vitesse de marche normale* : calée exactement sur `self._limits.motion.max_linear_speed` = **`0.50 m/s`** (vitesse identique aux blocs « Avancer » / « Reculer »).
+  - *Vitesse de rotation* : calée exactement sur `self._limits.motion.max_angular_speed` = **`1.20 rad/s (~68.8°/s)`** (vitesse identique aux blocs « Tourner à gauche » / « Tourner à droite »).
+  - *Vitesse de sprint* : autorisée jusqu'à **`1.0 m/s`** si la touche Maj est maintenue.
+  - *Mode accroupi* : conservé à `0.20 m/s` et `0.50 rad/s`.
 - Préservation intégrale du mode réel (`WebRTCAdapter`), qui conserve ses consignes physiques d'origine.
 
 ### 16.3. Bilan des Tests et Validation

@@ -204,13 +204,18 @@ class SimulatedAdapter:
             dt = 0.05
         self._dernier_manuel_at = maintenant
 
-        # Modération des vitesses pour la simulation :
-        # - Vitesse de marche fluide et réaliste à 0,25 m/s (ou 0,45 m/s en sprint).
-        # - Vitesse de rotation douce et maniable à 0,45 rad/s (~26°/s) pour tourner
-        #   avec précision et éviter tout survirage brutal.
-        est_sprint = speed_mps > 1.0
-        v_marche = 0.45 if est_sprint else min(speed_mps, 0.25)
-        v_rotation = min(turn_speed_rps, 0.45)
+        # Vitesse identique aux blocs puzzle en simulation :
+        # - Vitesse de marche : limits.motion.max_linear_speed (0,50 m/s)
+        # - Vitesse de rotation : limits.motion.max_angular_speed (1,20 rad/s)
+        if self._crouch_mode:
+            v_marche = 0.20
+            v_rotation = 0.50
+        elif speed_mps > 1.0:  # Mode sprint
+            v_marche = 1.0
+            v_rotation = self._limits.motion.max_angular_speed
+        else:
+            v_marche = self._limits.motion.max_linear_speed
+            v_rotation = self._limits.motion.max_angular_speed
 
         vx = 0.0
         vy = 0.0
