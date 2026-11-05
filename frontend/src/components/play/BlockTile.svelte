@@ -105,6 +105,7 @@
 <span
   class="blk blk--{spec.tone}"
   class:blk--running={running}
+  class:blk--has-pill={spec.editable !== undefined}
   aria-label={`${spec.hint}${canEdit ? `, ${spec.editable === 'degrees' ? `${degrees} degrés` : `${seconds} secondes`}` : ''}`}
 >
   <svg class="blk__svg" viewBox="0 0 115 115" aria-hidden="true">
@@ -328,6 +329,11 @@
     pointer-events: none;
   }
 
+  .blk--has-pill .blk__sticker {
+    height: 44px;
+    margin-bottom: 1px;
+  }
+
   .blk__sticker-img {
     max-width: 100%;
     max-height: 100%;
@@ -486,6 +492,10 @@
       width: 9px;
       height: 7px;
     }
+
+    .blk--has-pill .blk__sticker {
+      height: 52px;
+    }
   }
 
   /* Très grands écrans (27 pouces et plus / QHD / 4K, >= 2200px) */
@@ -503,6 +513,10 @@
       --blk-pill-font: 16px;
       --blk-pill-badge: 20px;
       --blk-pad: 20px 6px 9px 20px;
+    }
+
+    .blk--has-pill .blk__sticker {
+      height: 60px;
     }
 
     .blk__icon {

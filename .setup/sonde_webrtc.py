@@ -23,7 +23,7 @@ from unitree_webrtc_connect import (  # noqa: E402
     RTC_TOPIC,
 )
 
-IP = sys.argv[1] if len(sys.argv) > 1 else "172.16.8.11"
+IP = sys.argv[1] if len(sys.argv) > 1 else "172.16.8.14"
 DUREE = float(sys.argv[2]) if len(sys.argv) > 2 else 12.0
 # Cle AES-128 propre au robot (firmware Go2 >= 1.1.15). Fournie en variable
 # d'environnement pour ne pas la laisser dans l'historique des commandes.

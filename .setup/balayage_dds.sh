@@ -7,7 +7,7 @@
 #   B. le robot ne repond qu'en unicast (point d'acces qui filtre)
 #   C. le robot publie sur un autre domaine DDS
 
-IP=${1:-172.16.8.11}
+IP=${1:-172.16.8.14}
 PY=/root/go2env311/bin/python
 SONDE=/root/sonde_dds.py
 

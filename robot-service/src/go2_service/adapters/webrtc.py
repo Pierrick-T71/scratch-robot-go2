@@ -256,9 +256,16 @@ class WebRTCAdapter:
     #: Délai d'inactivité au-delà duquel le LiDAR est coupé pour économiser la batterie.
     LIDAR_INACTIF_TIMEOUT_S = 15.0
 
-    #: Au-dela de cette anciennete, la carte du lidar est consideree
-    #: comme perimee : mieux vaut une vue vide qu'une carte trompeuse.
-    LIDAR_PERIME_S = 2.0
+    #: Au-dela de cette anciennete, la mesure lidar pour l'anti-collision
+    #: est consideree comme perimee.
+    LIDAR_PERIME_S = 3.5
+
+    #: Duree pendant laquelle les voxels 3D et points 2D restent affichables a l'ecran (secondes).
+    #: 15 s evite que la scene 3D ne clignote ou ne se vide lors d'un delai reseau temporaire.
+    LIDAR_AFFICHAGE_PERIME_S = 15.0
+
+    #: Duree pendant laquelle le decodage lidar reste actif apres la derniere requete de l'interface.
+    LIDAR_DEMANDE_ACTIVE_S = 15.0
 
     #: Periode du controle d'obstacle pendant un deplacement, en secondes.
     #:
@@ -748,27 +755,33 @@ class WebRTCAdapter:
             except RuntimeError:
                 pass
 
-    async def set_lidar_switch(self, on: bool) -> None:
+    async def set_lidar_switch(self, on: bool, force: bool = False) -> None:
         """Active ou coupe le LiDAR physique du Go2 via rt/utlidar/switch."""
         connexion = self._connexion
         if connexion is None or not self._connected:
             return
-        if self._lidar_physique_actif == on:
+        if self._lidar_physique_actif == on and not force:
             return
         t_switch = self._rtc.get("ULIDAR_SWITCH", "rt/utlidar/switch")
         valeur = "ON" if on else "OFF"
         try:
             canal = connexion.datachannel.pub_sub
+            if on:
+                try:
+                    await connexion.datachannel.disableTrafficSaving(True)
+                except Exception:  # noqa: BLE001
+                    pass
             canal.publish_without_callback(t_switch, valeur)
             canal.publish_without_callback(t_switch, "on" if on else "off")
             self._lidar_physique_actif = on
             if on:
                 self._derniere_requete_lidar = time.monotonic()
             log.info(
-                "LiDAR physique %s (topic %s, data: %r).",
+                "LiDAR physique %s (topic %s, data: %r, force=%s).",
                 "allumé" if on else "coupé",
                 t_switch,
                 valeur,
+                force,
             )
         except Exception as exc:  # noqa: BLE001
             log.warning("Impossible de changer l'état du LiDAR (%s) : %s", valeur, exc)
@@ -2859,22 +2872,24 @@ class WebRTCAdapter:
         if self._lidar_en_cours:
             return
 
-        # Pendant un déplacement physique (manuel ou Scratch hors mode autonome),
-        # le pilotage et la réactivité priment à 100%.
-        en_autonome = getattr(self, "_en_autonome", False)
-        if (self._state == RobotState.MOVING or self._programme_en_cours) and not en_autonome:
-            return
-
         if not self._lidar_physique_actif:
             return
 
         maintenant = time.monotonic()
-        # Si aucun client n'a demandé la vue lidar récemment et qu'on n'est pas en mode autonome,
-        # inutile de décoder les centaines de milliers de voxels.
-        if not en_autonome and (maintenant - self._derniere_requete_lidar > self.LIDAR_PERIME_S):
+        en_autonome = getattr(self, "_en_autonome", False)
+        demande_active = (
+            maintenant - self._derniere_requete_lidar <= self.LIDAR_DEMANDE_ACTIVE_S
+        )
+
+        # Si aucun client ne demande la vue lidar récemment, qu'on n'est pas en mode autonome
+        # ni en contrôle d'obstacle, inutile de décoder les voxels.
+        if not (en_autonome or self._obstacle_safety_enabled or demande_active):
             return
 
-        if maintenant - self._lidar_traite_at < self.LIDAR_TRAITEMENT_S:
+        # Pendant un déplacement manuel au joystick très dynamique, espacer à 1.0 s pour préserver
+        # la fluidité de la boucle tout en maintenant la scène et les obstacles à jour.
+        periode = 1.0 if getattr(self, "manual_mode_moving", False) else self.LIDAR_TRAITEMENT_S
+        if maintenant - self._lidar_traite_at < periode:
             return
         self._lidar_traite_at = maintenant
 
@@ -2941,7 +2956,7 @@ class WebRTCAdapter:
             pas = float(resolution)
             x0 = float(origin[0])
             y0 = float(origin[1])
-            z0 = float(origin[2])
+            z0 = float(origin[2]) if len(origin) > 2 else 0.0
         except (TypeError, ValueError, IndexError):
             return None, None, None
 
@@ -2987,12 +3002,20 @@ class WebRTCAdapter:
 
         `None` quand le lidar n'a rien envoyé : on n'invente pas de carte.
         """
-        self._derniere_requete_lidar = time.monotonic()
-        if not self._lidar_physique_actif and not self._en_veille:
-            await self.set_lidar_switch(True)
+        maintenant = time.monotonic()
+        self._derniere_requete_lidar = maintenant
+        if not self._en_veille:
+            if not self._lidar_physique_actif:
+                await self.set_lidar_switch(True)
+            elif self._volume_lidar is None and (
+                maintenant - getattr(self, "_dernier_reveil_lidar", 0.0) > 3.0
+            ):
+                self._dernier_reveil_lidar = maintenant
+                await self.set_lidar_switch(True, force=True)
+
         if not self._volume_lidar:
             return None
-        if time.monotonic() - self._volume_lidar_at > self.LIDAR_PERIME_S:
+        if maintenant - self._volume_lidar_at > self.LIDAR_AFFICHAGE_PERIME_S:
             return None
         return self._volume_lidar
 
@@ -3064,12 +3087,20 @@ class WebRTCAdapter:
 
         `None` quand le lidar n'a rien envoyé : on n'invente pas de carte.
         """
-        self._derniere_requete_lidar = time.monotonic()
-        if not self._lidar_physique_actif and not self._en_veille:
-            await self.set_lidar_switch(True)
+        maintenant = time.monotonic()
+        self._derniere_requete_lidar = maintenant
+        if not self._en_veille:
+            if not self._lidar_physique_actif:
+                await self.set_lidar_switch(True)
+            elif self._points_lidar is None and (
+                maintenant - getattr(self, "_dernier_reveil_lidar", 0.0) > 3.0
+            ):
+                self._dernier_reveil_lidar = maintenant
+                await self.set_lidar_switch(True, force=True)
+
         if not self._points_lidar:
             return None
-        if time.monotonic() - self._points_lidar_at > self.LIDAR_PERIME_S:
+        if maintenant - self._points_lidar_at > self.LIDAR_AFFICHAGE_PERIME_S:
             return None
         return self._points_lidar
 

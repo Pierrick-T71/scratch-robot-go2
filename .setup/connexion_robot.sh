@@ -1,7 +1,7 @@
 #!/bin/bash
 # Branchement seul, pour isoler la liaison WebRTC.
 set -u
-IP=${1:-172.16.8.11}
+IP=${1:-172.16.8.14}
 for essai in 1 2 3; do
   echo "--- essai $essai ---"
   /root/go2env311/bin/python - "$IP" <<'PY'

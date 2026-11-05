@@ -3,7 +3,7 @@
 # qu'aucune consigne de mouvement ne suit (donc pas de redressement).
 set -u
 
-IP=${1:-172.16.8.11}
+IP=${1:-172.16.8.14}
 API=http://127.0.0.1:8765
 
 echo "=== 1. branchement du robot (test posture = le robot s'assoit) ==="

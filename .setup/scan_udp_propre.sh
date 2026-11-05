@@ -11,7 +11,7 @@
 # liste est ouvert.
 
 set -u
-CIBLES="172.16.8.11 192.168.123.161"
+CIBLES="172.16.8.14 192.168.123.161"
 DEBUT=7400
 FIN=7424
 

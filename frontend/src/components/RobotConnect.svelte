@@ -18,7 +18,7 @@
   }
   let { onClose }: Props = $props();
 
-  let robotIp = $state('172.16.8.11');
+  let robotIp = $state('172.16.8.14');
   let lancerTest = $state(true);
   let enCours = $state(false);
   let resultat = $state<{
@@ -102,7 +102,7 @@
       type="text"
       inputmode="decimal"
       bind:value={robotIp}
-      placeholder="172.16.8.11"
+      placeholder="172.16.8.14"
       autocomplete="off"
       spellcheck="false"
       disabled={enCours}

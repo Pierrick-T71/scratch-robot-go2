@@ -45,7 +45,7 @@ def brancher(test: bool) -> None:
         "POST",
         "/api/robot/connect",
         {
-            "robot_ip": "172.16.8.11",
+            "robot_ip": "172.16.8.14",
             "network_interface": "webrtc",
             "lancer_test": test,
         },

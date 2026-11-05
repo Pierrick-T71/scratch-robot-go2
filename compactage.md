@@ -419,3 +419,45 @@
 - **Tests unitaires Frontend (`frontend`)** : **234 / 234 tests passants (100%)**.
 - **Typage et diagnostics Svelte (`npm run check`)** : 0 erreurs, 0 avertissements.
 - **Build de production Vite (`npm run build`)** : Bundle de production généré avec succès en 1.05s.
+
+---
+
+## 15. Fiabilisation du Capteur LiDAR, Intégration des Nouveaux Stickers et IP par Défaut
+
+**Date :** 05/11/2026
+
+### 15.1. Résolution de l'Erreur LiDAR (« Le robot doit être debout, alors qu'il l'est » & données vides intermittentes)
+- **Origine du problème :**
+  1. *Blocage intempestif des trames LiDAR* : Dans `webrtc.py`, la méthode `_sur_lidar` jetait systématiquement toutes les trames si `self._programme_en_cours` ou `self._state == RobotState.MOVING` était vrai. Lors de l'exécution d'un programme Scratch ou d'un mouvement, aucune carte LiDAR n'était décodée.
+  2. *Fenêtre de demande trop agressive (`LIDAR_PERIME_S = 2.0 s`)* : Si la requête HTTP de l'application accusait le moindre décalage (> 2.0 s), `_sur_lidar` cessait immédiatement de décoder les voxels.
+  3. *Péremption d'affichage trop courte* : `lidar_volume()` et `lidar_points()` renvoyaient `None` dès que la dernière carte avait plus de 2.0 secondes. La moindre gigue Wi-Fi vidait instantanément le volume de la scène 3D.
+  4. *Message d'erreur trompeur dans `RobotStage.svelte`* : Lorsque `cases.length === 0 && !volume`, le texte affichait en dur *« Le capteur n’envoie rien : le robot doit être debout. »*, créant une confusion totale lorsque le robot était déjà debout.
+  5. *Purge immédiate en cas d'erreur de polling* : Le bloc `catch` dans `RobotStage.svelte` et `MobileGamepad.svelte` vidait immédiatement `cases = []` et `volume = null` dès qu'un paquet HTTP subissait un timeout.
+- **Corrections apportées :**
+  1. *Découplage des constantes temporelles (`webrtc.py`)* :
+     - `LIDAR_DEMANDE_ACTIVE_S = 15.0 s` : Maintient le décodage d'arrière-plan actif tant que l'interface a sollicité la vue dans les 15 dernières secondes.
+     - `LIDAR_AFFICHAGE_PERIME_S = 15.0 s` : Garantit que les cubes 3D et points 2D restent stables à l'écran sans disparaître brutalement lors d'un léger retard réseau.
+     - `LIDAR_CLEARANCE_PERIME_S = 3.5 s` : Marge sécuritaire pour les vérifications d'anti-collision (`clearance_m`).
+  2. *Déblocage des trames LiDAR* : Suppression de l'interdiction de décodage pendant `_programme_en_cours` et les mouvements normaux. Seul le pilotage joystick continu en mode manuel espace le décodage à 1.0 s pour garantir la fluidité maximale des ordres de vitesse.
+  3. *Réveil matériel forcé (`set_lidar_switch(True, force=True)`)* : Si aucun voxel n'a encore été reçu, le service renvoie proactivement les consignes `"ON"` et active `disableTrafficSaving(True)` toutes les 3 secondes pour réveiller le capteur physique Unitree.
+  4. *Tolérance aux micro-coupures dans l'interface* : Le polling conserve le dernier maillage et n'efface la scène qu'après 5 échecs réseau consécutifs.
+  5. *Clarification du message utilisateur (`RobotStage.svelte`)* :
+     - Si le robot est debout : *« En attente des données du capteur lidar… »*.
+     - Si le robot est assis ou couché : *« Le capteur lidar nécessite que le robot soit debout. »*.
+
+### 15.2. Nouveaux Stickers « Avancer » et « Reculer »
+- Ajout des images WebP haute définition depuis `alternance/image` vers `frontend/public/stickers/` :
+  - `chien_avance.webp` pour le bloc `forward`.
+  - `chien_arriere.webp` pour le bloc `backward`.
+- Association des stickers dans `BLOCKS` (`frontend/src/lib/play/blocks.ts`).
+- Ajustement géométrique dans `BlockTile.svelte` : ajout de la classe `.blk--has-pill` pour redimensionner harmonieusement le sticker (hauteur 44 px au lieu de 58 px) sur les blocs comportant à la fois un sticker et un sélecteur de durée, avec support adaptatif multi-résolutions (écrans 1700px+ et 4K 2200px+).
+
+### 15.3. Configuration de l'Adresse IP par Défaut
+- Modification de l'IP initiale de connexion dans `RobotConnect.svelte` : `172.16.8.14` par défaut (valeur d'état et placeholder).
+- Mise à jour cohérente des scripts d'administration et de diagnostic dans `.setup/` avec repli automatique sur `172.16.8.14`.
+
+### 15.4. Bilan des Tests et Validation
+- **Tests unitaires et intégration Backend (`robot-service`)** : **365 / 365 tests passants (100%)**.
+- **Tests unitaires Frontend (`frontend`)** : **234 / 234 tests passants (100%)**.
+- **Typage et diagnostics Svelte (`npm run check`)** : 0 erreurs, 0 avertissements.
+- **Build de production Vite (`npm run build`)** : Bundle de production généré avec succès en 1.38s.

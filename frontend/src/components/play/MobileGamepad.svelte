@@ -479,7 +479,7 @@
               lidarVolume = res.volume;
             }
           } catch {
-            if (lidarPollingActive) lidarVolume = null;
+            // En cas d'erreur réseau transitoire, conserver le volume précédent pour éviter les clignotements
           }
         }
         await new Promise((r) => setTimeout(r, 800));

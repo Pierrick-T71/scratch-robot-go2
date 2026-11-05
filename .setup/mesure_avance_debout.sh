@@ -2,7 +2,7 @@
 # Le robot DEJA DEBOUT avance-t-il ? (discrimine : transition de posture
 # ou commande Move ignoree par le robot)
 set -u
-IP=${1:-172.16.8.11}
+IP=${1:-172.16.8.14}
 API=http://127.0.0.1:8765
 
 /root/go2env311/bin/python - "$IP" "$API" <<'PY'

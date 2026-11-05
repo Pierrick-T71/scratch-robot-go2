@@ -16,14 +16,14 @@ ip route
 echo
 
 echo "### 2. le robot repond-il ?"
-ping -c 2 -W 2 172.16.8.11 | grep -E "bytes from"
+ping -c 2 -W 2 172.16.8.14 | grep -E "bytes from"
 echo
 
-if ip route get 192.168.123.161 2>/dev/null | grep -q "via 172.16.8.11"; then
+if ip route get 192.168.123.161 2>/dev/null | grep -q "via 172.16.8.14"; then
     echo "### route interne deja en place"
 else
     echo "### route interne absente : ajout"
-    ip route add 192.168.123.0/24 via 172.16.8.11 2>&1 | sed 's/^/  /'
+    ip route add 192.168.123.0/24 via 172.16.8.14 2>&1 | sed 's/^/  /'
 fi
 echo
 
@@ -42,6 +42,6 @@ done
 echo
 
 echo "### 5. empreinte du robot"
-ip neigh show 172.16.8.11 | sed 's/^/  /'
+ip neigh show 172.16.8.14 | sed 's/^/  /'
 echo
 echo "### fin"

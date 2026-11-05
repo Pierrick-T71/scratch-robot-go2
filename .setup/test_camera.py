@@ -24,7 +24,7 @@ async def main() -> None:
 
     connexion = UnitreeWebRTCConnection(
         WebRTCConnectionMethod.LocalSTA,
-        ip="172.16.8.11",
+        ip="172.16.8.14",
         aes_128_key=cle,
     )
     await connexion.connect()

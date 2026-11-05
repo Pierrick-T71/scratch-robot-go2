@@ -5,7 +5,7 @@
 # on la suit pendant que le robot est assis, puis pendant qu'un programme
 # se termine.
 set -u
-IP=${1:-172.16.8.11}
+IP=${1:-172.16.8.14}
 API=http://127.0.0.1:8765
 
 /root/go2env311/bin/python - "$IP" "$API" <<'PY'

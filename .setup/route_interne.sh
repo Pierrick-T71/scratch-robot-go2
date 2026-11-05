@@ -2,7 +2,7 @@
 # Le DDS du Go2 vit sur le reseau INTERNE du robot, pas sur son adresse
 # externe.
 #
-# Le robot (172.16.8.11) route vers un sous-reseau 192.168.123.0/24 ou
+# Le robot (172.16.8.14) route vers un sous-reseau 192.168.123.0/24 ou
 # resident son ordinateur de bord. Tant qu'on n'a pas de route vers ce
 # sous-reseau, les paquets DDS unicast n'ont nulle part ou aller — et la
 # multidiffusion, elle, ne franchit de toute facon pas.
@@ -10,7 +10,7 @@
 # Ce script ajoute la route et verifie ce qu'on atteint.
 
 set -u
-EXTERNE=${1:-172.16.8.11}
+EXTERNE=${1:-172.16.8.14}
 INTERNE="192.168.123.0/24"
 
 echo "=============================================================="

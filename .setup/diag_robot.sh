@@ -1,11 +1,11 @@
 #!/bin/bash
 # Le robot Go2 publie-t-il en DDS ? et que repond-il ?
 #
-# Point de vigilance : '172.16.8.11' est une sous-chaine de '172.16.8.112'.
+# Point de vigilance : '172.16.8.14' est une sous-chaine de '172.16.8.142'.
 # On exige donc un separateur apres l'adresse.
 
 set -u
-IP=${1:-172.16.8.11}
+IP=${1:-172.16.8.14}
 DUREE=${2:-15}
 
 echo "=============================================================="
@@ -19,7 +19,7 @@ timeout "$DUREE" tcpdump -i eth0 -nn -c 2000 2>/dev/null > /root/go2/cap_robot.t
 TOTAL=$(wc -l < /root/go2/cap_robot.txt)
 echo "  $TOTAL paquets capture(s) au total"
 
-# Separateur obligatoire : 172.16.8.11 suivi d'un point ou d'un espace.
+# Separateur obligatoire : 172.16.8.14 suivi d'un point ou d'un espace.
 DEPUIS=$(grep -cE "(^|[^0-9])${IP}[. ]" /root/go2/cap_robot.txt || true)
 echo "  paquets impliquant le robot : $DEPUIS"
 if [ "$DEPUIS" -gt 0 ]; then

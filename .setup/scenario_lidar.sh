@@ -21,7 +21,7 @@ def post(url, data):
 
 print("connexion :", post(
     "http://127.0.0.1:8765/api/robot/connect",
-    {"robot_ip": "172.16.8.11", "network_interface": "eth0", "lancer_test": False},
+    {"robot_ip": "172.16.8.14", "network_interface": "eth0", "lancer_test": False},
 )[0])
 time.sleep(3)
 print("se mettre debout :", post(

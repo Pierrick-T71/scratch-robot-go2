@@ -11,7 +11,7 @@ import socket
 import ssl
 import sys
 
-IP = sys.argv[1] if len(sys.argv) > 1 else "172.16.8.11"
+IP = sys.argv[1] if len(sys.argv) > 1 else "172.16.8.14"
 
 
 def tcp_brut(port: int, charge: bytes | None = None) -> None:

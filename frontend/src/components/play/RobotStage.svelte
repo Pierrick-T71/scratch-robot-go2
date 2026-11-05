@@ -82,17 +82,23 @@
       return;
     }
     let vivant = true;
+    let echecsConsecutifs = 0;
     const boucle = async (): Promise<void> => {
       while (vivant) {
         try {
           const resultat = await api.getLidar();
           if (!vivant) return;
+          echecsConsecutifs = 0;
           cases = resultat.points;
           volume = resultat.volume;
         } catch {
           if (!vivant) return;
-          cases = [];
-          volume = null;
+          echecsConsecutifs += 1;
+          // Ne vider la carte qu'après plusieurs échecs consécutifs pour tolérer les micro-coupures Wi-Fi
+          if (echecsConsecutifs >= 5) {
+            cases = [];
+            volume = null;
+          }
         }
         await new Promise((resolve) => setTimeout(resolve, 400));
       }
@@ -201,7 +207,11 @@
 
     {#if lidar && cases.length === 0 && !volume}
       <p class="scene__note">
-        Le capteur n’envoie rien : le robot doit être debout.
+        {#if status.posture === 'stand'}
+          En attente des données du capteur lidar…
+        {:else}
+          Le capteur lidar nécessite que le robot soit debout.
+        {/if}
       </p>
     {/if}
 

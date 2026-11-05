@@ -11,7 +11,7 @@ req = urllib.request.Request(
     "http://127.0.0.1:8765/api/robot/connect",
     data=json.dumps(
         {
-            "robot_ip": "172.16.8.11",
+            "robot_ip": "172.16.8.14",
             "network_interface": "eth0",
             "lancer_test": True,
         }

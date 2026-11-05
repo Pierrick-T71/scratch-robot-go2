@@ -15,7 +15,7 @@ import base64
 import socket
 import sys
 
-IP = sys.argv[1] if len(sys.argv) > 1 else "172.16.8.11"
+IP = sys.argv[1] if len(sys.argv) > 1 else "172.16.8.14"
 
 
 def dialogue(port: int, requetes: list[bytes], delai: float = 4.0) -> None:

@@ -1,11 +1,11 @@
 #!/bin/bash
-# Caracterisation du robot 172.16.8.11
+# Caracterisation du robot 172.16.8.14
 #
 # Objectif : savoir a quoi on parle. Un Go2 expose typiquement un SSH, des
 # services Unitree, et publie en DDS. On regarde tout.
 
 set -u
-IP=${1:-172.16.8.11}
+IP=${1:-172.16.8.14}
 
 echo "=============================================================="
 echo "  Caracterisation de $IP"
@@ -45,7 +45,7 @@ echo "=== 5. capture : le robot emet-il spontanement ? (20 s) ==="
 timeout 20 tcpdump -i eth0 -nn -c 3000 2>/dev/null > /root/go2/cap2.txt
 TOTAL=$(wc -l < /root/go2/cap2.txt)
 echo "  $TOTAL paquets captures sur eth0"
-# Separateur obligatoire : 172.16.8.11 suivi d'un point ou d'un espace.
+# Separateur obligatoire : 172.16.8.14 suivi d'un point ou d'un espace.
 N=$(grep -cE "(^|[^0-9])${IP}[. ]" /root/go2/cap2.txt || true)
 echo "  dont impliquant le robot : $N"
 if [ "$N" -gt 0 ]; then

@@ -26,7 +26,7 @@ async def main() -> None:
     cle = os.environ.get("GO2_ROBOT_AES_KEY", "")
     connexion = UnitreeWebRTCConnection(
         WebRTCConnectionMethod.LocalSTA,
-        ip="172.16.8.11",
+        ip="172.16.8.14",
         aes_128_key=cle,
     )
     await connexion.connect()

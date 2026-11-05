@@ -17,7 +17,7 @@ import socket
 import sys
 import time
 
-CIBLES = sys.argv[1:] or ["172.16.8.11", "192.168.123.161"]
+CIBLES = sys.argv[1:] or ["172.16.8.14", "192.168.123.161"]
 DEBUT, FIN = 7400, 7450
 
 

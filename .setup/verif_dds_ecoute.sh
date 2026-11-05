@@ -14,7 +14,7 @@ echo "=============================================================="
 echo "  Ports UDP DDS"
 echo "=============================================================="
 
-for cible in 172.16.8.11 192.168.123.161; do
+for cible in 172.16.8.14 192.168.123.161; do
     echo
     echo "=== $cible : ports 7400-7412 en UDP ==="
     if command -v nmap >/dev/null; then
@@ -27,7 +27,7 @@ echo
 echo "=== capture pendant une tentative de dialogue DDS ==="
 # On lance la sonde en tache de fond et on regarde ce qui part et ce qui
 # revient. Un aller sans retour signifie que la porte est fermee en face.
-timeout 20 tcpdump -i eth0 -nn "host 192.168.123.161 or host 172.16.8.11" \
+timeout 20 tcpdump -i eth0 -nn "host 192.168.123.161 or host 172.16.8.14" \
     > /root/go2/cap_dds.txt 2>/dev/null &
 TCPDUMP_PID=$!
 

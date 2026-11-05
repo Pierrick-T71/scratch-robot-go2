@@ -1,7 +1,7 @@
 #!/bin/bash
 # Le robot cache-t-il un second ordinateur derriere lui ?
 #
-# 172.16.8.11 et 192.168.123.161 exposent exactement les memes ports
+# 172.16.8.14 et 192.168.123.161 exposent exactement les memes ports
 # (8551 et 9991). Deux hypotheses :
 #
 #   A. c'est la MEME machine (deux interfaces) ;
@@ -19,7 +19,7 @@ echo "  TTL : meme machine ou machine derriere ?"
 echo "=============================================================="
 echo
 echo "=== 1. TTL vers l'adresse Wi-Fi du robot ==="
-ping -c 2 -W 2 172.16.8.11 | grep -E "ttl=|rtt" | sed 's/^/  /'
+ping -c 2 -W 2 172.16.8.14 | grep -E "ttl=|rtt" | sed 's/^/  /'
 echo
 echo "=== 2. TTL vers l'ordinateur interne ==="
 ping -c 2 -W 2 192.168.123.161 | grep -E "ttl=|rtt" | sed 's/^/  /'
@@ -40,7 +40,7 @@ echo "=== 4. meme test sur le port 8551 (RTSP) ==="
 # machine. On compare les en-tetes date/heure de la reponse RTSP : deux
 # machines distinctes ont presque toujours des horloges legerement
 # differentes.
-for cible in 172.16.8.11 192.168.123.161; do
+for cible in 172.16.8.14 192.168.123.161; do
     DATE_REP=$(timeout 5 bash -c "
         exec 3<>/dev/tcp/$cible/8551
         printf 'OPTIONS rtsp://$cible RTSP/1.0\r\nCSeq: 1\r\n\r\n' >&3
@@ -50,7 +50,7 @@ done
 
 echo
 echo "=== 5. identification du serveur RTSP ==="
-for cible in 172.16.8.11 192.168.123.161; do
+for cible in 172.16.8.14 192.168.123.161; do
     SERVEUR=$(timeout 5 bash -c "
         exec 3<>/dev/tcp/$cible/8551
         printf 'OPTIONS rtsp://$cible RTSP/1.0\r\nCSeq: 1\r\n\r\n' >&3
