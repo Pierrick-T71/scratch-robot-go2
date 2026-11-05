@@ -565,3 +565,22 @@
 - **Tests unitaires Frontend (`frontend`)** : **234 / 234 tests passants (100%)**.
 - **Typage et diagnostics Svelte (`npm run check`)** : 0 erreurs, 0 avertissements.
 - **Build de production Vite (`npm run build`)** : Bundle de production généré avec succès en 1.25s.
+
+---
+
+## 20. Remplacement des Stickers des Blocs de Déplacement (Avancer, Reculer, Gauche, Droite)
+
+**Date :** 05/11/2026
+
+### 20.1. Description
+- Remplacement des 4 visuels des blocs de mouvement par les nouveaux fichiers PNG créés dans `C:\Users\ptokarek\Documents\Pierrick\alternance\image` :
+  - **Avancer de** : `chien_avance.png` (remplace `chien_avance.webp`).
+  - **Reculer de** : `chien_arriere.png` (remplace `chien_arriere.webp`).
+  - **Tourner à gauche** : nouvelle version de `chien_gauche.png`.
+  - **Tourner à droite** : nouvelle version de `chien_droite.png` (mise à jour depuis `chien-droite.png`).
+- Configuration dans [frontend/src/lib/play/blocks.ts](file:///C:/Users/ptokarek/Documents/Pierrick/scratch-robot/frontend/src/lib/play/blocks.ts) avec les extensions `.png`.
+
+### 20.2. Bilan des Tests et Validation
+- **Tests unitaires Frontend (`frontend`)** : **234 / 234 tests passants (100%)**.
+- **Typage et diagnostics Svelte (`npm run check`)** : 0 erreurs, 0 avertissements.
+- **Build de production Vite (`npm run build`)** : Bundle de production généré avec succès en 1.27s.
