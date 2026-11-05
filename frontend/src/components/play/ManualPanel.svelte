@@ -44,14 +44,20 @@
   const keyDirections: Record<string, string> = {
     z: 'forward',
     w: 'forward',
+    keyw: 'forward',
+    keyz: 'forward',
     arrowup: 'forward',
     up: 'forward',
     s: 'backward',
+    keys: 'backward',
     arrowdown: 'backward',
     down: 'backward',
     q: 'left',
     a: 'left',
+    keyq: 'left',
+    keya: 'left',
     d: 'right',
+    keyd: 'right',
     arrowleft: 'turn_left',
     left: 'turn_left',
     arrowright: 'turn_right',
@@ -136,10 +142,13 @@
     const isForward =
       heldKeys.has('z') ||
       heldKeys.has('w') ||
+      heldKeys.has('keyw') ||
+      heldKeys.has('keyz') ||
       heldKeys.has('arrowup') ||
       heldKeys.has('up');
     const isBackward =
       heldKeys.has('s') ||
+      heldKeys.has('keys') ||
       heldKeys.has('arrowdown') ||
       heldKeys.has('down');
 
@@ -152,8 +161,12 @@
     if (isTurnLeft && !isTurnRight) turn = 'turn_left';
     else if (isTurnRight && !isTurnLeft) turn = 'turn_right';
 
-    const isLeft = heldKeys.has('q') || heldKeys.has('a');
-    const isRight = heldKeys.has('d');
+    const isLeft =
+      heldKeys.has('q') ||
+      heldKeys.has('a') ||
+      heldKeys.has('keyq') ||
+      heldKeys.has('keya');
+    const isRight = heldKeys.has('d') || heldKeys.has('keyd');
 
     if (isLeft && !isRight) strafe = 'left';
     else if (isRight && !isLeft) strafe = 'right';
@@ -279,11 +292,9 @@
     isShiftHeld = false;
     clearRenewal();
     requestToken += 1;
-    if (activeDirection !== null || activeSprint) {
-      activeDirection = null;
-      activeSprint = false;
-      onRelease(nextManualSequence());
-    }
+    activeDirection = null;
+    activeSprint = false;
+    onRelease(nextManualSequence());
   }
 
   function onKeyDown(event: KeyboardEvent): void {
@@ -301,6 +312,7 @@
     }
 
     const k = event.key.toLowerCase();
+    const code = event.code ? event.code.toLowerCase() : '';
     if (event.code === 'Space' || k === ' ' || k === 'spacebar') {
       event.preventDefault();
       event.stopPropagation();
@@ -308,13 +320,15 @@
       return;
     }
 
-    if (keyDirections[k]) {
+    const dir = keyDirections[k] || (code ? keyDirections[code] : undefined);
+    if (dir) {
       event.preventDefault();
       event.stopPropagation();
       if (event.shiftKey) {
         isShiftHeld = true;
       }
       heldKeys.add(k);
+      if (code) heldKeys.add(code);
       void updateMotion();
     }
   }
@@ -329,19 +343,24 @@
     }
 
     const k = event.key.toLowerCase();
+    const code = event.code ? event.code.toLowerCase() : '';
     if (event.code === 'Space' || k === ' ' || k === 'spacebar') {
       event.preventDefault();
       event.stopPropagation();
       return;
     }
 
-    if (keyDirections[k]) {
+    if (!event.shiftKey && isShiftHeld) {
+      isShiftHeld = false;
+    }
+
+    const wasHeld = heldKeys.has(k) || (code !== '' && heldKeys.has(code));
+    const isDir = Boolean(keyDirections[k] || (code && keyDirections[code]));
+    if (isDir || wasHeld) {
       event.preventDefault();
       event.stopPropagation();
       heldKeys.delete(k);
-      if (!event.shiftKey && isShiftHeld) {
-        isShiftHeld = false;
-      }
+      if (code) heldKeys.delete(code);
       void updateMotion();
     }
   }
@@ -387,19 +406,21 @@
     window.addEventListener('keydown', onKeyDown, true);
     window.addEventListener('keyup', onKeyUp, true);
     window.addEventListener('blur', releaseAll);
+    window.addEventListener('contextmenu', releaseAll);
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
       if (copyTimeout) clearTimeout(copyTimeout);
       window.removeEventListener('keydown', onKeyDown, true);
       window.removeEventListener('keyup', onKeyUp, true);
       window.removeEventListener('blur', releaseAll);
+      window.removeEventListener('contextmenu', releaseAll);
       document.removeEventListener('visibilitychange', onVisibility);
     };
   });
 
   onDestroy(() => {
     clearRenewal();
-    if (activeDirection !== null) onRelease(nextManualSequence());
+    onRelease(nextManualSequence());
   });
 </script>
 

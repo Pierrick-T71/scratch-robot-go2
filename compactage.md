@@ -495,3 +495,37 @@
 - **Tests unitaires et intégration Backend (`robot-service`)** : **365 / 365 tests passants (100%)**.
 - **Tests unitaires Frontend (`frontend`)** : **234 / 234 tests passants (100%)**.
 - **Typage et diagnostics Svelte (`npm run check`)** : 0 erreurs, 0 avertissements.
+
+---
+
+## 17. Ajustement de la Vitesse de Sprint et Résolution du Blocage de Touche en Simulation
+
+**Date :** 05/11/2026
+
+### 17.1. Problèmes Identifiés
+1. **Vitesse de sprint en simulation un peu trop lente** : Le sprint à `1.0 m/s` manquait de nervosité par rapport à la marche normale de `0.50 m/s`.
+2. **Déplacement fantôme continu au relâchement de la touche (ex. Z)** :
+   - *Course concurrente HTTP out-of-order* : Les requêtes de renouvellement périodique (`renew()` toutes les 200 ms) pouvaient résoudre *après* la requête d'arrêt (`onRelease()`), réécrivant `app.status.manualDirection = 'forward'` dans le store Svelte.
+   - *Absence de filtrage de séquence* : `moveManual` ne vérifiait pas le numéro de séquence retourné, écrasant l'état d'arrêt avec une trame en vol périmée.
+   - *Événements de relâchement clavier ratés* : Selon les dispositions clavier (AZERTY avec `event.code === 'KeyW'`) ou lors du maintien simultané de `Shift`, certains `keyup` pouvaient ne pas trouver la correspondance dans `keyDirections`.
+   - *TTL simulation trop long* : Le bail côté service était fixé à `2.0 s` (prévu pour absorber d'éventuelles saccades WebRTC du robot réel), faisant continuer le robot simulé pendant 2 secondes complètes en cas de micro-coupure réseau sur la trame d'arrêt.
+
+### 17.2. Correctifs Appliqués
+1. **Vitesse de sprint en simulation augmentée (`simulated.py`)** :
+   - Passage de `v_marche = 1.0 m/s` à **`1.40 m/s`** en mode sprint (`speed_mps > 1.0`). La marche normale reste à `0.50 m/s` (identique aux blocs de puzzle).
+2. **Délai d'expiration adapté en simulation (`manual.py`)** :
+   - Ajout de `MANUAL_SIMULATION_TTL_S = 0.40 s` côté service lorsque l'adaptateur actif est le simulateur (`is_sim`). En cas de paquet d'arrêt retardé, la consigne expire immédiatement sans laisser le chien dériver.
+3. **Protection contre les réponses concurrentes périmées (`app.svelte.ts`)** :
+   - Suivi strict `#lastManualSeqBySource[source]` : toute réponse HTTP d'une requête plus ancienne que la dernière consigne émise est rejetée.
+   - Réinitialisation synchrone immédiate de `this.status.manualDirection = null` dès l'appel d'arrêt.
+   - Re-tentative automatique immédiate de l'arrêt si l'appel réseau échoue.
+4. **Capture et relâchement robustes des touches (`ManualPanel.svelte`)** :
+   - Détection conjointe de `event.key` et `event.code` (`keyw`, `keyz`, `keys`, `keya`, `keyq`, `keyd`) pour un support parfait des claviers AZERTY, QWERTY et touches fléchées.
+   - Suppression systématique de la touche dans `heldKeys` lors du `keyup` et mise à jour de motion immédiate.
+   - `releaseAll()` déclenché sans condition sur `blur`, `contextmenu` (clic droit), démontage de panneau et changement de visibilité de l'onglet.
+
+### 17.3. Bilan des Tests et Validation
+- **Tests unitaires et intégration Backend (`robot-service`)** : **365 / 365 tests passants (100%)**.
+- **Tests unitaires Frontend (`frontend`)** : **234 / 234 tests passants (100%)**.
+- **Typage et diagnostics Svelte (`npm run check`)** : 0 erreurs, 0 avertissements.
+- **Build de production Vite (`npm run build`)** : Bundle de production généré avec succès en 0.98s.

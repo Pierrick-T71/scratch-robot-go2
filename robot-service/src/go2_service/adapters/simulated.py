@@ -211,7 +211,7 @@ class SimulatedAdapter:
             v_marche = 0.20
             v_rotation = 0.50
         elif speed_mps > 1.0:  # Mode sprint
-            v_marche = 1.0
+            v_marche = 1.40
             v_rotation = self._limits.motion.max_angular_speed
         else:
             v_marche = self._limits.motion.max_linear_speed

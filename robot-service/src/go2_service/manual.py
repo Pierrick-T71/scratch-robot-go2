@@ -45,6 +45,9 @@ DIRECTIONS = (
 #: le mouvement devenait haché et semblait beaucoup plus lent.
 MANUAL_TTL_S = 2.0
 
+#: En simulation, aucun délai matériel ni Wi-Fi : expiration rapide si la touche est relâchée (0,40 s).
+MANUAL_SIMULATION_TTL_S = 0.40
+
 #: Période de la boucle de pilotage (20 Hz pour un asservissement fluide sans saccade).
 MANUAL_TICK_S = 0.05
 
@@ -224,7 +227,8 @@ class ManualControl:
         self._direction = direction
         self._sprint = bool(sprint) and ("forward" in direction)
         self._active_source = source
-        self._deadline = now + MANUAL_TTL_S
+        is_sim = getattr(self._adapter, "name", "") == "simulation"
+        self._deadline = now + (MANUAL_SIMULATION_TTL_S if is_sim else MANUAL_TTL_S)
         # Émission immédiate dès réception de l'ordre pour éliminer toute latence
         # sans attendre le prochain tour de la boucle asyncio.
         if self._prepared:

@@ -93,6 +93,7 @@ class AppState {
   /** Revision des reglages au moment de la derniere verification. */
   #validatedRevision = 0;
   #actionSeq = 0;
+  #lastManualSeqBySource: Record<string, number> = {};
   #manualActionTimer: ReturnType<typeof setTimeout> | null = null;
 
   #lease: LeaseKeeper | null = null;
@@ -389,18 +390,35 @@ class AppState {
         await this.startManual();
       }
     }
+    // Mise à jour synchrone immédiate : si direction est null, l'intention est l'arrêt immédiat
     this.manualMotion = direction !== null ? { direction, sprint } : null;
+    if (direction === null && this.status.manualDirection) {
+      this.status = { ...this.status, manualDirection: null };
+    }
+
     try {
       const result = await api.moveManual(direction, seq, source, sprint);
-      if (result.status) {
-        this.status = result.status;
-      }
-      if (result.blocked) {
-        this.manualMotion = null;
+      const lastSeq = this.#lastManualSeqBySource[source] ?? 0;
+      if (seq >= lastSeq) {
+        this.#lastManualSeqBySource[source] = seq;
+        if (result.status) {
+          this.status = result.status;
+        }
+        if (result.blocked || direction === null) {
+          this.manualMotion = null;
+        }
       }
       return result;
     } catch (error) {
       this.manualMotion = null;
+      if (direction === null) {
+        // En cas d'erreur réseau sur l'arrêt, retente une fois immédiatement
+        try {
+          await api.moveManual(null, seq + 1, source, false);
+        } catch {
+          /* silence */
+        }
+      }
       return {
         active: false,
         blocked: direction !== null,
