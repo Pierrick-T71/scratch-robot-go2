@@ -452,12 +452,15 @@
 - Association des stickers dans `BLOCKS` (`frontend/src/lib/play/blocks.ts`).
 - Ajustement géométrique dans `BlockTile.svelte` : ajout de la classe `.blk--has-pill` pour redimensionner harmonieusement le sticker (hauteur 44 px au lieu de 58 px) sur les blocs comportant à la fois un sticker et un sélecteur de durée, avec support adaptatif multi-résolutions (écrans 1700px+ et 4K 2200px+).
 
-### 15.3. Configuration de l'Adresse IP par Défaut
-- Modification de l'IP initiale de connexion dans `RobotConnect.svelte` : `172.16.8.14` par défaut (valeur d'état et placeholder).
+### 15.3. Configuration de l'Adresse IP par Défaut et Message Sécurité Lidar
+- Modification de l'IP initiale de connexion dans `RobotConnect.svelte` et dans `README.md` : `172.16.8.14` par défaut (valeur d'état, documentation et placeholder).
 - Mise à jour cohérente des scripts d'administration et de diagnostic dans `.setup/` avec repli automatique sur `172.16.8.14`.
+- Simplification du message de notification d'état de sécurité lidar dans `app.svelte.ts` :
+  - *« Sécurité lidar désactivée. »* (au lieu de la phrase à rallonge *« Sécurité lidar du service désactivée : l’anti-obstacle interne du Go2 reste actif. »*).
+  - *« Sécurité lidar activée. »*.
 
 ### 15.4. Bilan des Tests et Validation
 - **Tests unitaires et intégration Backend (`robot-service`)** : **365 / 365 tests passants (100%)**.
 - **Tests unitaires Frontend (`frontend`)** : **234 / 234 tests passants (100%)**.
 - **Typage et diagnostics Svelte (`npm run check`)** : 0 erreurs, 0 avertissements.
-- **Build de production Vite (`npm run build`)** : Bundle de production généré avec succès en 1.38s.
+- **Build de production Vite (`npm run build`)** : Bundle de production généré avec succès en 1.70s.

@@ -23,7 +23,7 @@ dégagée, avec un moyen d'arrêt à portée de main.
 
 **Le service démarre toujours en simulation.** Le mode réel exige une
 connexion WebRTC explicite et une autorisation adulte. Le 22/10/2026, le robot
-`172.16.8.11` a été connecté et a exécuté des postures et des déplacements
+`172.16.8.14` a été connecté et a exécuté des postures et des déplacements
 courts ; le contrôle d'obstacles du service n'a pas encore été validé
 physiquement (voir `docs/TESTS.md`).
 

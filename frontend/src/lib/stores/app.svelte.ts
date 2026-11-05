@@ -631,8 +631,8 @@ class AppState {
       this.#setNotice(
         enabled ? 'ok' : 'warn',
         enabled
-          ? 'Sécurité lidar du service activée.'
-          : 'Sécurité lidar du service désactivée : l’anti-obstacle interne du Go2 reste actif.',
+          ? 'Sécurité lidar activée.'
+          : 'Sécurité lidar désactivée.',
       );
       return true;
     } catch (error) {
