@@ -548,3 +548,20 @@
 - **Tests unitaires Frontend (`frontend`)** : **234 / 234 tests passants (100%)**.
 - **Typage et diagnostics Svelte (`npm run check`)** : 0 erreurs, 0 avertissements.
 - **Build de production Vite (`npm run build`)** : Bundle de production généré avec succès en 1.79s.
+
+---
+
+## 19. Harmonisation du Libellé du Bloc Reculer (« Reculer de »)
+
+**Date :** 05/11/2026
+
+### 19.1. Description
+- Modification du libellé du bloc puzzle `backward` dans [frontend/src/lib/play/blocks.ts](file:///C:/Users/ptokarek/Documents/Pierrick/scratch-robot/frontend/src/lib/play/blocks.ts) :
+  - Ancien libellé : `Reculer`
+  - Nouveau libellé : **`Reculer de`**
+- Harmonisation avec le bloc `forward` (**« Avancer de »**), permettant une lecture fluide avec le menu déroulant de durée (ex. *« Reculer de 2 s »*).
+
+### 19.2. Bilan des Tests et Validation
+- **Tests unitaires Frontend (`frontend`)** : **234 / 234 tests passants (100%)**.
+- **Typage et diagnostics Svelte (`npm run check`)** : 0 erreurs, 0 avertissements.
+- **Build de production Vite (`npm run build`)** : Bundle de production généré avec succès en 1.25s.

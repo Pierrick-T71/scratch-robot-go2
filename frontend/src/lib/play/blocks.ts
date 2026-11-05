@@ -97,7 +97,7 @@ export const BLOCKS: readonly BlockSpec[] = [
   },
   {
     kind: 'backward',
-    label: 'Reculer',
+    label: 'Reculer de',
     category: 'movement',
     tone: 'blue',
     icon: 'arrow-down',
