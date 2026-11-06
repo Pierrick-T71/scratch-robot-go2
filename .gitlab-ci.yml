@@ -168,7 +168,6 @@ deploiement:production:
         printf 'SCRATCH_ROBOT_PUBLIC_URL=%s\n' "$SCRATCH_ROBOT_PUBLIC_URL"
         printf 'SCRATCH_ROBOT_PORT=%s\n' "${SCRATCH_ROBOT_PORT:-5173}"
         printf 'SCRATCH_ROBOT_SERVICE_PORT=%s\n' "${SCRATCH_ROBOT_SERVICE_PORT:-8765}"
-        printf 'SCRATCH_ROBOT_HTTP_PORT=%s\n' "${SCRATCH_ROBOT_HTTP_PORT:-8080}"
         printf 'SCRATCH_ROBOT_IMAGE_TAG=%s\n' "${CI_COMMIT_SHORT_SHA:-latest}"
         printf 'SCRATCH_ROBOT_PROXY_NETWORK=%s\n' "${SCRATCH_ROBOT_PROXY_NETWORK:-quai_quai}"
         printf 'APP_TIMEZONE=%s\n' "${APP_TIMEZONE:-Europe/Paris}"

@@ -669,7 +669,7 @@
     - Vérification et raccordement au réseau de reverse-proxy QUAI (`quai_quai`).
     - Nettoyage du cache buildx Docker (`prune`), compilation de l'image de production Alpine via `docker compose build`.
     - Démarrage automatisé en tâche de fond (`docker compose up -d`) et boucle de vérification du statut `healthy`.
-- Création du fichier [docker-compose.prod.yml](file:///C:/Users/ptokarek/Documents/Pierrick/scratch-robot/docker-compose.prod.yml) avec réseau externe `quai_quai`, ports configurables (`5173`, `8765`, `8080`), healthcheck natif et rotation des logs (10 Mo x 5).
+- Création du fichier [docker-compose.prod.yml](file:///C:/Users/ptokarek/Documents/Pierrick/scratch-robot/docker-compose.prod.yml) avec réseau externe `quai_quai`, ports hôte directs (`5173` pour l'interface web, `8765` pour le robot-service), healthcheck natif et rotation des logs (10 Mo x 5).
 
 ### 23.2. Bilan de Validation
 - **Validation syntaxique GitLab CI** : Validé par l'API officielle de lint GitLab (`/api/v4/projects/17/ci/lint`) : `valid: true, errors: [], warnings: []`.

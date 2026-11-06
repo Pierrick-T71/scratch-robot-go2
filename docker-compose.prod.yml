@@ -19,8 +19,6 @@ services:
       - "${SCRATCH_ROBOT_PORT:-5173}:5173"
       # Port direct du backend robot-service (FastAPI / Uvicorn)
       - "${SCRATCH_ROBOT_SERVICE_PORT:-8765}:8765"
-      # Port HTTP standard (optionnel)
-      - "${SCRATCH_ROBOT_HTTP_PORT:-8080}:80"
     networks:
       - proxy
     environment:
