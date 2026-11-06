@@ -1,6 +1,6 @@
 # Compactage des Développements - Go2 Play
 
-**Dernière mise à jour :** 05/11/2026 08:55 (Europe/Paris)
+**Dernière mise à jour :** 06/11/2026 16:05 (Europe/Paris)
 
 ---
 
@@ -584,3 +584,55 @@
 - **Tests unitaires Frontend (`frontend`)** : **234 / 234 tests passants (100%)**.
 - **Typage et diagnostics Svelte (`npm run check`)** : 0 erreurs, 0 avertissements.
 - **Build de production Vite (`npm run build`)** : Bundle de production généré avec succès en 1.27s.
+
+---
+
+## 21. Conteneurisation de Production Alpine Linux & Déploiement Docker Desktop
+
+**Date :** 06/11/2026
+
+### 21.1. Description & Architecture du Conteneur
+- **Image Docker multi-stage optimisée Alpine Linux** (`Dockerfile`) :
+  - **Stage 1 (`frontend-builder`, `node:22-alpine`)** :
+    - Installation des dépendances via `npm ci`.
+    - Lecture de la source unique de vérité `shared/safety-limits.json`.
+    - Compilation Vite de production vers `frontend/dist`.
+  - **Stage 2 (`production`, `python:3.12-alpine`)** :
+    - Image d'exécution minimale ultra-légère (~52.7 Mo compressé, 185 Mo déployé).
+    - Installation de Nginx et curl (healthcheck).
+    - Installation des dépendances de service (`fastapi`, `uvicorn[standard]`, `pydantic`) avec packages binaires précompilés `musllinux`.
+    - Installation du package `go2-service`.
+    - Copie du build frontend statique sous `/var/lib/nginx/html`.
+- **Configuration Nginx optimisée (`docker/nginx.conf`)** :
+  - Écoute simultanée sur le port standard HTTP (`80`) et le port historique du projet (`5173`).
+  - Distribution des fichiers statiques SPA Svelte avec routage HTML5 (`try_files $uri $uri/ /index.html`).
+  - Compression gzip active (CSS, JS, JSON, SVG).
+  - Cache immuable pour les assets statiques (`public, max-age=31536000, immutable`).
+  - Reverse proxy transparent vers l'API FastAPI locale (`http://127.0.0.1:8765/api/`).
+  - Reverse proxy WebSocket avec renégociation des headers HTTP (`Upgrade`, `Connection`) pour le flux temps-réel (`/ws/`).
+- **Orchestration des processus & Point d'entrée (`docker/docker-entrypoint.sh`)** :
+  - Lancement supervisé du robot-service Python sur `0.0.0.0:8765` et de Nginx sur `80`/`5173`.
+  - Capture des signaux d'arrêt Docker (`SIGTERM`, `SIGINT`) garantissant l'arrêt d'urgence sécurisé et la déconnexion propre du robot physique/simulé.
+  - Surveillance active (`wait -n`) relançant le cycle de vie si un processus faillit.
+- **Gestion des origines CORS (`shared/safety-limits.json`)** :
+  - Ajout des origines autorisées `http://localhost`, `http://127.0.0.1`, `http://localhost:80`, `http://127.0.0.1:80` pour autoriser l'accès depuis n'importe quel port hôte standard.
+- **Fichiers complémentaires de déploiement** :
+  - `.dockerignore` configuré pour exclure `node_modules`, `dist`, `__pycache__`, caches de tests et logs.
+  - `docker-compose.yml` fourni pour un pilotage direct (`docker compose up -d`).
+
+### 21.2. Bilan de Validation et Déploiement Docker Desktop
+- **Tests unitaires & typage complets** :
+  - **Frontend** : 234 / 234 tests passants (`vitest`), vérification Svelte 0 erreur (`npm run check`).
+  - **Robot-service** : 365 / 365 tests passants (`pytest`).
+- **Build de l'image Docker** :
+  - Commande : `docker build -t go2-scratch:latest .`
+  - Statut : Succès complet en 45 secondes, tag `go2-scratch:latest`.
+- **Lancement et Exécution sur Docker Desktop** :
+  - Conteneur nommé `go2-scratch` démarré en tâche de fond avec ports `5173:5173`, `8765:8765`, `80:80`.
+  - Healthcheck Docker : statut **`healthy`**.
+  - Vérification HTTP directe :
+    - `http://localhost:5173` -> HTTP 200 (Interface Svelte servie par Nginx).
+    - `http://localhost:80` -> HTTP 200 (Interface Svelte servie par Nginx).
+    - `http://localhost:8765/api/status` -> HTTP 200 (Backend FastAPI direct, mode simulation `connected: true`).
+    - `http://localhost:5173/api/status` -> HTTP 200 (Backend FastAPI relayé par Nginx).
+

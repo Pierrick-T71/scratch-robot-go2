@@ -1,0 +1,20 @@
+services:
+  go2-scratch:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: go2-scratch:latest
+    container_name: go2-scratch
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+      - "8765:8765"
+      - "8080:80"
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8765/api/status"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
