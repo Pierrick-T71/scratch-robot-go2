@@ -1,6 +1,6 @@
 # Compactage des Développements - Go2 Play
 
-**Dernière mise à jour :** 06/11/2026 16:25 (Europe/Paris)
+**Dernière mise à jour :** 06/11/2026 16:32 (Europe/Paris)
 
 ---
 
@@ -652,5 +652,27 @@
 - **Dépôt distant GitLab** : `https://gitlab.lecreusot.priv/informatique/scratch-robot.git`
 - **Branche principale** : `main` configurée en suivi distant (`tracking`) sur `gitlab/main`.
 - **Dernier commit validé sur GitLab** : Branche `main` synchronisée et consultable directement sur l'instance GitLab de la collectivité.
+
+---
+
+## 23. Intégration du Pipeline CI/CD GitLab (`.gitlab-ci.yml` & `docker-compose.prod.yml`)
+
+**Date :** 06/11/2026
+
+### 23.1. Description
+- Création du pipeline [.gitlab-ci.yml](file:///C:/Users/ptokarek/Documents/Pierrick/scratch-robot/.gitlab-ci.yml) adapté du modèle CiviQuiz / GRR pour le GitLab interne :
+  - **Étape `controle`** :
+    - `controle:frontend` (`node:22-alpine`) : cache npm, contrôle de typage Svelte / TypeScript (`npm run check`), 234 tests unitaires Vitest (`npm test`), build de production (`npm run build`).
+    - `controle:robot-service` (`python:3.12-alpine`) : installation des dépendances FastAPI et exécution des 365 tests unitaires backend (`pytest -q`).
+  - **Étape `deploiement`** :
+    - `deploiement:production` (`docker:29-cli`) : restreint à la branche par défaut (`main`), utilise le runner `quai-hote` avec accès à `/var/run/docker.sock`.
+    - Vérification et raccordement au réseau de reverse-proxy QUAI (`quai_quai`).
+    - Nettoyage du cache buildx Docker (`prune`), compilation de l'image de production Alpine via `docker compose build`.
+    - Démarrage automatisé en tâche de fond (`docker compose up -d`) et boucle de vérification du statut `healthy`.
+- Création du fichier [docker-compose.prod.yml](file:///C:/Users/ptokarek/Documents/Pierrick/scratch-robot/docker-compose.prod.yml) avec réseau externe `quai_quai`, ports configurables (`5173`, `8765`, `8080`), healthcheck natif et rotation des logs (10 Mo x 5).
+
+### 23.2. Bilan de Validation
+- **Validation syntaxique GitLab CI** : Validé par l'API officielle de lint GitLab (`/api/v4/projects/17/ci/lint`) : `valid: true, errors: [], warnings: []`.
+
 
 

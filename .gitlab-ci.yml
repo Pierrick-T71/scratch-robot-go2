@@ -1,0 +1,218 @@
+# Pipeline GO2 Scratch pour le GitLab interne de la mairie — adapté sur le modèle CiviQuiz / GRR.
+#
+# Deux étapes :
+#   - « controle »   : vérification de typage et build du frontend (Svelte 5 / TS),
+#                      et tests unitaires complets du backend (FastAPI / pytest).
+#   - « deploiement »: construction de l'image Docker Alpine multi-stage sur l'hôte
+#                      et démarrage via docker compose sur la branche par défaut.
+#
+# Utilise le runner étiqueté « quai-hote » accédant au socket Docker hôte.
+# Utilise INTERNAL_CA_BUNDLE_B64 pour la validation TLS interne.
+
+stages:
+  - controle
+  - deploiement
+
+variables:
+  NODE_IMAGE: "node:22-alpine"
+  PYTHON_IMAGE: "python:3.12-alpine"
+  # Client Docker du job de déploiement : communique avec le démon de l'HÔTE
+  # via le socket /var/run/docker.sock monté par le runner.
+  DOCKER_CLI_IMAGE: "docker:29-cli"
+  COMPOSE_PROD_FILE: "docker-compose.prod.yml"
+  COMPOSE_PROJECT: "scratch-robot"
+  # URL publique prévisionnelle
+  SCRATCH_ROBOT_PUBLIC_URL: "http://scratch-robot.lecreusot.priv"
+  # Étiquette du runner Docker de l'hôte (identique à CiviQuiz, GRR, QUAI)
+  SCRATCH_ROBOT_RUNNER_TAG: "quai-hote"
+  # Fichier d'environnement temporaire du déploiement
+  COMPOSE_ENV_FILE: "$CI_PROJECT_DIR/.env.deploiement"
+  GIT_DEPTH: "20"
+
+# Un seul pipeline par changement
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
+# Clé de réserve d'ancres YAML
+.blocs:
+  cache_npm: &cache_npm
+    key:
+      files:
+        - frontend/package-lock.json
+    paths:
+      - .npm-cache/
+
+  # Autorité de certification interne (GitLab, inspection TLS du pare-feu)
+  certificat: &bloc_certificat |
+    CA_FICHIER="$CI_PROJECT_DIR/.ca-interne.pem"
+    rm -f "$CA_FICHIER"
+    if [ -n "${INTERNAL_CA_BUNDLE_B64:-}" ]; then
+      printf '%s' "$INTERNAL_CA_BUNDLE_B64" | base64 -d > "$CA_FICHIER" 2>/dev/null || true
+    elif [ -n "${CI_SERVER_TLS_CA_FILE:-}" ] && [ -f "$CI_SERVER_TLS_CA_FILE" ]; then
+      cp "$CI_SERVER_TLS_CA_FILE" "$CA_FICHIER"
+    fi
+    if [ -s "$CA_FICHIER" ] && grep -q "BEGIN CERTIFICATE" "$CA_FICHIER"; then
+      export GIT_SSL_CAINFO="$CA_FICHIER" NODE_EXTRA_CA_CERTS="$CA_FICHIER" SSL_CERT_FILE="$CA_FICHIER"
+      if command -v update-ca-certificates >/dev/null 2>&1; then
+        { mkdir -p /usr/local/share/ca-certificates \
+          && cp "$CA_FICHIER" /usr/local/share/ca-certificates/ca-interne.crt \
+          && update-ca-certificates >/dev/null 2>&1; } 2>/dev/null || true
+      fi
+      echo "Autorité interne approuvée pour ce job (git, Node, Python, npm)."
+    else
+      echo "Aucune autorité interne lisible (INTERNAL_CA_BUNDLE_B64 absente ou invalide) : certificats publics seulement."
+    fi
+
+  outils_frontend: &bloc_outils_frontend |
+    set -e
+    cd "$CI_PROJECT_DIR/frontend"
+    npm config set cache "$CI_PROJECT_DIR/.npm-cache" --global
+    npm ci --no-audit --no-fund
+
+default:
+  before_script:
+    - *bloc_certificat
+  interruptible: true
+
+# ---------------------------------------------------------------------------- contrôle
+controle:frontend:
+  stage: controle
+  image: $NODE_IMAGE
+  tags:
+    - $SCRATCH_ROBOT_RUNNER_TAG
+  cache: *cache_npm
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - when: on_success
+  script:
+    - *bloc_outils_frontend
+    - npm run check
+    - npm test
+    - npm run build
+
+controle:robot-service:
+  stage: controle
+  image: $PYTHON_IMAGE
+  tags:
+    - $SCRATCH_ROBOT_RUNNER_TAG
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - when: on_success
+  script:
+    - |
+      set -e
+      cd "$CI_PROJECT_DIR/robot-service"
+      pip install --no-cache-dir "fastapi>=0.115,<1.0" "uvicorn[standard]>=0.30,<1.0" "pydantic>=2.7,<3.0" pytest pytest-asyncio httpx
+      pip install --no-cache-dir -e .
+      pytest -q
+
+# ------------------------------------------------------------------------- déploiement
+deploiement:production:
+  stage: deploiement
+  image: $DOCKER_CLI_IMAGE
+  tags:
+    - $SCRATCH_ROBOT_RUNNER_TAG
+  resource_group: production
+  timeout: 45m
+  interruptible: false
+  variables:
+    DOCKER_HOST: "unix:///var/run/docker.sock"
+  environment:
+    name: production
+    url: $SCRATCH_ROBOT_PUBLIC_URL
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: on_success
+      allow_failure: false
+  script:
+    - |
+      set -e
+      echo "=== 1/5 — Accès au démon Docker de l'hôte ==="
+      if [ ! -S /var/run/docker.sock ]; then
+        echo "ÉCHEC : /var/run/docker.sock est absent du conteneur de ce job."
+        echo "Sur la machine du runner, dans /etc/gitlab-runner/config.toml, section"
+        echo '[runners.docker] :   volumes = ["/var/run/docker.sock:/var/run/docker.sock", "/cache"]'
+        echo "puis : sudo systemctl restart gitlab-runner"
+        exit 1
+      fi
+      if ! docker version >/dev/null 2>&1; then
+        echo "ÉCHEC : le socket existe mais le démon Docker ne répond pas."
+        exit 1
+      fi
+      docker version --format 'Client {{.Client.Version}} — démon de l hôte {{.Server.Version}}'
+      docker compose version >/dev/null 2>&1 || { echo "ÉCHEC : greffon « docker compose » absent de $DOCKER_CLI_IMAGE."; exit 1; }
+    - |
+      set -e
+      echo "=== 2/5 — Configuration et réseau du reverse-proxy ==="
+      echo "Adresse publique : $SCRATCH_ROBOT_PUBLIC_URL"
+      reseau="${SCRATCH_ROBOT_PROXY_NETWORK:-quai_quai}"
+      if ! docker network inspect "$reseau" >/dev/null 2>&1; then
+        echo "Réseau « $reseau » absent : création automatique."
+        docker network create "$reseau" >/dev/null
+      fi
+      echo "Réseau du reverse-proxy : $reseau"
+    - |
+      set -e
+      echo "=== 3/5 — Fichier d'environnement du compose ==="
+      umask 077
+      {
+        printf 'SCRATCH_ROBOT_PUBLIC_URL=%s\n' "$SCRATCH_ROBOT_PUBLIC_URL"
+        printf 'SCRATCH_ROBOT_PORT=%s\n' "${SCRATCH_ROBOT_PORT:-5173}"
+        printf 'SCRATCH_ROBOT_SERVICE_PORT=%s\n' "${SCRATCH_ROBOT_SERVICE_PORT:-8765}"
+        printf 'SCRATCH_ROBOT_HTTP_PORT=%s\n' "${SCRATCH_ROBOT_HTTP_PORT:-8080}"
+        printf 'SCRATCH_ROBOT_IMAGE_TAG=%s\n' "${CI_COMMIT_SHORT_SHA:-latest}"
+        printf 'SCRATCH_ROBOT_PROXY_NETWORK=%s\n' "${SCRATCH_ROBOT_PROXY_NETWORK:-quai_quai}"
+        printf 'APP_TIMEZONE=%s\n' "${APP_TIMEZONE:-Europe/Paris}"
+      } > "$COMPOSE_ENV_FILE"
+      chmod 600 "$COMPOSE_ENV_FILE"
+      echo "$(wc -l < "$COMPOSE_ENV_FILE") variables écrites dans un fichier temporaire du job."
+    - |
+      set -e
+      echo "=== 4/5 — Entretien du disque et construction de l'image ==="
+      docker system df || true
+      docker builder prune -f --keep-storage "${DOCKER_BUILD_CACHE_MAX:-5GB}" || true
+      docker image prune -f || true
+      docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_PROD_FILE" --env-file "$COMPOSE_ENV_FILE" build
+    - |
+      set -e
+      echo "=== 5/5 — Démarrage et vérification de santé ==="
+      docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_PROD_FILE" --env-file "$COMPOSE_ENV_FILE" up -d --remove-orphans
+      restant=24
+      while [ "$restant" -gt 0 ]; do
+        etat=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' scratch-robot 2>/dev/null || echo absent)
+        case "$etat" in
+          healthy) break ;;
+          unhealthy|exited|dead|absent)
+            echo "ÉCHEC : conteneur « scratch-robot » dans l'état $etat."
+            docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_PROD_FILE" --env-file "$COMPOSE_ENV_FILE" logs --tail=100 || true
+            exit 1 ;;
+        esac
+        restant=$((restant - 1))
+        if [ "$restant" -eq 0 ]; then
+          echo "ÉCHEC : le conteneur n'est pas opérationnel après 2 minutes (état : $etat)."
+          docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_PROD_FILE" --env-file "$COMPOSE_ENV_FILE" logs --tail=100 || true
+          exit 1
+        fi
+        sleep 5
+      done
+      docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_PROD_FILE" --env-file "$COMPOSE_ENV_FILE" ps
+      echo "Déploiement terminé avec succès !"
+      echo "  - Interface Web : http://localhost:${SCRATCH_ROBOT_PORT:-5173}"
+      echo "  - Service Robot : http://localhost:${SCRATCH_ROBOT_SERVICE_PORT:-8765}"
+  after_script:
+    - |
+      rm -f "$COMPOSE_ENV_FILE"
+      if [ "$CI_JOB_STATUS" != "success" ]; then
+        echo "État du conteneur scratch-robot sur l'hôte après échec :"
+        docker compose -p "$COMPOSE_PROJECT" ps 2>/dev/null || true
+        echo "Pour les journaux : docker compose -p $COMPOSE_PROJECT logs --tail=100"
+      fi

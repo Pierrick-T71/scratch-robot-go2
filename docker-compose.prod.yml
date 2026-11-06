@@ -1,0 +1,45 @@
+# Compose de production GO2 Scratch, démarré par le job « deploiement:production »
+# du pipeline GitLab CI/CD sur l'hôte.
+#
+# L'image est construite directement sur l'hôte via le Dockerfile Alpine multi-stage.
+# L'interface web et le service robot intermédiaire (FastAPI + Nginx) sont servis
+# ensemble de manière sécurisée et légère.
+
+services:
+  scratch-robot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: scratch-robot:${SCRATCH_ROBOT_IMAGE_TAG:-latest}
+    container_name: scratch-robot
+    restart: unless-stopped
+    init: true
+    ports:
+      # Port principal interface web (port habituel de l'application)
+      - "${SCRATCH_ROBOT_PORT:-5173}:5173"
+      # Port direct du backend robot-service (FastAPI / Uvicorn)
+      - "${SCRATCH_ROBOT_SERVICE_PORT:-8765}:8765"
+      # Port HTTP standard (optionnel)
+      - "${SCRATCH_ROBOT_HTTP_PORT:-8080}:80"
+    networks:
+      - proxy
+    environment:
+      - PYTHONUNBUFFERED=1
+      - APP_TIMEZONE=${APP_TIMEZONE:-Europe/Paris}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8765/api/status"]
+      interval: 20s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+networks:
+  # Réseau du reverse-proxy QUAI (comme CiviQuiz et GRR)
+  proxy:
+    external: true
+    name: ${SCRATCH_ROBOT_PROXY_NETWORK:-quai_quai}
