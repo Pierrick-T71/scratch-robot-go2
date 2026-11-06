@@ -1,6 +1,6 @@
 # Compactage des Développements - Go2 Play
 
-**Dernière mise à jour :** 06/11/2026 16:05 (Europe/Paris)
+**Dernière mise à jour :** 06/11/2026 16:25 (Europe/Paris)
 
 ---
 
@@ -635,4 +635,22 @@
     - `http://localhost:80` -> HTTP 200 (Interface Svelte servie par Nginx).
     - `http://localhost:8765/api/status` -> HTTP 200 (Backend FastAPI direct, mode simulation `connected: true`).
     - `http://localhost:5173/api/status` -> HTTP 200 (Backend FastAPI relayé par Nginx).
+
+---
+
+## 22. Création et Publication sur GitLab Interne (`172.16.13.2`)
+
+**Date :** 06/11/2026
+
+### 22.1. Description
+- Résolution réseau et sécurisation TLS du serveur GitLab local sur `172.16.13.2` via son FQDN `gitlab.lecreusot.priv`.
+- Création du projet **`scratch-robot`** dans le groupe **`informatique`** (ID: 37) via l'API REST v4 GitLab (`https://gitlab.lecreusot.priv/informatique/scratch-robot`).
+- Configuration du dépôt distant (`remote gitlab`) avec authentification par token d'accès (`glpat-...`).
+- Publication initiale réussie de la branche `main` avec l'historique complet et la conteneurisation Dockerfile / Docker Desktop.
+
+### 22.2. Bilan de Validation
+- **Dépôt distant GitLab** : `https://gitlab.lecreusot.priv/informatique/scratch-robot.git`
+- **Branche principale** : `main` configurée en suivi distant (`tracking`) sur `gitlab/main`.
+- **Dernier commit validé sur GitLab** : Branche `main` synchronisée et consultable directement sur l'instance GitLab de la collectivité.
+
 
