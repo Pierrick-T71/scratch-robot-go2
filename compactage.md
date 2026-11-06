@@ -673,6 +673,13 @@
 
 ### 23.2. Bilan de Validation
 - **Validation syntaxique GitLab CI** : Validé par l'API officielle de lint GitLab (`/api/v4/projects/17/ci/lint`) : `valid: true, errors: [], warnings: []`.
+- **Pipeline CI/CD #378 réussi (100% vert)** :
+  - `controle:frontend` : ✅ Succès (typage strict Svelte, 234 tests unitaires Vitest, build Vite).
+  - `controle:robot-service` : ✅ Succès (installation des dépendances FastAPI et 365 tests unitaires pytest).
+  - `deploiement:production` : ✅ Succès (construction de l'image de production Alpine, lancement via compose sur le runner `quai-hote`, conteneur `scratch-robot` opérationnel et `healthy`).
+- **Accessibilité en production sur `172.16.13.2`** :
+  - Interface web : `http://172.16.13.2:5173` (HTTP 200).
+  - API robot-service : `http://172.16.13.2:8765/api/status` (HTTP 200).
 
 
 
