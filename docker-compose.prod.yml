@@ -25,6 +25,7 @@ services:
       - PYTHONUNBUFFERED=1
       - APP_TIMEZONE=${APP_TIMEZONE:-Europe/Paris}
       - EXTRA_ALLOWED_ORIGINS=${EXTRA_ALLOWED_ORIGINS:-https://optimus.lecreusot.priv,http://optimus.lecreusot.priv,https://scratch-robot.lecreusot.priv,http://scratch-robot.lecreusot.priv}
+      - GO2_ROBOT_AES_KEY=${GO2_ROBOT_AES_KEY:-4f75397f771b0df6c9d9311736557ec1}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8765/api/status"]
       interval: 20s

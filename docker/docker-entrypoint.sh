@@ -22,6 +22,14 @@ cleanup() {
 
 trap cleanup SIGTERM SIGINT SIGQUIT
 
+# Configuration de la clé AES robot si fournie
+if [ -n "$GO2_ROBOT_AES_KEY" ]; then
+    mkdir -p /root/go2
+    echo "GO2_ROBOT_AES_KEY=$GO2_ROBOT_AES_KEY" > /root/go2/robot.env
+    chmod 600 /root/go2/robot.env
+    echo "Clé AES-128 du robot configurée."
+fi
+
 # 1. Démarrage du robot-service (FastAPI / Uvicorn)
 echo "[1/2] Démarrage du backend robot-service sur le port 8765..."
 cd /app/robot-service
