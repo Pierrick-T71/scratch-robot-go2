@@ -225,8 +225,9 @@
 
     if (nextDir === activeDirection && nextSprint === activeSprint) return;
 
+    clearRenewal();
+
     if (nextDir === null) {
-      clearRenewal();
       requestToken += 1;
       activeDirection = null;
       activeSprint = false;
@@ -241,22 +242,27 @@
     if (!robotReady) return;
 
     const token = ++requestToken;
-    const result = await onMove(nextDir, nextManualSequence(), nextSprint);
-    if (
-      token !== requestToken ||
-      activeDirection !== nextDir ||
-      activeSprint !== nextSprint
-    ) {
-      return;
-    }
+    inFlight = true;
+    try {
+      const result = await onMove(nextDir, nextManualSequence(), nextSprint);
+      if (
+        token !== requestToken ||
+        activeDirection !== nextDir ||
+        activeSprint !== nextSprint
+      ) {
+        return;
+      }
 
-    if (result.blocked) {
-      fail(result.message);
-      return;
-    }
+      if (result.blocked) {
+        fail(result.message);
+        return;
+      }
 
-    clearRenewal();
-    renewal = setInterval(() => void renew(nextDir, nextSprint, token), 200);
+      clearRenewal();
+      renewal = setInterval(() => void renew(nextDir, nextSprint, token), 200);
+    } finally {
+      inFlight = false;
+    }
   }
 
   async function triggerJump(): Promise<void> {

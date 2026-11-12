@@ -931,15 +931,6 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
                 status_code=409,
                 detail="Un programme a pris la main : mode manuel arrêté.",
             )
-        if state.mode == "real":
-            statut = await state.adapter.get_status()
-            if not statut.connected:
-                await state.manual.stop()
-                raise HTTPException(
-                    status_code=409,
-                    detail="Le robot n’est pas connecté : pilotage manuel arrêté.",
-                )
-
         try:
             blocked, message = await state.manual.set_direction(
                 payload.direction, payload.seq, payload.source, sprint=payload.sprint
@@ -949,12 +940,20 @@ def create_app(adapter: RobotAdapter | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+        status = await state.status_payload()
+        if state.mode == "real" and not status.get("connected", False):
+            await state.manual.stop()
+            raise HTTPException(
+                status_code=409,
+                detail="Le robot n’est pas connecté : pilotage manuel arrêté.",
+            )
+
         return {
             "active": state.manual.active,
             "blocked": blocked,
             "message": message,
             "sprint": state.manual.sprint,
-            "status": await state.status_payload(),
+            "status": status,
         }
 
     @app.post("/api/manual/jump")
@@ -1466,7 +1465,7 @@ async def _status_pusher(state: ServiceState) -> None:
                 or (state.manual.active and state.manual.direction is not None)
                 or state.autonomous.active
             )
-            delai = 0.05 if is_moving else (state.limits.safety.frontend_poll_timeout_ms / 1000.0)
+            delai = 0.10 if is_moving else (state.limits.safety.frontend_poll_timeout_ms / 1000.0)
             await asyncio.sleep(delai)
             payload = await state.status_payload()
             await state.hub.broadcast({"type": "status", "status": payload})

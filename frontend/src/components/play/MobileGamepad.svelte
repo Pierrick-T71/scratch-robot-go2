@@ -221,8 +221,9 @@
     const nextDir = resolveCombinedDirection(leftDir, rightTurn);
     if (nextDir === activeDirection) return;
 
+    clearRenewal();
+
     if (nextDir === null) {
-      clearRenewal();
       motionToken += 1;
       activeDirection = null;
       void app.moveManual(null, nextManualSequence(), 'mobile');
@@ -267,7 +268,7 @@
       } finally {
         inFlight = false;
       }
-    }, 180);
+    }, 200);
   }
 
   // --- Joystick gauche (2D : ZQSD) ---

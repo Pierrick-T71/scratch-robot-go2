@@ -407,6 +407,12 @@ class WebRTCAdapter:
         #: typique du lidar, insensible aux pics.
         self._rotations: deque[float] = deque(maxlen=self.LIDAR_ROTATIONS_MAX)
 
+        #: Mémorisation de la dernière consigne de vitesse envoyée pour déduplication et régulation (5 Hz)
+        self._dernier_move_envoye: tuple[float, float, float] | None = None
+        self._dernier_move_at: float = 0.0
+        #: Indicateur de déplacement manuel actif pour soulager le traitement LiDAR
+        self.manual_mode_moving: bool = False
+
         self._premier_etat: asyncio.Event | None = None
 
     # -- Informations d'identification -------------------------------------
@@ -1121,6 +1127,11 @@ class WebRTCAdapter:
         connexion = self._connexion
         if connexion is None:
             return
+        datachannel = getattr(connexion, "datachannel", None)
+        channel = getattr(datachannel, "channel", None)
+        if nom == "Move" and channel is not None and getattr(channel, "bufferedAmount", 0) > 16384:
+            log.warning("WebRTC DataChannel engorgé (bufferedAmount=%d), Move ignoré", channel.bufferedAmount)
+            return
         if nom != "Move":
             # Journal des ordres de posture et d'arret : c'est ce qui permet
             # de relire, apres coup, ce que le robot a recu.
@@ -1131,8 +1142,29 @@ class WebRTCAdapter:
             msg_type=self._types_canal["REQUEST"],
         )
 
-    def _envoyer_move(self, vx: float, vy: float, vyaw: float) -> None:
-        self._envoyer_sans_reponse("Move", {"x": vx, "y": vy, "z": vyaw})
+    def _envoyer_move(
+        self, vx: float, vy: float, vyaw: float, force: bool = False
+    ) -> None:
+        """Envoie une consigne de déplacement Move au robot.
+
+        Régulation à 5 Hz (MOVE_REFRESH_S) pour éviter la saturation du tampon
+        WebRTC et du démon interne du Go2. Tout changement de vitesse ou arrêt
+        est émis immédiatement (force=True ou consigne différente).
+        """
+        maintenant = time.monotonic()
+        nouvelle_consigne = (round(vx, 3), round(vy, 3), round(vyaw, 3))
+        est_arret = nouvelle_consigne == (0.0, 0.0, 0.0)
+
+        changement = nouvelle_consigne != self._dernier_move_envoye
+        doit_rafraichir = (
+            not est_arret
+            and (maintenant - self._dernier_move_at >= self.MOVE_REFRESH_S)
+        )
+
+        if force or changement or doit_rafraichir:
+            self._dernier_move_envoye = nouvelle_consigne
+            self._dernier_move_at = maintenant
+            self._envoyer_sans_reponse("Move", {"x": vx, "y": vy, "z": vyaw})
 
     async def _commander(
         self,
@@ -1446,12 +1478,15 @@ class WebRTCAdapter:
             vyaw = -turn_speed_rps
 
         self._programme_en_cours = True
+        self.manual_mode_moving = True
         self._state = RobotState.MOVING
         self._posture = Posture.STAND
         self._envoyer_move(vx, vy, vyaw)
 
     async def manual_session_end(self) -> None:
         """Fin de session manuelle : arrête le robot et réactive la gestion d'inactivité."""
+        self.manual_mode_moving = False
+        self._dernier_move_envoye = None
         if self._crouch_mode:
             await self.exit_crouch_mode()
         self._programme_en_cours = False
@@ -1465,13 +1500,15 @@ class WebRTCAdapter:
         `_programme_en_cours` : le relevage automatique reste désactivé tant
         que l'adulte n'a pas quitté le mode manuel.
         """
+        self.manual_mode_moving = False
         if self._connexion is None:
             return
         if self._securite.latched or self._est_au_sol():
             return
         try:
-            self._envoyer_move(0.0, 0.0, 0.0)
+            self._envoyer_move(0.0, 0.0, 0.0, force=True)
             self._envoyer_sans_reponse("StopMove")
+            self._dernier_move_envoye = (0.0, 0.0, 0.0)
         except Exception:  # noqa: BLE001
             pass
         self._state = RobotState.IDLE
