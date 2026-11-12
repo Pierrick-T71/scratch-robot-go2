@@ -3,7 +3,7 @@
 # Deux étapes :
 #   - « controle »   : vérification de typage et build du frontend (Svelte 5 / TS),
 #                      et tests unitaires complets du backend (FastAPI / pytest).
-#   - « deploiement »: construction de l'image Docker Alpine multi-stage sur l'hôte
+#   - « deploiement »: construction de l'image Docker multi-stage Debian sur l'hôte
 #                      et démarrage via docker compose sur la branche par défaut.
 #
 # Utilise le runner étiqueté « quai-hote » accédant au socket Docker hôte.
@@ -15,7 +15,7 @@ stages:
 
 variables:
   NODE_IMAGE: "node:22-alpine"
-  PYTHON_IMAGE: "python:3.12-alpine"
+  PYTHON_IMAGE: "python:3.11-slim"
   # Client Docker du job de déploiement : communique avec le démon de l'HÔTE
   # via le socket /var/run/docker.sock monté par le runner.
   DOCKER_CLI_IMAGE: "docker:29-cli"

@@ -1,8 +1,8 @@
-#!/bin/sh
+#!/bin/bash
 set -e
 
 echo "=========================================================="
-echo "      Démarrage du conteneur GO2 Scratch (Alpine)        "
+echo "    Démarrage du conteneur GO2 Scratch (Debian Slim)     "
 echo "=========================================================="
 
 # Nettoyage et arrêt propre sur signal Docker (SIGTERM / SIGINT)

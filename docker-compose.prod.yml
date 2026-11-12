@@ -1,7 +1,7 @@
 # Compose de production GO2 Scratch, démarré par le job « deploiement:production »
 # du pipeline GitLab CI/CD sur l'hôte.
 #
-# L'image est construite directement sur l'hôte via le Dockerfile Alpine multi-stage.
+# L'image est construite directement sur l'hôte via le Dockerfile multi-stage.
 # L'interface web et le service robot intermédiaire (FastAPI + Nginx) sont servis
 # ensemble de manière sécurisée et légère.
 

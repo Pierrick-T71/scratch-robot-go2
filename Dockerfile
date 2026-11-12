@@ -18,28 +18,37 @@ COPY frontend/ ./
 RUN npm run build
 
 # =======================================================
-# Étape 2 : Image de Production (Alpine Linux)
+# Étape 2 : Image de Production (Debian Slim)
 # =======================================================
-FROM python:3.12-alpine AS production
+FROM python:3.11-slim AS production
 
 LABEL maintainer="GO2 Scratch Team"
-LABEL description="Conteneur de production GO2 Scratch (Alpine Linux)"
+LABEL description="Conteneur de production GO2 Scratch (Debian Slim)"
 
-# Installation de Nginx et curl (pour healthcheck)
-RUN apk add --no-cache \
+# Installation de Nginx, curl et des dépendances C requises par WebRTC / Audio / OpenCV
+RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
     curl \
     tzdata \
+    gcc \
+    g++ \
+    portaudio19-dev \
+    libasound2-dev \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /etc/nginx/sites-enabled/default \
     && mkdir -p /run/nginx /var/log/nginx /var/lib/nginx/html
 
 WORKDIR /app
 
-# Installation des dépendances Python du robot-service
+# Installation des dépendances Python du robot-service et du SDK WebRTC Go2
 COPY robot-service/pyproject.toml ./robot-service/
 RUN pip install --no-cache-dir \
     "fastapi>=0.115,<1.0" \
     "uvicorn[standard]>=0.30,<1.0" \
-    "pydantic>=2.7,<3.0"
+    "pydantic>=2.7,<3.0" \
+    "unitree_webrtc_connect==2.2.0"
 
 # Copie du code partagé et du service robot
 COPY shared/ ./shared/
@@ -50,9 +59,10 @@ RUN pip install --no-cache-dir -e ./robot-service
 
 # Copie du build statique du frontend vers Nginx
 COPY --from=frontend-builder /app/frontend/dist /var/lib/nginx/html
+RUN chmod -R 755 /var/lib/nginx/html
 
 # Configuration Nginx (Reverse Proxy & HTTP Web Server)
-COPY docker/nginx.conf /etc/nginx/http.d/default.conf
+COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 
 # Script d'orchestration et point d'entrée
 COPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
