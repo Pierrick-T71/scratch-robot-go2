@@ -171,6 +171,7 @@ deploiement:production:
         printf 'SCRATCH_ROBOT_IMAGE_TAG=%s\n' "${CI_COMMIT_SHORT_SHA:-latest}"
         printf 'SCRATCH_ROBOT_PROXY_NETWORK=%s\n' "${SCRATCH_ROBOT_PROXY_NETWORK:-quai_quai}"
         printf 'APP_TIMEZONE=%s\n' "${APP_TIMEZONE:-Europe/Paris}"
+        printf 'EXTRA_ALLOWED_ORIGINS=%s\n' "${EXTRA_ALLOWED_ORIGINS:-https://optimus.lecreusot.priv,http://optimus.lecreusot.priv,https://scratch-robot.lecreusot.priv,http://scratch-robot.lecreusot.priv}"
       } > "$COMPOSE_ENV_FILE"
       chmod 600 "$COMPOSE_ENV_FILE"
       echo "$(wc -l < "$COMPOSE_ENV_FILE") variables écrites dans un fichier temporaire du job."

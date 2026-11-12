@@ -49,7 +49,15 @@
       "http://127.0.0.1",
       "http://localhost:80",
       "http://127.0.0.1:80",
-      "http://172.16.13.41:5173"
+      "http://172.16.13.41:5173",
+      "https://optimus.lecreusot.priv",
+      "https://optimus.lecreusot.priv:443",
+      "http://optimus.lecreusot.priv",
+      "http://optimus.lecreusot.priv:80",
+      "https://scratch-robot.lecreusot.priv",
+      "https://scratch-robot.lecreusot.priv:443",
+      "http://scratch-robot.lecreusot.priv",
+      "http://scratch-robot.lecreusot.priv:80"
     ]
   }
 }

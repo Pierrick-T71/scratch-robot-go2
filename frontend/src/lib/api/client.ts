@@ -467,6 +467,21 @@ heartbeat: (runId: string): Promise<{ ok: boolean }> =>
     }),
 };
 
+/** Construit l'URL WebSocket du flux d'événements selon le protocole approprié (ws/wss). */
+export function getWebSocketEventsUrl(serviceUrl: string = SERVICE_URL): string {
+  if (serviceUrl.startsWith('https://')) {
+    return serviceUrl.replace(/^https:\/\//, 'wss://') + '/ws/events';
+  }
+  if (serviceUrl.startsWith('http://')) {
+    return serviceUrl.replace(/^http:\/\//, 'ws://') + '/ws/events';
+  }
+  if (typeof location !== 'undefined' && location.host) {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${location.host}/ws/events`;
+  }
+  return 'ws://127.0.0.1:8765/ws/events';
+}
+
 /** Connexion aux evenements du service, avec reconnexion espacee. */
 export class EventStream {
   private socket: WebSocket | null = null;
@@ -477,7 +492,7 @@ export class EventStream {
 
   connect(): void {
     this.closed = false;
-    const url = SERVICE_URL.replace(/^http/, 'ws') + '/ws/events';
+    const url = getWebSocketEventsUrl(SERVICE_URL);
     const socket = new WebSocket(url);
     this.socket = socket;
 

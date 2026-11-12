@@ -24,6 +24,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - APP_TIMEZONE=${APP_TIMEZONE:-Europe/Paris}
+      - EXTRA_ALLOWED_ORIGINS=${EXTRA_ALLOWED_ORIGINS:-https://optimus.lecreusot.priv,http://optimus.lecreusot.priv,https://scratch-robot.lecreusot.priv,http://scratch-robot.lecreusot.priv}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8765/api/status"]
       interval: 20s

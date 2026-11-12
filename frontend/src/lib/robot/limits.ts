@@ -60,21 +60,37 @@ export interface SafetyConfig {
 export const SAFETY: SafetyConfig = raw as SafetyConfig;
 
 /**
- * Base URL du robot-service.
+ * Calcule l'URL de base du robot-service.
  *
- * Injectée à la compilation (`VITE_SERVICE_URL`) — c'est la voie normale en
- * production. À défaut, on vise le même hôte que la page, port 8765 : ouvrir
- * l'interface depuis une autre machine du réseau doit fonctionner sans
- * reconstruire le bundle (sinon `127.0.0.1` désignerait le poste du visiteur,
- * pas le robot).
+ * Priorités :
+ *  1. Injectée à la compilation (`VITE_SERVICE_URL`).
+ *  2. Si la page est en HTTPS, sur un port standard (80/443), ou derrière un nom de domaine
+ *     (ex: optimus.lecreusot.priv) : on utilise la même origine (`location.origin`)
+ *     pour passer par le reverse-proxy (Nginx / Traefik) et éviter tout blocage Mixed Content.
+ *  3. En développement local ou accès direct au robot sans reverse-proxy (ex: http://172.16.13.41:5173) :
+ *     on vise le port 8765 sur le même hôte.
+ *  4. Hors navigateur (tests node) : http://127.0.0.1:8765.
  */
-function defaultServiceUrl(): string {
+export function computeServiceUrl(loc?: {
+  protocol: string;
+  hostname: string;
+  port: string;
+  origin: string;
+}): string {
   const injected = import.meta.env['VITE_SERVICE_URL'] as string | undefined;
   if (injected) return injected;
-  if (typeof location !== 'undefined' && location.hostname) {
-    return `http://${location.hostname}:8765`;
+  const current = loc ?? (typeof location !== 'undefined' ? location : undefined);
+  if (current && current.hostname) {
+    const isHttps = current.protocol === 'https:';
+    const isStandardPort = current.port === '' || current.port === '80' || current.port === '443';
+    const isDomain = current.hostname.includes('.') && !/^\d+\.\d+\.\d+\.\d+$/.test(current.hostname);
+
+    if (isHttps || isStandardPort || isDomain) {
+      return current.origin;
+    }
+    return `http://${current.hostname}:8765`;
   }
   return 'http://127.0.0.1:8765';
 }
 
-export const SERVICE_URL: string = defaultServiceUrl();
+export const SERVICE_URL: string = computeServiceUrl();

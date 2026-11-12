@@ -8,6 +8,16 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:8765',
+        changeOrigin: true,
+      },
+      '/ws': {
+        target: 'ws://127.0.0.1:8765',
+        ws: true,
+      },
+    },
     // `shared/safety-limits.json` se trouve a la racine du depot, hors de `frontend/`.
     // On autorise explicitement la lecture de ce seul dossier parent.
     fs: {

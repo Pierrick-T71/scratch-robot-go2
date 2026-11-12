@@ -10,6 +10,7 @@ Ce module est le seul endroit où le fichier est lu et validé.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -197,9 +198,13 @@ def load_limits() -> Limits:
         raw["service"],
     )
 
-    origins = svc.get("allowedOrigin", [])
-    if not isinstance(origins, list) or not all(isinstance(o, str) for o in origins):
+    origins = list(svc.get("allowedOrigin", []))
+    if not all(isinstance(o, str) for o in origins):
         raise ConfigurationError("service.allowedOrigin doit être une liste de chaînes.")
+
+    env_extra = os.environ.get("EXTRA_ALLOWED_ORIGINS", "").strip()
+    if env_extra:
+        origins.extend(o.strip() for o in env_extra.split(",") if o.strip())
 
     return Limits(
         motion=MotionLimits(

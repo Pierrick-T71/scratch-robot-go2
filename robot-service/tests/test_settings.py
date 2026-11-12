@@ -365,3 +365,18 @@ class TestConfigurationErrorStillRaised:
         assert "introuvable" in str(error)
         # Doit indiquer le chemin pour être exploitable en séance.
         assert "/x/y.json" in str(error)
+
+    def test_allowed_origin_contains_optimus_priv(self, limits):
+        assert "https://optimus.lecreusot.priv" in limits.service.allowed_origin
+
+    def test_extra_allowed_origins_env_variable(self, monkeypatch):
+        import go2_service.config as config_mod
+
+        monkeypatch.setenv("EXTRA_ALLOWED_ORIGINS", "https://extra.example.com, http://autre.priv")
+        config_mod.load_limits.cache_clear()
+        try:
+            lim = config_mod.load_limits()
+            assert "https://extra.example.com" in lim.service.allowed_origin
+            assert "http://autre.priv" in lim.service.allowed_origin
+        finally:
+            config_mod.load_limits.cache_clear()
